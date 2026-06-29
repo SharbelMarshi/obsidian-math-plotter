@@ -5,13 +5,14 @@ on:
     tags:
       - '*'
 
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@v4
 
@@ -41,32 +42,30 @@ jobs:
       - name: Package full plugin folder (manual install)
         run: node scripts/package-release.mjs
 
-      - name: Check for optional styles
-        id: styles
+      - name: Verify release artifacts exist
         run: |
-          if [ -f styles.css ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          for f in main.js manifest.json styles.css; do
+            if [ ! -f "$f" ]; then
+              echo "Missing required artifact: $f"
+              exit 1
+            fi
+          done
 
       - name: Attest build provenance
-        uses: actions/attest@v2
+        uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
             main.js
             manifest.json
-            ${{ steps.styles.outputs.exists == 'true' && 'styles.css' || '' }}
+            styles.css
+          show-summary: true
 
       - name: Create release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-          assets=(main.js manifest.json math-plotter-full.zip)
-          if [ "${{ steps.styles.outputs.exists }}" = "true" ]; then
-            assets+=(styles.css)
-          fi
+          assets=(main.js manifest.json styles.css math-plotter-full.zip)
           gh release create "$tag" \
             --title="$tag" \
             --draft \
