@@ -1,14 +1,27 @@
 {
-	"name": "mathgraph-studio",
+	"name": "math-plotter",
 	"version": "0.1.0",
-	"description": "GUI-first math graphing for Obsidian",
+	"description": "GUI-first function plotting for Obsidian",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
-		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"build": "tsc -noEmit -skipLibCheck && node scripts/copy-tikzjax-assets.mjs && node scripts/verify-tikzjax-assets.mjs && node esbuild.config.mjs production",
+		"postinstall": "node scripts/copy-tikzjax-assets.mjs && node scripts/verify-tikzjax-assets.mjs",
 		"test:syntax": "esbuild scripts/test-graphSyntax.ts --bundle --platform=node --outfile=/tmp/test-graphSyntax.js && node /tmp/test-graphSyntax.js",
+		"test:tick-labels": "esbuild scripts/test-tickLabels.ts --bundle --platform=node --outfile=/tmp/test-tickLabels.js && node /tmp/test-tickLabels.js",
+		"test:fast-svg": "esbuild scripts/test-fastSvgRender.ts --bundle --platform=node --outfile=/tmp/test-fastSvgRender.js && node /tmp/test-fastSvgRender.js",
+		"test:plot-style": "esbuild scripts/test-graphPlotStyle.ts --bundle --platform=node --outfile=/tmp/test-graphPlotStyle.js && node /tmp/test-graphPlotStyle.js",
+		"test:theme-colors": "esbuild scripts/test-graphThemeColors.ts --bundle --platform=node --outfile=/tmp/test-graphThemeColors.js && node /tmp/test-graphThemeColors.js",
+		"test:aspect": "esbuild scripts/test-graphAspectLayout.ts --bundle --platform=node --outfile=/tmp/test-graphAspectLayout.js && node /tmp/test-graphAspectLayout.js",
+		"test:display-scale": "esbuild scripts/test-displayScaleLayout.ts --bundle --platform=node --outfile=/tmp/test-displayScaleLayout.js && node /tmp/test-displayScaleLayout.js",
+		"test:grid": "esbuild scripts/test-graphGridStyle.ts --bundle --platform=node --outfile=/tmp/test-graphGridStyle.js && node /tmp/test-graphGridStyle.js",
+		"test:tikzjax": "esbuild scripts/test-tikzjaxSource.ts --bundle --platform=node --outfile=/tmp/test-tikzjaxSource.js && node /tmp/test-tikzjaxSource.js",
+		"test:tikzjax-render": "esbuild scripts/test-tikzjaxRender.ts --bundle --platform=node --outfile=/tmp/test-tikzjaxRender.js && node /tmp/test-tikzjaxRender.js",
+		"test:expression": "esbuild scripts/test-expressionEngine.ts --bundle --platform=node --outfile=/tmp/test-expressionEngine.js && node /tmp/test-expressionEngine.js",
 		"test:octave-csv": "esbuild scripts/test-octaveCsv.ts --bundle --platform=node --outfile=/tmp/test-octaveCsv.js && node /tmp/test-octaveCsv.js",
-		"test:range": "esbuild scripts/test-graphRangeValidation.ts --bundle --platform=node --outfile=/tmp/test-graphRangeValidation.js && node /tmp/test-graphRangeValidation.js"
+		"test:range": "esbuild scripts/test-graphRangeValidation.ts --bundle --platform=node --outfile=/tmp/test-graphRangeValidation.js && node /tmp/test-graphRangeValidation.js",
+		"release:check": "node scripts/verify-release.mjs",
+		"release:package": "node scripts/package-release.mjs"
 	},
 	"keywords": [],
 	"author": "Sharbel Marshi",
@@ -19,5 +32,9 @@
 		"obsidian": "latest",
 		"tslib": "2.3.1",
 		"typescript": "^5.0.0"
+	},
+	"dependencies": {
+		"expr-eval": "^2.0.2",
+		"node-tikzjax": "^1.0.5"
 	}
 }

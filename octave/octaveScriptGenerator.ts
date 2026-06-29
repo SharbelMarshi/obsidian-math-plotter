@@ -64,7 +64,7 @@ export function generateOctaveScript(spec: GraphSpec, useCase: OctaveUseCase): s
 	const csvColumns = csvColumnsForUseCase(useCase);
 
 	const header = [
-		'# MathGraph Studio — generated Octave script',
+		'# Math Plotter — generated Octave script',
 		'warning("off", "all");',
 		paramBlock,
 	].filter(Boolean).join('\n');

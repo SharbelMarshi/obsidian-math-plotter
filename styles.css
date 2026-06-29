@@ -1,22 +1,40 @@
-/* ── MathGraph Studio design system ─────────────────────────────────────────
-   Theme-aware glass / native styles. All colors use Obsidian CSS variables.
-   Toggle: body.mathgraph-ui-glass (default) | body.mathgraph-ui-native
+/* ── Math Plotter design system ─────────────────────────────────────────────
+   Theme-aware glass styles. All colors use Obsidian CSS variables.
    ───────────────────────────────────────────────────────────────────────── */
 
 .mathgraph-processor-root {
 	margin: 0;
 }
 
+/* Inline builder host: never inherit card/glass chrome from processor root */
+.mathgraph-processor-root:has(.mathgraph-inline-builder),
+.mathgraph-inline-builder-wrapper,
+.mathgraph-processor-root.mathgraph-ui-glass:has(.mathgraph-inline-builder),
+.mathgraph-processor-root.mathgraph-ui-native:has(.mathgraph-inline-builder),
+.mathgraph-inline-builder-wrapper.mathgraph-ui-glass,
+.mathgraph-inline-builder-wrapper.mathgraph-ui-native {
+	background: transparent !important;
+	border: none !important;
+	box-shadow: none !important;
+	padding: 0 !important;
+	margin: 0 !important;
+	backdrop-filter: none !important;
+	-webkit-backdrop-filter: none !important;
+	min-height: 0 !important;
+}
+
+.mathgraph-root {
+	margin: 0;
+}
+
 .mathgraph-root:not(.mathgraph-processor-root) {
-	margin: 1em 0;
+	margin: 0.6em 0;
 }
 
 /* ── Shared glass surface mixin (applied via class selectors below) ───────── */
 
 .mathgraph-ui-glass .mathgraph-section,
-.mathgraph-ui-glass .mathgraph-inline-builder,
 .mathgraph-ui-glass .mathgraph-error-box,
-.mathgraph-ui-glass .mathgraph-preview-card,
 .mathgraph-ui-glass .mathgraph-settings-section {
 	border-radius: 18px;
 	border: 1px solid var(--background-modifier-border);
@@ -25,9 +43,7 @@
 
 @supports ((backdrop-filter: blur(16px)) or (-webkit-backdrop-filter: blur(16px))) {
 	.mathgraph-ui-glass .mathgraph-section,
-	.mathgraph-ui-glass .mathgraph-inline-builder,
 	.mathgraph-ui-glass .mathgraph-error-box,
-	.mathgraph-ui-glass .mathgraph-preview-card,
 	.mathgraph-ui-glass .mathgraph-settings-section {
 		background: color-mix(in srgb, var(--background-primary) 72%, transparent);
 		border: 1px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
@@ -39,9 +55,7 @@
 
 /* Native Obsidian: flat cards, no blur (builder UI only) */
 .mathgraph-ui-native .mathgraph-section,
-.mathgraph-ui-native .mathgraph-inline-builder,
 .mathgraph-ui-native .mathgraph-error-box,
-.mathgraph-ui-native .mathgraph-preview-card,
 .mathgraph-ui-native .mathgraph-settings-section {
 	border-radius: var(--radius-m, 8px);
 	border: 1px solid var(--background-modifier-border);
@@ -49,17 +63,37 @@
 	box-shadow: none;
 }
 
-/* ── Modal ────────────────────────────────────────────────────────────────── */
+/* ── Modal (compact graph builder) ────────────────────────────────────────── */
 
 .modal-container.mathgraph-modal-container .modal {
-	max-width: 720px;
-	width: min(720px, 92vw);
-	border-radius: 20px;
+	width: min(860px, 88vw);
+	max-width: 88vw;
+	height: min(620px, 82vh);
+	max-height: 82vh;
+	border-radius: 16px;
 	overflow: hidden;
+	padding: 0;
+	box-sizing: border-box;
 }
 
-.mathgraph-modal {
+.modal-container.mathgraph-modal-container .modal-content {
+	width: 100%;
+	max-width: 100%;
 	padding: 0;
+	overflow: hidden;
+	box-sizing: border-box;
+}
+
+.mathgraph-modal-shell {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	max-width: 100%;
+	height: min(620px, 82vh);
+	max-height: 82vh;
+	overflow: hidden;
+	box-sizing: border-box;
+	background: var(--background-primary);
 }
 
 .mathgraph-modal .modal-title {
@@ -67,12 +101,25 @@
 }
 
 .mathgraph-modal-header {
-	padding: 20px 22px 12px;
+	position: relative;
+	flex: 0 0 auto;
+	width: 100%;
+	box-sizing: border-box;
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 24px 28px 18px;
 	border-bottom: 1px solid var(--background-modifier-border);
 }
 
+.mathgraph-modal-header-text {
+	min-width: 0;
+	max-width: 100%;
+}
+
 .mathgraph-modal-title {
-	font-size: 1.25em;
+	font-size: 1.12em;
 	font-weight: 650;
 	color: var(--text-normal);
 	letter-spacing: -0.01em;
@@ -80,47 +127,437 @@
 }
 
 .mathgraph-modal-subtitle {
-	margin-top: 6px;
-	font-size: 0.88em;
+	margin-top: 4px;
+	font-size: 0.82em;
 	color: var(--text-muted);
-	line-height: 1.45;
-	max-width: 52ch;
+	line-height: 1.4;
+	max-width: 56ch;
 }
 
-.mathgraph-modal-body {
-	padding: 16px 22px 8px;
+.mathgraph-modal-main {
+	display: grid;
+	grid-template-columns: 180px minmax(0, 1fr);
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.mathgraph-modal-nav {
+	width: 180px;
+	min-width: 0;
+	max-width: 180px;
+	padding: 10px 8px;
+	border-right: 1px solid var(--background-modifier-border);
 	display: flex;
 	flex-direction: column;
-	gap: 14px;
-	max-height: min(70vh, 640px);
-	overflow-y: auto;
+	gap: 4px;
+	overflow: hidden;
+	box-sizing: border-box;
 }
 
-.mathgraph-modal-top-row {
+.mathgraph-modal-nav-item {
+	padding: 8px 10px;
+	border-radius: 10px;
+	font-size: 0.84em;
+	font-weight: 500;
+	color: var(--text-muted);
+	cursor: pointer;
+	transition: background 120ms ease, color 120ms ease;
+	user-select: none;
+	min-width: 0;
+}
+
+.mathgraph-modal-nav-item:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.mathgraph-modal-nav-item-active {
+	background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
+	color: var(--text-normal);
+	font-weight: 600;
+}
+
+.mathgraph-modal-nav-item-hidden {
+	display: none;
+}
+
+.mathgraph-modal-panel-scroll {
+	min-width: 0;
+	max-width: 100%;
+	min-height: 0;
+	overflow: hidden;
+	box-sizing: border-box;
+}
+
+.mathgraph-modal-panel {
+	display: none;
+	min-width: 0;
+	max-width: 100%;
+	height: 100%;
+	overflow-x: hidden;
+	overflow-y: auto;
+	box-sizing: border-box;
+	padding: 22px 24px;
+	--mathgraph-rendered-width: auto;
+}
+
+.mathgraph-modal-panel-active {
+	display: block;
+}
+
+.mathgraph-modal-panel *,
+.mathgraph-form-grid,
+.mathgraph-form-row,
+.mathgraph-field {
+	box-sizing: border-box;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.mathgraph-modal-panel input,
+.mathgraph-modal-panel select,
+.mathgraph-modal-panel textarea {
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+}
+
+.mathgraph-modal-panel .dropdown,
+.mathgraph-modal-panel select,
+.mathgraph-modal-panel .mathgraph-select {
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+}
+
+.mathgraph-modal-footer {
+	flex: 0 0 auto;
+	width: 100%;
+	box-sizing: border-box;
+	display: flex;
+	justify-content: flex-end;
+	gap: 12px;
+	padding: 12px 20px;
+	border-top: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	z-index: 10;
+}
+
+.mathgraph-form-grid {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 12px;
+	gap: 10px 14px;
+	width: 100%;
+	max-width: 100%;
 }
 
-@media (max-width: 520px) {
-	.mathgraph-modal-top-row {
+.mathgraph-form-row {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.mathgraph-form-row-wide {
+	grid-column: 1 / -1;
+}
+
+.mathgraph-field-label {
+	font-size: 0.78em;
+	font-weight: 600;
+	color: var(--text-normal);
+	line-height: 1.3;
+}
+
+.mathgraph-field-help {
+	font-size: 0.74em;
+	color: var(--text-muted);
+	line-height: 1.35;
+	margin-top: -2px;
+}
+
+.mathgraph-modal-panel .mathgraph-field {
+	min-width: 0;
+	max-width: 100%;
+	width: 100%;
+}
+
+.mathgraph-range-pair {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.mathgraph-range-pair .mathgraph-input {
+	flex: 1;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.mathgraph-range-sep {
+	font-size: 0.78em;
+	color: var(--text-muted);
+	flex-shrink: 0;
+}
+
+.mathgraph-ranges-panel {
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+}
+
+.mathgraph-range-row {
+	display: grid;
+	grid-template-columns: 90px minmax(0, 1fr) auto minmax(0, 1fr);
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 12px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.mathgraph-range-row label,
+.mathgraph-range-label {
+	font-weight: 600;
+	white-space: nowrap;
+	font-size: 0.88em;
+}
+
+.mathgraph-range-row input {
+	width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+}
+
+.mathgraph-range-separator {
+	color: var(--text-muted);
+	font-weight: 500;
+	font-size: 0.82em;
+	white-space: nowrap;
+}
+
+.mathgraph-samples-row {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 14px;
+	margin-top: 18px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.mathgraph-samples-row-2d {
+	grid-template-columns: minmax(0, 1fr);
+	max-width: 50%;
+}
+
+.mathgraph-sample-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+@media (max-width: 700px) {
+	.mathgraph-range-row {
+		grid-template-columns: 1fr;
+		gap: 6px;
+	}
+
+	.mathgraph-range-separator {
+		text-align: center;
+	}
+
+	.mathgraph-samples-row,
+	.mathgraph-samples-row-2d {
+		grid-template-columns: 1fr;
+		max-width: 100%;
+	}
+}
+
+.mathgraph-inline-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+	gap: 8px;
+	align-items: center;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.mathgraph-point-row {
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+.mathgraph-point-row-wrap {
+	min-width: 0;
+	max-width: 100%;
+}
+
+.mathgraph-point-status {
+	font-size: 0.74em;
+	color: var(--text-muted);
+	line-height: 1.35;
+	margin: 2px 0 6px;
+	min-height: 1em;
+}
+
+.mathgraph-point-status-computed {
+	color: var(--text-muted);
+}
+
+.mathgraph-point-status-warning {
+	color: var(--color-orange);
+}
+
+.mathgraph-point-status-error {
+	color: var(--text-error);
+}
+
+.mathgraph-point-warnings {
+	margin-top: 10px;
+}
+
+.mathgraph-point-warning-banner {
+	font-size: 0.82em;
+	color: var(--color-orange);
+	line-height: 1.35;
+}
+
+.mathgraph-inline-add-btn {
+	margin-top: 8px;
+}
+
+.mathgraph-row-remove {
+	width: 36px;
+	height: 36px;
+	padding: 0;
+	flex-shrink: 0;
+}
+
+.mathgraph-param-block,
+.mathgraph-point-list {
+	margin-top: 4px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.mathgraph-param-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.mathgraph-scale-field {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.mathgraph-modal-panel .mathgraph-size-slider {
+	flex: 1;
+	min-width: 0;
+	max-width: 100%;
+	width: auto;
+}
+
+.mathgraph-size-scale-value {
+	font-size: 0.82em;
+	font-weight: 600;
+	color: var(--text-normal);
+	min-width: 3.5em;
+	flex-shrink: 0;
+}
+
+.mathgraph-size-section.mathgraph-form-grid {
+	gap: 8px 14px;
+}
+
+.mathgraph-size-section .mathgraph-form-row {
+	gap: 2px;
+}
+
+.mathgraph-size-section .mathgraph-size-scale-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	align-items: stretch;
+	min-width: 0;
+	max-width: 100%;
+	width: 100%;
+}
+
+.mathgraph-size-section .mathgraph-size-slider {
+	width: 100%;
+	max-width: 100%;
+}
+
+.mathgraph-axis-label {
+	pointer-events: none;
+}
+
+.mathgraph-axis-label-y {
+	dominant-baseline: middle;
+}
+
+.mathgraph-textarea {
+	min-height: 96px;
+	resize: vertical;
+}
+
+.mathgraph-equation-tab-note {
+	margin: 12px 0 0;
+	font-size: 0.78em;
+	color: var(--text-muted);
+	line-height: 1.35;
+}
+
+@media (max-width: 720px) {
+	.modal-container.mathgraph-modal-container .modal,
+	.mathgraph-modal-shell {
+		width: min(860px, 88vw);
+		max-width: 88vw;
+	}
+
+	.mathgraph-modal-main {
+		grid-template-columns: 1fr;
+	}
+
+	.mathgraph-modal-nav {
+		width: 100%;
+		max-width: 100%;
+		flex-direction: row;
+		flex-wrap: wrap;
+		border-right: none;
+		border-bottom: 1px solid var(--background-modifier-border);
+		padding: 8px;
+	}
+
+	.mathgraph-form-grid {
 		grid-template-columns: 1fr;
 	}
 }
 
-.mathgraph-modal-footer {
-	display: flex;
-	justify-content: flex-end;
-	flex-wrap: wrap;
-	gap: 8px;
-	padding: 14px 22px 20px;
-	border-top: 1px solid var(--background-modifier-border);
+/* legacy modal aliases */
+.mathgraph-modal-body {
+	padding: 0;
+}
+
+.mathgraph-modal-top-row {
+	display: none;
 }
 
 .mathgraph-modal-actions {
 	display: flex;
 	justify-content: flex-end;
-	flex-wrap: wrap;
 	gap: 8px;
 }
 
@@ -211,14 +648,25 @@
 .mathgraph-inline-input,
 .mathgraph-inline-select {
 	width: 100%;
-	padding: 8px 11px;
+	max-width: 100%;
+	min-width: 0;
+	height: 38px;
+	padding: 0 11px;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 10px;
 	background: var(--background-primary);
 	color: var(--text-normal);
-	font-size: 0.9em;
+	font-size: 0.86em;
 	line-height: 1.35;
 	transition: border-color 120ms ease, box-shadow 120ms ease;
+	box-sizing: border-box;
+}
+
+.mathgraph-modal textarea,
+.mathgraph-textarea {
+	height: auto;
+	min-height: 96px;
+	padding: 8px 11px;
 }
 
 .mathgraph-input:focus,
@@ -335,38 +783,6 @@
 	border-color: color-mix(in srgb, var(--interactive-accent) 35%, transparent);
 }
 
-/* ── Preview card ─────────────────────────────────────────────────────────── */
-
-.mathgraph-preview-card {
-	padding: 14px 16px;
-}
-
-.mathgraph-preview-card-header {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 8px;
-	margin-bottom: 10px;
-}
-
-.mathgraph-preview-expression {
-	font-family: var(--font-monospace);
-	font-size: 0.88em;
-	color: var(--text-normal);
-	word-break: break-word;
-	padding: 10px 12px;
-	border-radius: 10px;
-	background: var(--background-primary);
-	border: 1px solid var(--background-modifier-border);
-}
-
-.mathgraph-preview-meta {
-	margin-top: 8px;
-	font-size: 0.78em;
-	color: var(--text-muted);
-}
-
-.mathgraph-preview-warning,
 .mathgraph-graph-warning {
 	margin-top: 0.5rem;
 	padding: 0.5rem 0.75rem;
@@ -377,31 +793,65 @@
 	font-size: 0.85em;
 }
 
-/* ── Inline builder ───────────────────────────────────────────────────────── */
+/* ── Inline builder (lightweight, note-integrated) ─────────────────────────── */
+
+.mathgraph-inline-builder-wrapper,
+.mathgraph-processor-root:has(.mathgraph-inline-builder) {
+	background: transparent;
+	border: none;
+	box-shadow: none;
+	padding: 0;
+	margin: 0;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
 
 .mathgraph-inline-builder {
-	padding: 16px 18px;
-	margin: 0.5em 0;
+	background: transparent;
+	border: 1px solid var(--background-modifier-border);
+	box-shadow: none;
+	border-radius: 10px;
+	padding: 14px 16px;
+	margin: 0.75em 0;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
+
+/* Inner layout nodes: no nested frames */
+.mathgraph-inline-builder-header,
+.mathgraph-inline-builder-subtitle,
+.mathgraph-inline-builder-grid,
+.mathgraph-field-grid.mathgraph-inline-builder-grid,
+.mathgraph-inline-range-grid,
+.mathgraph-inline-builder .mathgraph-field,
+.mathgraph-inline-builder .mathgraph-field-wide,
+.mathgraph-inline-builder-actions {
+	background: transparent;
+	border: none;
+	box-shadow: none;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
 }
 
 .mathgraph-inline-builder-header {
-	font-weight: 650;
-	font-size: 1.05em;
+	font-weight: 600;
+	font-size: 0.95em;
 	color: var(--text-normal);
-	margin-bottom: 4px;
+	margin-bottom: 2px;
 }
 
 .mathgraph-inline-builder-subtitle {
-	font-size: 0.82em;
+	font-size: 0.78em;
 	color: var(--text-muted);
-	margin-bottom: 14px;
+	margin-bottom: 10px;
+	line-height: 1.35;
 }
 
 .mathgraph-inline-builder-grid,
 .mathgraph-field-grid.mathgraph-inline-builder-grid {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 10px 12px;
+	gap: 8px 10px;
 }
 
 .mathgraph-inline-field-wide,
@@ -412,120 +862,157 @@
 .mathgraph-inline-range-grid {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 10px 12px;
+	gap: 8px 10px;
 }
 
 .mathgraph-inline-field,
 .mathgraph-inline-builder .mathgraph-field {
 	display: flex;
 	flex-direction: column;
-	gap: 6px;
+	gap: 4px;
 }
 
 .mathgraph-inline-label,
 .mathgraph-inline-builder .mathgraph-label {
-	font-size: 0.82em;
+	font-size: 0.78em;
 	font-weight: 500;
 	color: var(--text-muted);
+}
+
+.mathgraph-inline-builder input,
+.mathgraph-inline-builder select,
+.mathgraph-inline-builder .mathgraph-input,
+.mathgraph-inline-builder .mathgraph-select {
+	box-shadow: none;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	border-radius: 8px;
+	height: 34px;
+	padding: 0 10px;
+	font-size: 0.84em;
+}
+
+.mathgraph-inline-builder input:focus,
+.mathgraph-inline-builder select:focus,
+.mathgraph-inline-builder .mathgraph-input:focus,
+.mathgraph-inline-builder .mathgraph-select:focus {
+	outline: none;
+	border-color: var(--interactive-accent);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 22%, transparent);
+}
+
+.mathgraph-inline-builder button,
+.mathgraph-inline-builder .mathgraph-button {
+	box-shadow: none;
+	padding: 6px 12px;
+	font-size: 0.82em;
+}
+
+.mathgraph-inline-builder .mathgraph-button-primary {
+	box-shadow: none;
+}
+
+.mathgraph-inline-builder .mathgraph-button-secondary {
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	box-shadow: none;
 }
 
 .mathgraph-inline-builder-actions {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 8px;
-	margin-top: 14px;
+	margin-top: 10px;
 }
 
 .mathgraph-inline-error {
-	margin-top: 10px;
-	padding: 10px 12px;
-	border-radius: 10px;
-	border: 1px solid color-mix(in srgb, var(--text-error) 45%, transparent);
-	background: color-mix(in srgb, var(--text-error) 8%, var(--background-primary));
+	margin-top: 8px;
+	padding: 8px 10px;
+	border-radius: 8px;
+	border: 1px solid color-mix(in srgb, var(--text-error) 35%, transparent);
+	background: color-mix(in srgb, var(--text-error) 6%, transparent);
 	color: var(--text-error);
-	font-size: 0.85em;
+	font-size: 0.82em;
 }
 
 /* ── Rendered graph (academic / transparent by default) ───────────────────── */
 
 .mathgraph-rendered-container {
 	position: relative;
-	display: flex;
-	flex-direction: column;
-	justify-content: center;
-	align-items: center;
-	margin: 1em 0;
+	width: 100%;
+	margin: 0.6em 0;
 	padding: 0;
-	border: none;
-	background: transparent;
-	box-shadow: none;
-	border-radius: 0;
+	color: var(--text-normal);
+	border: none !important;
+	background: transparent !important;
+	box-shadow: none !important;
+	border-radius: 0 !important;
+	overflow: visible;
+}
+
+.mathgraph-graph-scroll {
+	width: 100%;
 	overflow-x: auto;
 	overflow-y: visible;
-}
-
-.mathgraph-rendered-inner,
-.mathgraph-display-scaled {
-	--mathgraph-display-scale: 1;
-	transform: scale(var(--mathgraph-display-scale));
-	transform-origin: center center;
-	max-width: 100%;
-}
-
-.mathgraph-display-full-width .mathgraph-rendered-inner,
-.mathgraph-rendered-container.mathgraph-display-full-width .mathgraph-rendered-inner {
-	width: 100%;
-	max-width: 100%;
-}
-
-/* Frame: None (default) */
-.mathgraph-frame-none.mathgraph-rendered-container,
-.mathgraph-rendered-container.mathgraph-frame-none {
+	display: flex;
+	justify-content: center;
+	align-items: flex-start;
+	padding: 0;
+	margin: 0;
+	line-height: 0;
 	border: none;
 	background: transparent;
 	box-shadow: none;
-	padding: 0;
 }
 
-/* Frame: Subtle */
-.mathgraph-frame-subtle.mathgraph-rendered-container {
-	padding: 8px;
-	border: 1px solid color-mix(in srgb, var(--background-modifier-border) 55%, transparent);
-	border-radius: var(--radius-m, 8px);
+.mathgraph-graph-scroll.mathgraph-overflowing {
+	justify-content: flex-start;
+}
+
+.mathgraph-rendered-inner {
+	display: inline-block;
+	flex: 0 0 auto;
+	line-height: 0;
+	width: var(--mathgraph-rendered-width, auto);
+	max-width: none;
+	margin: 0;
+	padding: 0;
+	border: none;
 	background: transparent;
 	box-shadow: none;
 }
 
-/* Frame: Glass card */
-.mathgraph-frame-glass.mathgraph-rendered-container {
-	padding: 12px 14px;
-	border-radius: 18px;
-	border: 1px solid var(--background-modifier-border);
-	background: var(--background-secondary);
-}
-
-@supports ((backdrop-filter: blur(16px)) or (-webkit-backdrop-filter: blur(16px))) {
-	.mathgraph-frame-glass.mathgraph-rendered-container {
-		background: color-mix(in srgb, var(--background-primary) 72%, transparent);
-		border: 1px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
-		backdrop-filter: blur(18px);
-		-webkit-backdrop-filter: blur(18px);
-		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.16);
-	}
-}
-
-.mathgraph-ui-native .mathgraph-frame-glass.mathgraph-rendered-container {
-	border-radius: var(--radius-m, 8px);
-	background: var(--background-secondary);
+.mathgraph-rendered-inner img,
+.mathgraph-rendered-inner svg {
+	display: block;
+	width: 100%;
+	height: auto;
+	max-width: none;
+	margin: 0;
+	padding: 0;
+	background: transparent;
+	border: none;
 	box-shadow: none;
-	backdrop-filter: none;
-	-webkit-backdrop-filter: none;
+}
+
+.mathgraph-image {
+	width: 100%;
+	height: auto;
+	display: block;
+	max-width: none;
+	background: transparent;
+	border: none;
+	box-shadow: none;
 }
 
 .mathgraph-graph-caption {
-	padding: 0 0 0.35em;
+	padding: 0;
+	margin: 0 0 0.2em;
 	text-align: center;
 	width: 100%;
+	line-height: 1.2;
+	border: none;
+	background: transparent;
 }
 
 .mathgraph-title {
@@ -541,32 +1028,6 @@
 	margin-top: 4px;
 }
 
-.mathgraph-image-wrap {
-	position: relative;
-	display: flex;
-	justify-content: center;
-	align-items: center;
-	width: 100%;
-}
-
-.mathgraph-graph-output {
-	padding: 0;
-	display: flex;
-	justify-content: center;
-	align-items: center;
-	width: 100%;
-}
-
-.mathgraph-rendered-container img,
-.mathgraph-rendered-container svg,
-.mathgraph-image {
-	max-width: 100%;
-	height: auto;
-	display: block;
-	background: transparent;
-	border-radius: 0;
-}
-
 .mathgraph-loading {
 	padding: 0.5em 0;
 	color: var(--text-muted);
@@ -574,72 +1035,107 @@
 	font-size: 0.9em;
 }
 
-/* Floating hover toolbar — no container border required */
-.mathgraph-hover-actions {
+/* Floating toolbar — single row, overlays graph */
+.mathgraph-toolbar {
 	position: absolute;
 	top: 6px;
-	right: 6px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 20;
 	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-	padding: 6px;
+	flex-wrap: nowrap;
+	align-items: center;
+	gap: 5px;
+	white-space: nowrap;
+	max-width: calc(100% - 16px);
+	overflow-x: auto;
+	overflow-y: hidden;
+	padding: 5px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--background-primary) 86%, transparent);
+	border: 1px solid var(--background-modifier-border);
+	box-shadow: none;
+	backdrop-filter: blur(12px);
+	-webkit-backdrop-filter: blur(12px);
 	opacity: 0;
 	pointer-events: none;
 	transition: opacity 120ms ease;
-	z-index: 2;
-	border-radius: 999px;
-	border: 1px solid var(--background-modifier-border);
-	background: var(--background-primary);
+	scrollbar-width: thin;
 }
 
-@supports ((backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px))) {
-	.mathgraph-hover-actions {
-		background: color-mix(in srgb, var(--background-primary) 70%, transparent);
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
-	}
-}
-
-.mathgraph-image-wrap:hover .mathgraph-hover-actions,
-.mathgraph-image-wrap:focus-within .mathgraph-hover-actions,
-.mathgraph-rendered-container:hover .mathgraph-hover-actions,
-.mathgraph-rendered-container:focus-within .mathgraph-hover-actions {
+.mathgraph-rendered-container:hover .mathgraph-toolbar {
 	opacity: 1;
 	pointer-events: auto;
 }
 
-.mathgraph-hover-actions .mathgraph-btn,
-.mathgraph-hover-actions .mathgraph-button {
-	padding: 5px 11px;
-	font-size: 0.78em;
-	border-radius: 999px;
-	background: transparent;
-	border-color: transparent;
-}
-
-.mathgraph-hover-actions .mathgraph-btn:hover,
-.mathgraph-hover-actions .mathgraph-button:hover {
-	background: var(--background-modifier-hover);
-	border-color: var(--background-modifier-border);
-}
-
-.mathgraph-scale-controls {
+.mathgraph-toolbar button,
+.mathgraph-toolbar .mathgraph-button,
+.mathgraph-toolbar .mathgraph-btn,
+.mathgraph-toolbar .mathgraph-scale-btn,
+.mathgraph-toolbar .mathgraph-scale-label {
+	appearance: none;
+	-webkit-appearance: none;
+	flex: 0 0 auto;
+	white-space: nowrap;
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
-	padding: 2px;
-	border-left: 1px solid var(--background-modifier-border);
-	margin-left: 2px;
-	padding-left: 6px;
+	justify-content: center;
+	height: 28px;
+	min-width: 28px;
+	padding: 0 9px;
+	border-radius: 999px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	color: var(--text-normal);
+	box-shadow: none !important;
+	outline: none;
+	font-size: 0.78em;
+	font-weight: 500;
+	line-height: 1;
+	cursor: pointer;
+	transition: background 120ms ease, border-color 120ms ease;
+	transform: none;
 }
 
-.mathgraph-scale-btn {
-	min-width: 1.75em;
-	padding: 5px 8px;
+.mathgraph-toolbar .mathgraph-button-secondary {
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	box-shadow: none !important;
 }
 
-.mathgraph-scale-label {
-	min-width: 3.2em;
+.mathgraph-toolbar button::before,
+.mathgraph-toolbar button::after,
+.mathgraph-toolbar .mathgraph-button::before,
+.mathgraph-toolbar .mathgraph-button::after {
+	display: none;
+	content: none;
+}
+
+.mathgraph-toolbar button:hover,
+.mathgraph-toolbar .mathgraph-button:hover {
+	background: var(--background-secondary);
+	border-color: var(--interactive-accent);
+	box-shadow: none !important;
+}
+
+.mathgraph-toolbar button:focus,
+.mathgraph-toolbar button:focus-visible,
+.mathgraph-toolbar .mathgraph-button:focus,
+.mathgraph-toolbar .mathgraph-button:focus-visible {
+	outline: 2px solid color-mix(in srgb, var(--interactive-accent) 55%, transparent);
+	outline-offset: 2px;
+	box-shadow: none !important;
+}
+
+.mathgraph-toolbar .mathgraph-scale-btn {
+	width: 28px;
+	min-width: 28px;
+	padding: 0;
+}
+
+.mathgraph-toolbar .mathgraph-scale-label {
+	min-width: 3em;
+	padding: 0 8px;
 	font-variant-numeric: tabular-nums;
 }
 
@@ -681,11 +1177,6 @@
 	font-size: 0.78em;
 	color: var(--text-muted);
 	line-height: 1.4;
-}
-
-.mathgraph-ui-native .mathgraph-hover-actions .mathgraph-btn,
-.mathgraph-ui-native .mathgraph-hover-actions .mathgraph-button {
-	border-radius: var(--radius-s, 6px);
 }
 
 /* ── Error boxes ──────────────────────────────────────────────────────────── */
@@ -788,37 +1279,152 @@
 /* ── Settings tab ─────────────────────────────────────────────────────────── */
 
 .mathgraph-settings-section {
-	padding: 16px 18px;
-	margin-bottom: 16px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 18px;
+	padding: 20px 24px;
+	margin-bottom: 20px;
+	box-shadow: none;
+}
+
+.mathgraph-settings-tab .mathgraph-settings-section {
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
+
+.mathgraph-ui-glass .mathgraph-settings-tab .mathgraph-settings-section,
+.mathgraph-ui-native .mathgraph-settings-tab .mathgraph-settings-section {
+	background: var(--background-primary);
+	box-shadow: none;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
 }
 
 .mathgraph-settings-section-title {
-	font-size: 1em;
+	font-size: 0.95em;
 	font-weight: 650;
 	color: var(--text-normal);
-	margin-bottom: 4px;
+	margin-bottom: 8px;
 }
 
-.mathgraph-settings-section-desc {
-	font-size: 0.85em;
-	color: var(--text-muted);
-	margin-bottom: 12px;
-	line-height: 1.45;
+.mathgraph-settings-section-body {
+	gap: 0;
 }
 
-.mathgraph-settings-note {
-	color: var(--text-muted);
+.mathgraph-settings-section .setting-item,
+.mathgraph-settings-section .mathgraph-setting-item,
+.mathgraph-settings-section-body .setting-item {
+	background: transparent !important;
+	box-shadow: none !important;
+	border-radius: 0;
+	padding: 12px 0;
+	border-top: none;
+	border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 55%, transparent);
+	gap: 12px;
+}
+
+.mathgraph-settings-section .setting-item:last-child,
+.mathgraph-settings-section .mathgraph-setting-item:last-child,
+.mathgraph-settings-section-body .setting-item:last-child {
+	border-bottom: none;
+}
+
+.mathgraph-settings-section-body .setting-item-info {
+	gap: 2px;
+}
+
+.mathgraph-settings-section-body .setting-item-name {
+	font-size: 0.9em;
+}
+
+.mathgraph-settings-section-body .setting-item-description,
+.mathgraph-settings-description {
 	font-size: 0.85em;
-	line-height: 1.45;
-	margin-bottom: 0.75em;
+	color: var(--text-muted);
+	line-height: 1.25;
+	margin-top: 2px;
+}
+
+.mathgraph-settings-row {
+	background: transparent !important;
+	border-radius: 0;
+	box-shadow: none;
+	padding: 12px 0;
+	border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 55%, transparent);
+	gap: 12px;
+}
+
+.mathgraph-settings-row:last-child {
+	border-bottom: none;
 }
 
 /* ── Reading view integration ───────────────────────────────────────────────── */
 
-.markdown-reading-view .mathgraph-processor-root,
-.markdown-preview-view .mathgraph-processor-root {
-	border: none;
-	background: transparent;
+.markdown-reading-view .mathgraph-processor-root:has(.mathgraph-inline-builder),
+.markdown-preview-view .mathgraph-processor-root:has(.mathgraph-inline-builder),
+.markdown-reading-view .mathgraph-inline-builder-wrapper,
+.markdown-preview-view .mathgraph-inline-builder-wrapper {
+	border: none !important;
+	background: transparent !important;
+	box-shadow: none !important;
+	padding: 0 !important;
+	backdrop-filter: none !important;
+	-webkit-backdrop-filter: none !important;
+}
+
+/* Obsidian / theme wrappers around the code-block processor output */
+.markdown-reading-view div:has(> .mathgraph-inline-builder-wrapper),
+.markdown-preview-view div:has(> .mathgraph-inline-builder-wrapper),
+.markdown-reading-view div:has(> .mathgraph-processor-root > .mathgraph-inline-builder),
+.markdown-preview-view div:has(> .mathgraph-processor-root > .mathgraph-inline-builder),
+.markdown-reading-view .block-language-graph:has(.mathgraph-inline-builder),
+.markdown-preview-view .block-language-graph:has(.mathgraph-inline-builder),
+.markdown-reading-view .el-pre:has(+ .mathgraph-processor-root .mathgraph-inline-builder),
+.markdown-preview-view .el-pre:has(+ .mathgraph-processor-root .mathgraph-inline-builder) {
+	background: transparent !important;
+	border: none !important;
+	box-shadow: none !important;
+	backdrop-filter: none !important;
+	-webkit-backdrop-filter: none !important;
+}
+
+.markdown-reading-view .mathgraph-processor-root:not(:has(.mathgraph-inline-builder)),
+.markdown-preview-view .mathgraph-processor-root:not(:has(.mathgraph-inline-builder)) {
+	border: none !important;
+	background: transparent !important;
+	box-shadow: none !important;
+	padding: 0 !important;
+	backdrop-filter: none !important;
+	-webkit-backdrop-filter: none !important;
+}
+
+.markdown-reading-view .mathgraph-rendered-container,
+.markdown-preview-view .mathgraph-rendered-container,
+.markdown-reading-view .mathgraph-graph-scroll,
+.markdown-preview-view .mathgraph-graph-scroll,
+.markdown-reading-view .mathgraph-rendered-inner,
+.markdown-preview-view .mathgraph-rendered-inner,
+.markdown-reading-view .mathgraph-rendered-inner img,
+.markdown-preview-view .mathgraph-rendered-inner img,
+.markdown-reading-view .mathgraph-image,
+.markdown-preview-view .mathgraph-image {
+	border: none !important;
+	background: transparent !important;
+	box-shadow: none !important;
+	padding: 0 !important;
+	backdrop-filter: none !important;
+	-webkit-backdrop-filter: none !important;
+}
+
+.markdown-reading-view div:has(> .mathgraph-processor-root > .mathgraph-rendered-container),
+.markdown-preview-view div:has(> .mathgraph-processor-root > .mathgraph-rendered-container),
+.markdown-reading-view .block-language-graph:has(.mathgraph-rendered-container),
+.markdown-preview-view .block-language-graph:has(.mathgraph-rendered-container) {
+	background: transparent !important;
+	border: none !important;
+	box-shadow: none !important;
+	backdrop-filter: none !important;
+	-webkit-backdrop-filter: none !important;
 }
 
 .markdown-reading-view pre.language-graph,

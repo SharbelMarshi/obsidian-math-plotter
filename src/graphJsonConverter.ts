@@ -2,10 +2,18 @@ import { expandGraphSyntax } from '../graphPreprocessor';
 import { buildTikzFromOctaveData } from '../octave/octaveDataTikz';
 import { runOctavePipeline, type OctaveRenderDebug } from '../octave/octavePipeline';
 import { shouldUseOctave } from '../octave/octaveRouter';
+import { runJsSamplingPipeline } from '../sampler/jsSamplingPipeline';
+import { shouldUseJsSampling } from '../sampler/samplingRouter';
 import { compileExpressionForPgfplots } from '../graphSyntax';
+import { applyGridStyleToTikz } from './graphGridStyle';
+import { appendGraphPointsToTikz } from './graphPointsTikz';
 import type { MathGraphSettings } from './settings';
-import { resolveLatexGraphDimensions } from './graphSize';
+import { effectiveSamples2D, effectiveSamples3D } from '../render/renderSampleDefaults';
+import type { RenderMode } from '../render/renderMode';
+import { isGraph3dView, resolveLatexGraphDimensions } from './graphSize';
 import { getUserFunction, serializeGraphSpec, type GraphSpec } from './graphSpec';
+import { hydrateGraphStyle, resolvePlotStrokeColor } from './graphPlotStyle';
+import { pgfplots3dAxisOptions } from './pgfplots3dAxisStyle';
 
 function rangeToDomain(range?: [string, string]): string | undefined {
 	if (!range || range.length !== 2) {
@@ -48,14 +56,12 @@ function prepareSpecForRender(spec: GraphSpec): GraphSpec {
 }
 
 function buildStyleOptions(spec: GraphSpec): string {
+	hydrateGraphStyle(spec);
 	const style = spec.style ?? {};
-	const parts: string[] = [];
-	if (style.color) {
-		parts.push(`color=${style.color}`);
-	}
-	if (style.width) {
-		parts.push(`width=${style.width}`);
-	}
+	const parts: string[] = [
+		resolvePlotStrokeColor(spec),
+		style.width ?? 'thick',
+	];
 	if (style.fill && style.fill !== 'none') {
 		parts.push(`fill=${style.fill}`);
 	}
@@ -80,14 +86,14 @@ function buildAxisBracketOptions(spec: GraphSpec): string {
 	if (labels.z) {
 		parts.push(`zlabel={${labels.z}}`);
 	}
-	if (spec.title) {
-		parts.push(`title={${spec.title}}`);
+	if (spec.title?.trim()) {
+		parts.push(`title={${spec.title.trim()}}`);
 	}
 	return joinOptions(parts);
 }
 
 function buildAxisSize(spec: GraphSpec, settings?: MathGraphSettings): string {
-	const { width, height } = resolveLatexGraphDimensions(spec, settings);
+	const { width, height } = resolveLatexGraphDimensions(spec);
 	const xDomain = rangeToDomain(spec.ranges?.x);
 	const yDomain = rangeToDomain(spec.ranges?.y);
 	const parts = [width, height];
@@ -101,16 +107,6 @@ function buildParameterLines(spec: GraphSpec): string {
 	const params = spec.parameters ?? {};
 	return Object.entries(params)
 		.map(([name, value]) => `\\param{${name}}{${value}}`)
-		.join('\n');
-}
-
-function buildPointLines(spec: GraphSpec): string {
-	const points = spec.points ?? [];
-	return points
-		.map(point => {
-			const opts = point.label ? `[label={${point.label}}]` : '';
-			return `\\point${opts}{${point.x}, ${point.y}}`;
-		})
 		.join('\n');
 }
 
@@ -204,25 +200,11 @@ function buildParametric3dTikz(spec: GraphSpec, styleOpts: string, settings?: Ma
 
 	const tDomain = rangeToDomain(spec.ranges?.t) ?? '0:6.28318';
 	const labels = spec.labels ?? {};
-	const { width, height } = resolveLatexGraphDimensions(spec, settings);
+	const { width, height } = resolveLatexGraphDimensions(spec);
 	const xDomain = rangeToDomain(spec.ranges?.x);
 	const yDomain = rangeToDomain(spec.ranges?.y);
 
-	const axisOpts = joinOptions([
-		'grid=both',
-		'axis lines=middle',
-		'view={45}{30}',
-		`width=${width}`,
-		`height=${height}`,
-		labels.x ? `xlabel={${labels.x}}` : '',
-		labels.y ? `ylabel={${labels.y}}` : '',
-		labels.z ? `zlabel={${labels.z}}` : '',
-		spec.title ? `title={${spec.title}}` : '',
-		xDomain ? `xmin=${xDomain.split(':')[0]}` : '',
-		xDomain ? `xmax=${xDomain.split(':')[1]}` : '',
-		yDomain ? `ymin=${yDomain.split(':')[0]}` : '',
-		yDomain ? `ymax=${yDomain.split(':')[1]}` : '',
-	]);
+	const axisOpts = pgfplots3dAxisOptions(spec);
 
 	const plotOpts = joinOptions([
 		styleOpts,
@@ -257,7 +239,6 @@ function buildGraphBlockBody(spec: GraphSpec, settings?: MathGraphSettings): str
 	const axisBracket = buildAxisBracketOptions(spec);
 	const axisSize = buildAxisSize(spec, settings);
 	const paramLines = buildParameterLines(spec);
-	const pointLines = buildPointLines(spec);
 
 	let plotLine: string;
 	switch (spec.type) {
@@ -287,7 +268,7 @@ function buildGraphBlockBody(spec: GraphSpec, settings?: MathGraphSettings): str
 		? `\\axis[${axisBracket}]{${axisSize}}`
 		: `\\axis{${axisSize}}`;
 
-	return [paramLines, axisLine, plotLine, pointLines].filter(Boolean).join('\n');
+	return [paramLines, axisLine, plotLine].filter(Boolean).join('\n');
 }
 
 export function graphSpecToGraphSyntax(spec: GraphSpec, settings?: MathGraphSettings): string {
@@ -305,11 +286,17 @@ export function graphSpecToTikz(spec: GraphSpec, settings?: MathGraphSettings): 
 	const prepared = prepareSpecForRender(spec);
 
 	if (prepared.type === 'parametric3d') {
-		return buildParametric3dTikz(prepared, buildStyleOptions(prepared), settings);
+		return appendGraphPointsToTikz(
+			buildParametric3dTikz(prepared, buildStyleOptions(prepared), settings),
+			prepared,
+		);
 	}
 
 	const graphSyntax = graphSpecToGraphSyntax(prepared, settings);
-	return expandGraphSyntax(graphSyntax);
+	return applyGridStyleToTikz(
+		appendGraphPointsToTikz(expandGraphSyntax(graphSyntax), prepared),
+		prepared,
+	);
 }
 
 export function graphSpecToFencedBlock(spec: GraphSpec): string {
@@ -320,7 +307,7 @@ export function graphSpecToTikzSource(spec: GraphSpec, settings?: MathGraphSetti
 	return graphSpecToTikz(spec, settings);
 }
 
-export type GraphRenderEngineKind = 'symbolic' | 'octave';
+export type GraphRenderEngineKind = 'symbolic' | 'octave' | 'numerical';
 
 export interface GraphRenderBundle {
 	tikz: string;
@@ -329,24 +316,60 @@ export interface GraphRenderBundle {
 	octaveDebug?: OctaveRenderDebug;
 }
 
+export interface GraphRenderBundleOptions {
+	renderMode?: RenderMode;
+}
+
+function withRenderModeSamples(spec: GraphSpec, renderMode: RenderMode): GraphSpec {
+	if (renderMode === 'svgFast') {
+		return spec;
+	}
+	const copy = structuredClone(spec);
+	if (isGraph3dView(copy)) {
+		const { samplesX, samplesY } = effectiveSamples3D(copy, renderMode);
+		copy.samples = samplesX;
+		copy.samplesY = samplesY;
+	} else {
+		copy.samples = effectiveSamples2D(copy, renderMode);
+	}
+	return copy;
+}
+
 /**
- * Build TikZ for LuaLaTeX. Uses Octave numerical sampling when settings allow;
- * otherwise falls back to symbolic PGFPlots (default).
+ * Build TikZ for high-quality rendering (TikZJax / LuaLaTeX).
  */
 export async function buildGraphRenderBundle(
 	spec: GraphSpec,
 	settings: MathGraphSettings,
+	options: GraphRenderBundleOptions = {},
 ): Promise<GraphRenderBundle> {
-	const prepared = prepareSpecForRender(spec);
+	const renderMode = options.renderMode ?? 'tikzjax';
+	const prepared = withRenderModeSamples(prepareSpecForRender(spec), renderMode);
 	const octaveCase = shouldUseOctave(prepared, settings);
 
 	if (octaveCase) {
 		const octaveData = await runOctavePipeline(prepared, octaveCase, settings);
 		return {
-			tikz: buildTikzFromOctaveData(prepared, octaveData),
+			tikz: applyGridStyleToTikz(
+				appendGraphPointsToTikz(buildTikzFromOctaveData(prepared, octaveData), prepared),
+				prepared,
+			),
 			assets: { [octaveData.csvFilename]: octaveData.csvContent },
 			engine: 'octave',
 			octaveDebug: octaveData.debug,
+		};
+	}
+
+	const jsCase = shouldUseJsSampling(prepared);
+	if (jsCase) {
+		const jsData = runJsSamplingPipeline(prepared, jsCase);
+		return {
+			tikz: applyGridStyleToTikz(
+				appendGraphPointsToTikz(buildTikzFromOctaveData(prepared, jsData), prepared),
+				prepared,
+			),
+			assets: { [jsData.csvFilename]: jsData.csvContent },
+			engine: 'numerical',
 		};
 	}
 

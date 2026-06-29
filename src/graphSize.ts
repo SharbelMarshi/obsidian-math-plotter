@@ -1,7 +1,13 @@
 import type { GraphSpec } from './graphSpec';
-import type { MathGraphSettings } from './settings';
+import {
+	graphUses2dAspectRatio,
+	resolveAspectMode,
+	resolveAutoLatex2dDimensions,
+} from './graphAspectLayout';
 
 export type GraphSizePreset = 'small' | 'medium' | 'large' | 'fullWidth' | 'custom';
+
+export type AspectMode = 'auto' | 'fixed';
 
 export type InlineSizePreset = 'medium' | 'large' | 'fullWidth';
 
@@ -14,6 +20,8 @@ export interface GraphSizeSettings {
 	height?: string;
 	/** Visual zoom in Obsidian Reading View. CSS only — no LaTeX recompile. */
 	displayScale?: number;
+	/** 2D plot shape from axis ranges (auto) or preset dimensions (fixed). */
+	aspectMode?: AspectMode;
 }
 
 export const GRAPH_SIZE_PRESET_LABELS: Record<GraphSizePreset, string> = {
@@ -30,24 +38,26 @@ export const INLINE_SIZE_PRESET_LABELS: Record<InlineSizePreset, string> = {
 	fullWidth: 'Full width',
 };
 
-const PRESET_2D: Record<Exclude<GraphSizePreset, 'custom'>, { width: string; height: string }> = {
+export const GRAPH_PRESET_2D: Record<Exclude<GraphSizePreset, 'custom'>, { width: string; height: string }> = {
 	small: { width: '8cm', height: '5cm' },
 	medium: { width: '11cm', height: '7cm' },
 	large: { width: '15cm', height: '9cm' },
 	fullWidth: { width: '17cm', height: '10cm' },
 };
 
+const PRESET_2D = GRAPH_PRESET_2D;
+
 const PRESET_3D_HEIGHT: Record<Exclude<GraphSizePreset, 'custom'>, string> = {
 	small: '8cm',
 	medium: '9cm',
-	large: '10cm',
-	fullWidth: '10cm',
+	large: '11cm',
+	fullWidth: '11cm',
 };
 
 const PRESET_3D_WIDTH: Record<Exclude<GraphSizePreset, 'custom'>, string> = {
 	small: '12cm',
-	medium: '13cm',
-	large: '15cm',
+	medium: '14cm',
+	large: '17cm',
 	fullWidth: '17cm',
 };
 
@@ -73,21 +83,24 @@ export function isGraph3dView(spec: GraphSpec): boolean {
 	return false;
 }
 
-export function defaultGraphSize(settings?: Partial<MathGraphSettings>): GraphSizeSettings {
-	const preset = (settings?.defaultSizePreset ?? 'large') as GraphSizePreset;
+const DEFAULT_SIZE_PRESET: GraphSizePreset = 'large';
+const DEFAULT_2D_WIDTH = '15cm';
+const DEFAULT_2D_HEIGHT = '9cm';
+const DEFAULT_3D_WIDTH = '17cm';
+const DEFAULT_3D_HEIGHT = '11cm';
+
+export function defaultGraphSize(): GraphSizeSettings {
 	return {
-		preset,
-		width: settings?.default2dWidth ?? '15cm',
-		height: settings?.default2dHeight ?? '9cm',
-		displayScale: clampDisplayScale(settings?.defaultDisplayScale ?? 1),
+		preset: DEFAULT_SIZE_PRESET,
+		width: DEFAULT_2D_WIDTH,
+		height: DEFAULT_2D_HEIGHT,
+		displayScale: 1,
+		aspectMode: 'auto',
 	};
 }
 
-export function defaultGraphSizeForSpec(
-	spec: GraphSpec,
-	settings?: Partial<MathGraphSettings>,
-): GraphSizeSettings {
-	const base = defaultGraphSize(settings);
+export function defaultGraphSizeForSpec(spec: GraphSpec): GraphSizeSettings {
+	const base = defaultGraphSize();
 	if (!isGraph3dView(spec)) {
 		return base;
 	}
@@ -103,18 +116,19 @@ export function defaultGraphSizeForSpec(
 
 	return {
 		...base,
-		width: settings?.default3dWidth ?? '15cm',
-		height: settings?.default3dHeight ?? '10cm',
+		width: DEFAULT_3D_WIDTH,
+		height: DEFAULT_3D_HEIGHT,
 	};
 }
 
-export function ensureGraphSize(spec: GraphSpec, settings?: Partial<MathGraphSettings>): GraphSizeSettings {
+export function ensureGraphSize(spec: GraphSpec): GraphSizeSettings {
 	if (spec.size?.preset) {
 		return {
 			preset: spec.size.preset,
 			width: spec.size.width,
 			height: spec.size.height,
 			displayScale: clampDisplayScale(spec.size.displayScale ?? 1),
+			aspectMode: spec.size.aspectMode === 'fixed' ? 'fixed' : 'auto',
 		};
 	}
 
@@ -122,38 +136,28 @@ export function ensureGraphSize(spec: GraphSpec, settings?: Partial<MathGraphSet
 	if (spec.export?.width || spec.export?.height) {
 		return {
 			preset: 'custom',
-			width: spec.export.width ?? settings?.default2dWidth ?? '15cm',
-			height: spec.export.height ?? settings?.default2dHeight ?? '9cm',
+			width: spec.export.width ?? DEFAULT_2D_WIDTH,
+			height: spec.export.height ?? DEFAULT_2D_HEIGHT,
 			displayScale: 1,
+			aspectMode: 'auto',
 		};
 	}
 
-	return defaultGraphSizeForSpec(spec, settings);
+	return defaultGraphSizeForSpec(spec);
 }
 
-export function hydrateGraphSize(spec: GraphSpec, settings?: Partial<MathGraphSettings>): GraphSpec {
-	spec.size = ensureGraphSize(spec, settings);
+export function hydrateGraphSize(spec: GraphSpec): GraphSpec {
+	spec.size = ensureGraphSize(spec);
 	return spec;
 }
 
-/**
- * PGFPlots axis width/height for LaTeX rendering.
- * Changing these requires recompiling the graph.
- */
-export function resolveLatexGraphDimensions(
-	spec: GraphSpec,
-	settings?: Partial<MathGraphSettings>,
-): { width: string; height: string } {
-	const size = ensureGraphSize(spec, settings);
+function resolveFixedLatexGraphDimensions(spec: GraphSpec): { width: string; height: string } {
+	const size = ensureGraphSize(spec);
 	const is3d = isGraph3dView(spec);
 
 	if (size.preset === 'custom') {
-		const width = size.width?.trim()
-			|| (is3d ? settings?.default3dWidth : settings?.default2dWidth)
-			|| '15cm';
-		const height = size.height?.trim()
-			|| (is3d ? settings?.default3dHeight : settings?.default2dHeight)
-			|| (is3d ? '10cm' : '9cm');
+		const width = size.width?.trim() || (is3d ? DEFAULT_3D_WIDTH : DEFAULT_2D_WIDTH);
+		const height = size.height?.trim() || (is3d ? DEFAULT_3D_HEIGHT : DEFAULT_2D_HEIGHT);
 		return { width, height };
 	}
 
@@ -164,22 +168,29 @@ export function resolveLatexGraphDimensions(
 	};
 }
 
+export function resolveLatexGraphDimensions(spec: GraphSpec): { width: string; height: string } {
+	const size = ensureGraphSize(spec);
+
+	if (graphUses2dAspectRatio(spec) && resolveAspectMode(size) === 'auto') {
+		return resolveAutoLatex2dDimensions(spec, size);
+	}
+
+	return resolveFixedLatexGraphDimensions(spec);
+}
+
 /** @deprecated Use resolveLatexGraphDimensions */
-export function resolveGraphDimensions(
-	spec: GraphSpec,
-	settings?: Partial<MathGraphSettings>,
-): { width: string; height: string } {
-	return resolveLatexGraphDimensions(spec, settings);
+export function resolveGraphDimensions(spec: GraphSpec): { width: string; height: string } {
+	return resolveLatexGraphDimensions(spec);
 }
 
 /** CSS display zoom for Reading View (does not affect LaTeX output). */
-export function resolveDisplayScale(spec: GraphSpec, settings?: Partial<MathGraphSettings>): number {
-	return clampDisplayScale(ensureGraphSize(spec, settings).displayScale ?? 1);
+export function resolveDisplayScale(spec: GraphSpec): number {
+	return clampDisplayScale(ensureGraphSize(spec).displayScale ?? 1);
 }
 
 /** CSS classes for on-screen display layout (separate from LaTeX axis size). */
-export function graphDisplayCssClasses(spec: GraphSpec, settings?: Partial<MathGraphSettings>): string {
-	const size = ensureGraphSize(spec, settings);
+export function graphDisplayCssClasses(spec: GraphSpec): string {
+	const size = ensureGraphSize(spec);
 	const classes = ['mathgraph-display-scaled'];
 	if (size.preset === 'fullWidth') {
 		classes.push('mathgraph-display-full-width');
@@ -198,18 +209,18 @@ export function graphSizeCssClass(preset: GraphSizePreset): string {
 export function applyPresetToGraphSize(
 	preset: GraphSizePreset,
 	current?: GraphSizeSettings,
-	settings?: Partial<MathGraphSettings>,
 	spec?: GraphSpec,
 ): GraphSizeSettings {
 	const is3d = spec ? isGraph3dView(spec) : false;
 
 	if (preset === 'custom') {
-		const base = current ?? defaultGraphSize(settings);
+		const base = current ?? defaultGraphSize();
 		return {
 			preset: 'custom',
-			width: base.width ?? (is3d ? settings?.default3dWidth : settings?.default2dWidth) ?? '15cm',
-			height: base.height ?? (is3d ? settings?.default3dHeight : settings?.default2dHeight) ?? (is3d ? '10cm' : '9cm'),
+			width: base.width ?? (is3d ? DEFAULT_3D_WIDTH : DEFAULT_2D_WIDTH),
+			height: base.height ?? (is3d ? DEFAULT_3D_HEIGHT : DEFAULT_2D_HEIGHT),
 			displayScale: clampDisplayScale(base.displayScale ?? 1),
+			aspectMode: base.aspectMode ?? 'auto',
 		};
 	}
 
@@ -218,6 +229,7 @@ export function applyPresetToGraphSize(
 		width: is3d ? PRESET_3D_WIDTH[preset] : PRESET_2D[preset].width,
 		height: is3d ? PRESET_3D_HEIGHT[preset] : PRESET_2D[preset].height,
 		displayScale: clampDisplayScale(current?.displayScale ?? 1),
+		aspectMode: current?.aspectMode ?? 'auto',
 	};
 }
 

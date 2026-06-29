@@ -1,7 +1,10 @@
 node_modules/
+assets/tikzjax/node/
 dist/
 build/
 .DS_Store
 .env
 *.log
 .cache/
+.release-staging/
+math-plotter-full.zip

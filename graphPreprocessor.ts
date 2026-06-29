@@ -45,12 +45,18 @@ import {
 
 export { GraphSyntaxError } from './graphExpression';
 
+import { pgfplots3dAxisCoreOptions, pgfplotsThemeAxisStyleOptions } from './src/pgfplots3dAxisStyle';
+import { pgfplotsTextSafeTickOptions } from './src/pgfplotsTickStyle';
 const DEFAULT_AXIS_WIDTH = '6cm';
 const DEFAULT_AXIS_HEIGHT = '4cm';
+
+const DEFAULT_PLOT_COLOR = 'mathgraphLine';
 
 const DEFAULT_AXIS_OPTIONS = [
 	'grid=both',
 	'axis lines=middle',
+	pgfplotsThemeAxisStyleOptions(),
+	pgfplotsTextSafeTickOptions(),
 ].join(', ');
 
 const NUMERIC_RANGE_PATTERN = /^(-?\d+(?:\.\d+)?)\s*:\s*(-?\d+(?:\.\d+)?)$/;
@@ -355,7 +361,7 @@ function convertShadeToPlot(
 	const inequality = parseInequality(expression);
 	const style = applyPlotStyleOptions(options.trim(), plotIndex);
 	const opacity = style.fillOpacity ?? 0.2;
-	const colorOpt = style.extraPlotOpts.find(opt => !opt.includes('=')) ?? 'blue';
+	const colorOpt = style.extraPlotOpts.find(opt => !opt.includes('=')) ?? DEFAULT_PLOT_COLOR;
 
 	if (inequality?.kind === 'implicit') {
 		const fallback = tryInequalityCircleFill(substituteParameters(expression, parameters));
@@ -836,17 +842,22 @@ function buildAxisOptions(
 	limits: AxisLimits,
 	equalAspect = false,
 	extraAxisOptions?: string,
+	hasSurface3d = false,
 ): string {
-	const parts = [DEFAULT_AXIS_OPTIONS];
+	const parts = [hasSurface3d ? pgfplots3dAxisCoreOptions() : DEFAULT_AXIS_OPTIONS];
 	const hasFullWindow = Boolean(limits.x && limits.y);
 
-	parts.push(hasFullWindow ? 'enlargelimits=false' : 'enlargelimits=true');
+	if (hasSurface3d) {
+		parts.push('enlargelimits=false');
+	} else {
+		parts.push(hasFullWindow ? 'enlargelimits=false' : 'enlargelimits=true');
+	}
 
 	if (equalAspect) {
 		parts.push('axis equal image');
 	}
 
-	if (extraAxisOptions?.trim()) {
+	if (extraAxisOptions?.trim() && !hasSurface3d) {
 		parts.push(extraAxisOptions.trim());
 	}
 
@@ -1179,8 +1190,12 @@ function convertFunctionToPlot(
 		]);
 		const surfOpts = [
 			'mesh',
+			'thick',
+			'point meta=z',
+			'colormap/hot',
 			resolvedPlotOpts,
 			'samples=20',
+			...style.extraPlotOpts.filter(opt => /colormap|shader|surf|mesh|draw|point meta|mathgraphLine|black/i.test(opt)),
 		].filter(Boolean).join(', ');
 		return {
 			line: `\\addplot3[${surfOpts}] {${expr}};`,
@@ -1278,9 +1293,12 @@ function convertFunctionToPlot(
 		['samples', '100'],
 	]);
 	const trigDegrees = resolveTrigDegrees(addplotOpts, '-5:5');
+	const plotColorOpts = style.extraPlotOpts.length > 0
+		? style.extraPlotOpts
+		: [DEFAULT_PLOT_COLOR, 'thick'];
 	const finalAddplotOpts = trigDegrees
-		? mergePlotOptions(addplotOpts, [], [...trigPlotOptions(true), ...style.extraPlotOpts])
-		: mergePlotOptions(addplotOpts, [], style.extraPlotOpts);
+		? mergePlotOptions(addplotOpts, [], [...trigPlotOptions(true), ...plotColorOpts])
+		: mergePlotOptions(addplotOpts, [], plotColorOpts);
 	const limits = plotLimitsFromUserOptions(opts, finalAddplotOpts);
 
 	if (limits.x && !limits.y) {
@@ -1298,12 +1316,12 @@ function convertFunctionToPlot(
 	appendLegend(lines, style.legendLabel);
 
 	if (style.fillMode === 'under') {
-		lines.push(buildFilledCycleLine(domain, expr, style.extraPlotOpts[0] ?? 'blue', style.fillOpacity ?? 0.2));
+		lines.push(buildFilledCycleLine(domain, expr, style.extraPlotOpts[0] ?? DEFAULT_PLOT_COLOR, style.fillOpacity ?? 0.2));
 	} else if (style.fillMode === 'between' && lastNamePath && style.namePath) {
 		lines.push(buildFillBetweenLine(
 			lastNamePath,
 			style.namePath,
-			style.extraPlotOpts[0] ?? 'blue',
+			style.extraPlotOpts[0] ?? DEFAULT_PLOT_COLOR,
 			style.fillOpacity ?? 0.15,
 		));
 	}
@@ -1570,7 +1588,8 @@ function transformGraphBlock(blockBody: string, nestedInTikzpicture: boolean, ba
 		cleanedOptions,
 		axisLimits,
 		equalAspect,
-		hasSurface3d ? 'view={45}{30}' : undefined,
+		undefined,
+		hasSurface3d,
 	);
 	const paramDefs = buildParameterDefs(parameters);
 	const fillBetweenLib = needsFillBetween ? '\\usepgfplotslibrary{fillbetween}\n' : '';

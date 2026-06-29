@@ -1,6 +1,6 @@
-import { compileExpressionForOctave } from '../graphSyntax';
-import type { GraphSpec } from '../src/graphSpec';
-import { getUserFunction } from '../src/graphSpec';
+import { evaluateExpression } from './ExpressionEngine';
+import type { GraphSpec } from './graphSpec';
+import { getUserFunction } from './graphSpec';
 
 export const SURFACE_Z_CLIP_WARNING =
 	'Most of the surface may be clipped by the selected z range.';
@@ -8,7 +8,7 @@ export const SURFACE_Z_CLIP_WARNING =
 const SAMPLE_GRID = 11;
 const IN_RANGE_FRACTION_THRESHOLD = 0.5;
 
-function parseBoundToNumber(raw: string): number | null {
+export function parseBoundToNumber(raw: string): number | null {
 	const trimmed = raw.trim().replace(/π/g, 'pi');
 	if (!trimmed) {
 		return null;
@@ -41,38 +41,11 @@ function evaluateSurfaceZ(
 	parameters: Record<string, string>,
 ): number | null {
 	try {
-		const compiled = compileExpressionForOctave(expr, {
+		const body = expr.replace(/^y\s*=\s*/i, '').trim();
+		return evaluateExpression(body, { x, y }, parameters, {
 			variables: ['x', 'y', 'z', 't', 'r'],
 			parameters,
 		});
-		let jsExpr = compiled
-			.replace(/\.\^/g, '**')
-			.replace(/\.\*/g, '*')
-			.replace(/\.\//g, '/')
-			.replace(/\bpi\b/g, 'Math.PI')
-			.replace(/\bx\b/g, `(${x})`)
-			.replace(/\by\b/g, `(${y})`)
-			.replace(/\bexp\b/g, 'Math.exp')
-			.replace(/\blog\b/g, 'Math.log')
-			.replace(/\bln\b/g, 'Math.log')
-			.replace(/\bsqrt\b/g, 'Math.sqrt')
-			.replace(/\babs\b/g, 'Math.abs')
-			.replace(/\bsin\b/g, 'Math.sin')
-			.replace(/\bcos\b/g, 'Math.cos')
-			.replace(/\btan\b/g, 'Math.tan')
-			.replace(/\bsinh\b/g, 'Math.sinh')
-			.replace(/\bcosh\b/g, 'Math.cosh')
-			.replace(/\btanh\b/g, 'Math.tanh');
-
-		for (const [name, value] of Object.entries(parameters)) {
-			const numeric = parseBoundToNumber(value);
-			if (numeric !== null) {
-				jsExpr = jsExpr.replace(new RegExp(`\\b${name}\\b`, 'g'), `(${numeric})`);
-			}
-		}
-
-		const result = Function(`"use strict"; return (${jsExpr});`)() as number;
-		return Number.isFinite(result) ? result : null;
 	} catch {
 		return null;
 	}

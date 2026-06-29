@@ -1,5 +1,8 @@
 import { MarkdownView, Notice, Plugin } from 'obsidian';
-import { TikzRenderer } from './render/renderer';
+import { GraphRenderer } from './render/renderer';
+import { resolvePluginBaseDir } from './src/pluginPaths';
+import { clearGraphRenderCache } from './src/graphRenderCache';
+import { ensureTikzJaxFontsLoaded } from './src/tikzJaxFonts';
 import { insertGraphBlockAtCursor } from './src/GraphBlockUpdater';
 import { GraphBuilderModal } from './src/graphBuilderModal';
 import { registerGraphProcessor } from './src/graphProcessor';
@@ -10,27 +13,55 @@ import {
 	type MathGraphSettings,
 } from './src/settings';
 import { applyMathGraphUiStyle } from './src/uiStyle';
+import { getCurrentTheme, type ThemeName } from './src/graphThemeColors';
+import {
+	createThemeWatcher,
+	refreshVisibleGraphsForThemeChange,
+	rerenderGraphContainer,
+	type GraphRerenderOptions,
+} from './src/graphThemeWatcher';
 // TODO(v2): register inlineGraphEditorExtension() for source-mode empty ```graph``` widgets.
 
 export default class MathGraphStudioPlugin extends Plugin {
 	settings: MathGraphSettings = DEFAULT_SETTINGS;
-	renderer!: TikzRenderer;
+	renderer!: GraphRenderer;
+	currentTheme: ThemeName = 'light';
+
+	private themeWatcher: { disconnect: () => void } | null = null;
+	private themeChangeCallbacks = new Set<(theme: ThemeName) => void>();
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
 		this.applyUiStyle();
 
-		this.renderer = new TikzRenderer(
+		const pluginBaseDir = resolvePluginBaseDir(this);
+		if (!GraphRenderer.tikzJaxAssetsPresent(pluginBaseDir)) {
+			console.warn(
+				'[Math Plotter] TikZJax assets missing. Run `npm install && npm run build` in the plugin folder.',
+				pluginBaseDir,
+			);
+		}
+
+		this.renderer = new GraphRenderer(
 			() => activeDocument.body.classList.contains('theme-dark'),
+			() => ({
+				lualatexPath: this.settings.lualatexPath,
+				useLocalLuaLatexFallback: this.settings.useLocalLuaLatexFallback,
+			}),
+			pluginBaseDir,
+			() => ensureTikzJaxFontsLoaded(this.app, this),
 		);
+
+		this.currentTheme = getCurrentTheme();
+		this.initThemeWatcher();
 
 		this.addCommand({
 			id: 'insert-math-graph',
-			name: 'Insert Math Graph',
+			name: 'Insert Function Plot',
 			callback: () => this.openInsertModal(),
 		});
 
-		this.addRibbonIcon('line-chart', 'Insert Math Graph', () => {
+		this.addRibbonIcon('line-chart', 'Insert Function Plot', () => {
 			this.openInsertModal();
 		});
 
@@ -39,11 +70,55 @@ export default class MathGraphStudioPlugin extends Plugin {
 	}
 
 	onunload(): void {
+		this.themeWatcher?.disconnect();
 		this.renderer.clearCache();
+	}
+
+	getCurrentTheme(): ThemeName {
+		return getCurrentTheme();
+	}
+
+	onThemeChanged(callback: (theme: ThemeName) => void): () => void {
+		this.themeChangeCallbacks.add(callback);
+		return () => {
+			this.themeChangeCallbacks.delete(callback);
+		};
+	}
+
+	notifyThemeChanged(theme: ThemeName): void {
+		for (const callback of this.themeChangeCallbacks) {
+			callback(theme);
+		}
+	}
+
+	refreshVisibleGraphsForThemeChange(): void {
+		refreshVisibleGraphsForThemeChange(this.app);
+	}
+
+	rerenderGraphContainer(container: HTMLElement, options?: GraphRerenderOptions): void {
+		rerenderGraphContainer(container, options);
+	}
+
+	initThemeWatcher(): void {
+		this.themeWatcher?.disconnect();
+		this.currentTheme = getCurrentTheme();
+		this.themeWatcher = createThemeWatcher(this);
+		this.register(() => this.themeWatcher?.disconnect());
 	}
 
 	async loadSettings(): Promise<void> {
 		const saved = await this.loadData();
+		if (saved && typeof saved === 'object') {
+			delete saved.renderTimeoutSeconds;
+			delete saved.renderCacheEnabled;
+			delete saved.renderTimeout;
+			delete saved.timeoutSeconds;
+			delete saved.cacheEnabled;
+			delete saved.renderCache;
+			delete saved.uiStyle;
+			delete saved.themeStyle;
+			delete saved.glassMode;
+		}
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved ?? {});
 	}
 
@@ -51,10 +126,11 @@ export default class MathGraphStudioPlugin extends Plugin {
 		await this.saveData(this.settings);
 		this.applyUiStyle();
 		this.renderer.clearCache();
+		clearGraphRenderCache();
 	}
 
 	applyUiStyle(): void {
-		applyMathGraphUiStyle(activeDocument, this.settings);
+		applyMathGraphUiStyle(activeDocument);
 	}
 
 	openInsertModal(): void {

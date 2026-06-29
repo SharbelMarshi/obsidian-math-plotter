@@ -1,36 +1,52 @@
 import { resolveGraphDimensions } from '../src/graphSize';
 import type { GraphSpec } from '../src/graphSpec';
+import { gridAxisOption } from '../src/graphGridStyle';
+import { pgfplots3dAxisOptions, pgfplotsThemeAxisStyleOptions } from '../src/pgfplots3dAxisStyle';
+import { pgfplotsTextSafeTickOptions } from '../src/pgfplotsTickStyle';
+import { buildSampled2dPlotOptions, buildSampled3dPlotOptions } from '../src/graphPlotStyle';
 import type { OctavePipelineResult } from './octavePipeline';
 import type { OctaveUseCase } from './octaveRouter';
+import type { JsSamplingUseCase } from '../sampler/samplingRouter';
 import { csvColumnsForUseCase } from './octaveCsvValidation';
+
+export type SampledPlotUseCase = OctaveUseCase | JsSamplingUseCase;
+
+export interface SampledPlotData {
+	csvFilename: string;
+	useCase: SampledPlotUseCase;
+}
 
 function joinOptions(options: string[]): string {
 	return options.filter(Boolean).join(', ');
 }
 
 function axisOptions(spec: GraphSpec, view3d: boolean): string {
+	if (view3d) {
+		const opts = pgfplots3dAxisOptions(spec);
+		const zRange = spec.ranges?.z;
+		if (zRange) {
+			return joinOptions([opts, `zmin=${zRange[0]}`, `zmax=${zRange[1]}`]);
+		}
+		return opts;
+	}
+
 	const labels = spec.labels ?? {};
 	const { width, height } = resolveGraphDimensions(spec);
 	const xRange = spec.ranges?.x;
 	const yRange = spec.ranges?.y;
 
 	const parts = [
-		'grid=both',
+		gridAxisOption(spec),
 		'axis lines=middle',
 		'axis background/.style={fill=none}',
+		pgfplotsThemeAxisStyleOptions(),
+		pgfplotsTextSafeTickOptions(),
 		`width=${width}`,
 		`height=${height}`,
 		labels.x ? `xlabel={${labels.x}}` : '',
 		labels.y ? `ylabel={${labels.y}}` : '',
-		spec.title ? `title={${spec.title}}` : '',
+		spec.title?.trim() ? `title={${spec.title.trim()}}` : '',
 	];
-
-	if (view3d) {
-		parts.push('view={45}{30}');
-		if (labels.z) {
-			parts.push(`zlabel={${labels.z}}`);
-		}
-	}
 
 	if (xRange) {
 		parts.push(`xmin=${xRange[0]}`, `xmax=${xRange[1]}`);
@@ -42,12 +58,11 @@ function axisOptions(spec: GraphSpec, view3d: boolean): string {
 	return joinOptions(parts);
 }
 
-function plotStyleOptions(spec: GraphSpec): string {
-	const style = spec.style ?? {};
-	return joinOptions([
-		style.color ? `${style.color}` : '',
-		style.width ?? '',
-	]);
+function plotStyleOptions(spec: GraphSpec, is3d: boolean): string {
+	if (is3d) {
+		return buildSampled3dPlotOptions(spec);
+	}
+	return buildSampled2dPlotOptions(spec);
 }
 
 export interface OctavePlotTableCommand {
@@ -56,7 +71,7 @@ export interface OctavePlotTableCommand {
 	meshRows?: number;
 }
 
-function tableColumnBindings(useCase: OctaveUseCase): string {
+function tableColumnBindings(useCase: SampledPlotUseCase): string {
 	const columns = csvColumnsForUseCase(useCase);
 	if (columns.length === 3) {
 		return 'col sep=comma, x=x, y=y, z=z';
@@ -69,12 +84,12 @@ function tableColumnBindings(useCase: OctaveUseCase): string {
 
 export function buildOctavePlotTableCommand(
 	spec: GraphSpec,
-	useCase: OctaveUseCase,
+	useCase: SampledPlotUseCase,
 	tableFile: string,
 ): OctavePlotTableCommand {
-	const styleOpts = plotStyleOptions(spec);
-	const tableOpts = tableColumnBindings(useCase);
 	const is3d = useCase === 'surface3d' || useCase === 'pde3d' || useCase === 'largeSurface';
+	const styleOpts = plotStyleOptions(spec, is3d);
+	const tableOpts = tableColumnBindings(useCase);
 
 	if (is3d) {
 		const meshRows = spec.samplesY ?? spec.samples ?? 35;
@@ -90,7 +105,7 @@ export function buildOctavePlotTableCommand(
 		};
 	}
 
-	const plotOpts = joinOptions([styleOpts, 'thick']);
+	const plotOpts = joinOptions([styleOpts]);
 	return {
 		addplotLine: `\\addplot[${plotOpts}] table[${tableOpts}] {${tableFile}};`,
 		colSepComma: true,
@@ -99,7 +114,7 @@ export function buildOctavePlotTableCommand(
 
 export function buildTikzFromOctaveData(
 	spec: GraphSpec,
-	data: OctavePipelineResult,
+	data: SampledPlotData,
 ): string {
 	const useCase = data.useCase;
 	const is3d = useCase === 'surface3d' || useCase === 'pde3d' || useCase === 'largeSurface';

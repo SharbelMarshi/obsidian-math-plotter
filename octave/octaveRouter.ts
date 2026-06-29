@@ -36,14 +36,6 @@ export function shouldUseOctave(
 		return null;
 	}
 
-	if (spec.renderEngine === 'symbolic') {
-		return null;
-	}
-
-	if (spec.renderEngine === 'octave') {
-		return resolveForcedOctaveCase(spec);
-	}
-
 	if (spec.numericMode && isOdePde(spec)) {
 		if (spec.type === 'pde' && (spec.view ?? '3d') === '3d') {
 			return 'pde3d';
@@ -77,19 +69,4 @@ export function shouldUseOctave(
 	}
 
 	return null;
-}
-
-function resolveForcedOctaveCase(spec: GraphSpec): OctaveUseCase {
-	switch (spec.type) {
-		case 'surface3d':
-			return 'surface3d';
-		case 'ode':
-			return 'ode2d';
-		case 'pde':
-			return (spec.view ?? '3d') === '3d' ? 'pde3d' : 'pde2d';
-		case 'function2d':
-			return spec.implicit ? 'implicit2d' : 'function2d';
-		default:
-			return is3dSurface(spec) ? 'surface3d' : 'function2d';
-	}
 }

@@ -1,3 +1,4 @@
+import { buildTikzThemeColorDefinitions, type GraphThemeColors } from '../src/graphThemeColors';
 import { getUserSourceLineOffset } from './latexErrorMapping';
 import { SIMPLE_TIKZ_HELPERS } from './simpleShapes';
 
@@ -41,7 +42,7 @@ export function tidyTikzSource(tikzSource: string): string {
 		.join('\n');
 }
 
-export function wrapLatexSource(source: string): string {
+export function wrapLatexSource(source: string, theme?: GraphThemeColors): string {
 	let cleanedSource = source;
 
 	cleanedSource = cleanedSource.replace(/\\documentclass(?:\[[^\]]*\])?\{[^}]+\}/g, '');
@@ -55,5 +56,6 @@ export function wrapLatexSource(source: string): string {
 	cleanedSource = cleanedSource.replace(/\\setsansfont(?:\[[^\]]*\])?\{[^}]+\}/g, '');
 	cleanedSource = cleanedSource.replace(/\\newfontfamily\\\w+(?:\[[^\]]*\])?\{[^}]+\}/g, '');
 
-	return LATEX_WRAPPER_PREFIX + cleanedSource.trim() + LATEX_WRAPPER_SUFFIX;
+	const themeDefs = theme ? `${buildTikzThemeColorDefinitions(theme)}\n` : '';
+	return LATEX_WRAPPER_PREFIX + themeDefs + cleanedSource.trim() + LATEX_WRAPPER_SUFFIX;
 }

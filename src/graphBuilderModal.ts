@@ -1,4 +1,4 @@
-import { App, Modal, Notice, Setting } from 'obsidian';
+import { App, Modal, Notice } from 'obsidian';
 import type MathGraphStudioPlugin from '../main';
 import { replaceGraphBlockBody, type GraphBlockLocation } from './GraphBlockUpdater';
 import { placeholderForGraphType } from './functionPlaceholders';
@@ -10,9 +10,16 @@ import {
 	setUserFunction,
 	type GraphPoint,
 	type GraphSpec,
-	type GraphRenderEngine,
 	type GraphType,
 } from './graphSpec';
+import { graphUses3dPoints } from './graphPointsTikz';
+import {
+	analyzeGraphPoint,
+	attachComputedCoordinates,
+	graphSupportsAutoComputeY,
+	graphSupportsAutoComputeZ,
+	summarizeGraphPointWarnings,
+} from './graphPointResolution';
 import {
 	applyPresetToGraphSize,
 	clampDisplayScale,
@@ -22,12 +29,15 @@ import {
 	ensureGraphSize,
 	formatDisplayScaleLabel,
 	GRAPH_SIZE_PRESET_LABELS,
-	resolveGraphDimensions,
 	validateGraphSize,
+	type AspectMode,
 	type GraphSizePreset,
 } from './graphSize';
+import { ASPECT_MODE_LABELS, graphUses2dAspectRatio } from './graphAspectLayout';
 import { surfaceZRangeClipWarning } from './graphRangeValidation';
-import { uiStyleClassName } from './uiStyle';
+import { graphSupportsGridToggle, gridEnabledForGraph } from './graphGridStyle';
+import { graphSupportsSurfaceStyleControl, hydrateGraphStyle, type SurfaceStyle } from './graphPlotStyle';
+import { mathgraphUiClassName } from './uiStyle';
 
 export interface GraphBuilderModalOptions {
 	mode: 'insert' | 'edit';
@@ -36,18 +46,25 @@ export interface GraphBuilderModalOptions {
 	onInsert?: (spec: GraphSpec) => Promise<void>;
 }
 
+type BuilderTab = 'equation' | 'ranges' | 'style' | 'size' | 'points';
+
+const BUILDER_TABS: Array<{ id: BuilderTab; label: string }> = [
+	{ id: 'equation', label: 'Equation' },
+	{ id: 'ranges', label: 'Ranges' },
+	{ id: 'style', label: 'Style' },
+	{ id: 'size', label: 'Size' },
+	{ id: 'points', label: 'Points' },
+];
+
 export class GraphBuilderModal extends Modal {
 	private spec: GraphSpec;
 	private readonly options: GraphBuilderModalOptions;
-	private bodyEl!: HTMLElement;
-	private equationSection!: HTMLElement;
-	private rangesSection!: HTMLElement;
-	private parametersSection!: HTMLElement;
-	private pointsSection!: HTMLElement;
-	private sizeSection!: HTMLElement;
-	private styleSection!: HTMLElement;
-	private previewSection!: HTMLElement;
-	private customSizeFields!: HTMLElement;
+	private shellEl!: HTMLElement;
+	private panelEl!: HTMLElement;
+	private activeTab: BuilderTab = 'equation';
+	private navItems = new Map<BuilderTab, HTMLElement>();
+	private panels = new Map<BuilderTab, HTMLElement>();
+	private pointWarningsEl: HTMLElement | null = null;
 
 	constructor(app: App, private plugin: MathGraphStudioPlugin, options: GraphBuilderModalOptions) {
 		super(app);
@@ -61,484 +78,536 @@ export class GraphBuilderModal extends Modal {
 		const { contentEl, titleEl, modalEl } = this;
 		contentEl.empty();
 		modalEl.addClass('mathgraph-modal-container');
-		contentEl.addClass('mathgraph-modal', uiStyleClassName(this.plugin.settings.uiStyle));
 		titleEl.hide();
 
-		const header = contentEl.createDiv({ cls: 'mathgraph-modal-header' });
-		header.createDiv({
-			cls: 'mathgraph-modal-title',
-			text: 'MathGraph Studio',
-		});
-		header.createDiv({
-			cls: 'mathgraph-modal-subtitle',
-			text: 'Create a function, surface, ODE/PDE solution, or data graph.',
+		this.shellEl = contentEl.createDiv({
+			cls: `mathgraph-modal-shell mathgraph-modal ${mathgraphUiClassName()}`,
 		});
 
-		this.bodyEl = contentEl.createDiv({ cls: 'mathgraph-modal-body' });
-		this.renderTopRow();
-		this.renderSections();
+		this.renderHeader();
+		this.renderMain();
+		this.renderFooter();
+		this.renderForm();
+		this.switchTab(this.activeTab);
+	}
 
-		const footer = contentEl.createDiv({ cls: 'mathgraph-modal-footer mathgraph-modal-actions' });
-		footer.createEl('button', { text: 'Cancel', cls: 'mathgraph-button mathgraph-button-secondary' })
-			.addEventListener('click', () => this.close());
+	private renderHeader(): void {
+		const header = this.shellEl.createDiv({ cls: 'mathgraph-modal-header' });
+		const textWrap = header.createDiv({ cls: 'mathgraph-modal-header-text' });
+		textWrap.createDiv({ cls: 'mathgraph-modal-title', text: 'Math Plotter' });
+	}
+
+	private renderMain(): void {
+		const main = this.shellEl.createDiv({ cls: 'mathgraph-modal-main' });
+		const nav = main.createDiv({ cls: 'mathgraph-modal-nav' });
+
+		for (const tab of BUILDER_TABS) {
+			const item = nav.createDiv({
+				cls: 'mathgraph-modal-nav-item',
+				text: tab.label,
+			});
+			item.dataset.tab = tab.id;
+			item.addEventListener('click', () => this.switchTab(tab.id));
+			this.navItems.set(tab.id, item);
+		}
+
+		this.panelEl = main.createDiv({ cls: 'mathgraph-modal-panel-scroll' });
+		for (const tab of BUILDER_TABS) {
+			const panel = this.panelEl.createDiv({ cls: 'mathgraph-modal-panel' });
+			panel.dataset.tab = tab.id;
+			this.panels.set(tab.id, panel);
+		}
+	}
+
+	private renderFooter(): void {
+		const footer = this.shellEl.createDiv({ cls: 'mathgraph-modal-footer' });
+		footer.createEl('button', {
+			type: 'button',
+			text: 'Cancel',
+			cls: 'mathgraph-button mathgraph-button-secondary',
+		}).addEventListener('click', () => this.close());
 
 		const primaryLabel = this.options.mode === 'edit' ? 'Save Graph' : 'Insert Graph';
-		footer.createEl('button', { text: primaryLabel, cls: 'mathgraph-button mathgraph-button-primary' })
-			.addEventListener('click', () => void this.submit());
+		footer.createEl('button', {
+			type: 'button',
+			text: primaryLabel,
+			cls: 'mathgraph-button mathgraph-button-primary',
+		}).addEventListener('click', () => void this.submit());
 	}
 
-	private createSection(title: string, description?: string): HTMLElement {
-		const section = this.bodyEl.createDiv({ cls: 'mathgraph-section' });
-		const header = section.createDiv({ cls: 'mathgraph-section-header' });
-		header.createDiv({ cls: 'mathgraph-section-title', text: title });
-		if (description) {
-			header.createDiv({ cls: 'mathgraph-section-description', text: description });
+	private switchTab(tab: BuilderTab): void {
+		this.activeTab = tab;
+		for (const [id, item] of this.navItems) {
+			item.toggleClass('mathgraph-modal-nav-item-active', id === tab);
 		}
-		return section.createDiv({ cls: 'mathgraph-section-body' });
+		for (const [id, panel] of this.panels) {
+			panel.toggleClass('mathgraph-modal-panel-active', id === tab);
+		}
 	}
 
-	private renderTopRow(): void {
-		const row = this.bodyEl.createDiv({ cls: 'mathgraph-modal-top-row' });
-
-		const typeField = row.createDiv({ cls: 'mathgraph-field' });
-		typeField.createEl('label', { text: 'Graph type', cls: 'mathgraph-label' });
-		const typeSelect = typeField.createEl('select', { cls: 'mathgraph-select' });
-		for (const [value, label] of Object.entries(GRAPH_TYPE_LABELS)) {
-			typeSelect.createEl('option', { text: label, value });
+	private updateNavVisibility(): void {
+		const pointsNav = this.navItems.get('points');
+		pointsNav?.toggleClass('mathgraph-modal-nav-item-hidden', this.spec.type === 'data');
+		if (this.spec.type === 'data' && this.activeTab === 'points') {
+			this.switchTab('equation');
 		}
-		typeSelect.value = this.spec.type;
-		typeSelect.addEventListener('change', () => {
+	}
+
+	private renderForm(): void {
+		for (const panel of this.panels.values()) {
+			panel.empty();
+		}
+
+		this.renderEquationPanel(this.panels.get('equation')!);
+		this.renderRangesPanel(this.panels.get('ranges')!);
+		this.renderStylePanel(this.panels.get('style')!);
+		this.renderSizePanel(this.panels.get('size')!);
+		this.renderPointsPanel(this.panels.get('points')!);
+		this.updateNavVisibility();
+	}
+
+	private formGrid(parent: HTMLElement): HTMLElement {
+		return parent.createDiv({ cls: 'mathgraph-form-grid' });
+	}
+
+	private formRow(
+		parent: HTMLElement,
+		label: string,
+		options?: { help?: string; wide?: boolean },
+	): HTMLElement {
+		const row = parent.createDiv({
+			cls: `mathgraph-form-row${options?.wide ? ' mathgraph-form-row-wide' : ''}`,
+		});
+		row.createEl('label', { cls: 'mathgraph-field-label', text: label });
+		if (options?.help) {
+			row.createEl('div', { cls: 'mathgraph-field-help', text: options.help });
+		}
+		return row.createDiv({ cls: 'mathgraph-field' });
+	}
+
+	private formText(
+		parent: HTMLElement,
+		label: string,
+		value: string,
+		onChange: (value: string) => void,
+		options?: { placeholder?: string; help?: string; wide?: boolean },
+	): void {
+		const field = this.formRow(parent, label, options);
+		const input = field.createEl('input', {
+			type: 'text',
+			cls: 'mathgraph-input',
+			value,
+		});
+		if (options?.placeholder) {
+			input.placeholder = options.placeholder;
+		}
+		input.addEventListener('input', () => onChange(input.value));
+	}
+
+	private formTextArea(
+		parent: HTMLElement,
+		label: string,
+		value: string,
+		onChange: (value: string) => void,
+		options?: { placeholder?: string; help?: string; wide?: boolean },
+	): void {
+		const field = this.formRow(parent, label, { ...options, wide: true });
+		const input = field.createEl('textarea', {
+			cls: 'mathgraph-input mathgraph-textarea',
+			text: value,
+		});
+		if (options?.placeholder) {
+			input.placeholder = options.placeholder;
+		}
+		input.rows = 4;
+		input.addEventListener('input', () => onChange(input.value));
+	}
+
+	private formSelect(
+		parent: HTMLElement,
+		label: string,
+		value: string,
+		choices: Array<{ value: string; label: string }>,
+		onChange: (value: string) => void,
+		options?: { help?: string; wide?: boolean },
+	): void {
+		const field = this.formRow(parent, label, options);
+		const select = field.createEl('select', { cls: 'mathgraph-select' });
+		for (const choice of choices) {
+			select.createEl('option', { text: choice.label, value: choice.value });
+		}
+		select.value = value;
+		select.addEventListener('change', () => onChange(select.value));
+	}
+
+	private formRangeRow(
+		parent: HTMLElement,
+		label: string,
+		current: [string, string],
+		onChange: (min: string, max: string) => void,
+	): void {
+		const row = parent.createDiv({ cls: 'mathgraph-range-row' });
+		row.createEl('label', { cls: 'mathgraph-range-label', text: `${label} range` });
+		const minInput = row.createEl('input', {
+			type: 'text',
+			cls: 'mathgraph-input',
+			value: current[0],
+			attr: { placeholder: 'min' },
+		});
+		row.createSpan({ cls: 'mathgraph-range-separator', text: 'to' });
+		const maxInput = row.createEl('input', {
+			type: 'text',
+			cls: 'mathgraph-input',
+			value: current[1],
+			attr: { placeholder: 'max' },
+		});
+		const sync = () => onChange(minInput.value, maxInput.value);
+		minInput.addEventListener('input', sync);
+		maxInput.addEventListener('input', sync);
+	}
+
+	private formSampleField(
+		parent: HTMLElement,
+		label: string,
+		value: string,
+		onChange: (value: string) => void,
+	): void {
+		const field = parent.createDiv({ cls: 'mathgraph-field mathgraph-sample-field' });
+		field.createEl('label', { cls: 'mathgraph-field-label', text: label });
+		const input = field.createEl('input', {
+			type: 'text',
+			cls: 'mathgraph-input',
+			value,
+		});
+		input.addEventListener('input', () => onChange(input.value));
+	}
+
+	private renderEquationPanel(panel: HTMLElement): void {
+		const grid = this.formGrid(panel);
+
+		this.formSelect(grid, 'Graph type', this.spec.type, Object.entries(GRAPH_TYPE_LABELS)
+			.map(([value, label]) => ({ value, label })), value => {
 			const preservedSize = this.spec.size;
-			this.spec = defaultGraphSpec(typeSelect.value as GraphType, this.plugin.settings);
+			this.spec = defaultGraphSpec(value as GraphType, this.plugin.settings);
 			if (preservedSize) {
 				this.spec.size = preservedSize;
 			}
 			this.renderForm();
+			this.updateNavVisibility();
+		}, { wide: true });
+
+		this.formText(grid, 'Title', this.spec.title ?? '', value => {
+			this.spec.title = value;
+		}, {
+			placeholder: 'Optional graph title',
+			wide: true,
 		});
-
-		const renderField = row.createDiv({ cls: 'mathgraph-field' });
-		renderField.createEl('label', { text: 'Render mode', cls: 'mathgraph-label' });
-		const renderSelect = renderField.createEl('select', { cls: 'mathgraph-select' });
-		renderSelect.createEl('option', { text: 'Auto', value: 'auto' });
-		renderSelect.createEl('option', { text: 'Symbolic (PGFPlots)', value: 'symbolic' });
-		if (this.plugin.settings.enableOctaveEngine) {
-			renderSelect.createEl('option', { text: 'Octave (numeric)', value: 'octave' });
-		}
-		renderSelect.value = this.spec.renderEngine ?? 'auto';
-		renderSelect.addEventListener('change', () => {
-			this.spec.renderEngine = renderSelect.value as GraphRenderEngine;
-			this.updatePreview();
-		});
-	}
-
-	private renderSections(): void {
-		this.bodyEl.querySelectorAll('.mathgraph-section').forEach(el => el.remove());
-
-		this.equationSection = this.createSection(
-			'Function / Equation',
-			'Enter math in simple syntax. Examples: sin^2(x), x^2+y^2, exp(-2*t)*sin(x)*sin(y).',
-		);
-		this.rangesSection = this.createSection(
-			'Ranges',
-			'Domain limits and sample counts for the plot.',
-		);
-		this.parametersSection = this.createSection(
-			'Parameters',
-			'Substitute named values into the solution before rendering.',
-		);
-		this.pointsSection = this.createSection(
-			'Labeled Points',
-			'Optional overlay points drawn on top of the graph.',
-		);
-		this.sizeSection = this.createSection(
-			'Size',
-			'Graph size (LaTeX) sets PGFPlots axis dimensions and affects render quality and export. Display scale only changes how the image appears in Obsidian.',
-		);
-		this.styleSection = this.createSection(
-			'Style',
-			'Colors, line width, and axis labels.',
-		);
-
-		const previewWrap = this.bodyEl.createDiv({ cls: 'mathgraph-section' });
-		const previewHeader = previewWrap.createDiv({ cls: 'mathgraph-section-header' });
-		previewHeader.createDiv({ cls: 'mathgraph-section-title', text: 'Preview' });
-		previewHeader.createDiv({
-			cls: 'mathgraph-section-description',
-			text: 'Summary of the graph configuration before inserting.',
-		});
-		this.previewSection = previewWrap.createDiv({ cls: 'mathgraph-preview-card' });
-
-		this.renderForm();
-	}
-
-	private renderForm(): void {
-		this.equationSection.empty();
-		this.rangesSection.empty();
-		this.parametersSection.empty();
-		this.pointsSection.empty();
-		this.sizeSection.empty();
-		this.styleSection.empty();
-		this.previewSection.empty();
-
-		this.renderTypeFields();
-		this.renderRanges();
-		this.renderParameters();
-		this.renderDataEditor();
-		this.renderSize();
-		this.renderStyle();
-		this.renderLabels();
-		this.updatePreview();
-		this.updateSectionVisibility();
-	}
-
-	private updateSectionVisibility(): void {
-		const type = this.spec.type;
-		const showParameters = type === 'ode' || type === 'pde';
-		const showPoints = type !== 'data';
-		this.parametersSection.parentElement?.toggleVisibility(showParameters);
-		this.pointsSection.parentElement?.toggleVisibility(showPoints);
-	}
-
-	private renderTypeFields(): void {
-		new Setting(this.equationSection)
-			.setName('Title')
-			.addText(text => {
-				text.setPlaceholder('Optional graph title')
-					.setValue(this.spec.title ?? '')
-					.onChange(value => {
-						this.spec.title = value;
-						this.updatePreview();
-					});
-			});
 
 		switch (this.spec.type) {
 			case 'function2d':
+				this.formText(grid, 'Function', getUserFunction(this.spec), value => {
+					setUserFunction(this.spec, value);
+				}, {
+					placeholder: placeholderForGraphType('function2d'),
+					wide: true,
+				});
+				break;
 			case 'surface3d':
-				new Setting(this.equationSection)
-					.setName('Function')
-					.addText(text => {
-						text.inputEl.addClass('mathgraph-input');
-						text.setPlaceholder(placeholderForGraphType(this.spec.type))
-							.setValue(getUserFunction(this.spec))
-							.onChange(value => {
-								setUserFunction(this.spec, value);
-								this.updatePreview();
-							});
-					});
+				this.formText(grid, 'Surface function', getUserFunction(this.spec), value => {
+					setUserFunction(this.spec, value);
+				}, {
+					placeholder: placeholderForGraphType('surface3d'),
+					wide: true,
+				});
 				break;
 			case 'parametric2d':
 			case 'parametric3d':
-				new Setting(this.equationSection)
-					.setName('Parameter')
-					.addText(text => {
-						text.inputEl.addClass('mathgraph-input');
-						text.setPlaceholder('t')
-							.setValue(this.spec.parameter ?? 't')
-							.onChange(value => { this.spec.parameter = value || 't'; });
-					});
-				new Setting(this.equationSection)
-					.setName('x(t)')
-					.addText(text => {
-						text.inputEl.addClass('mathgraph-input');
-						text.setValue(this.spec.xExpression ?? '')
-							.onChange(value => {
-								this.spec.xExpression = value;
-								this.updatePreview();
-							});
-					});
-				new Setting(this.equationSection)
-					.setName('y(t)')
-					.addText(text => {
-						text.inputEl.addClass('mathgraph-input');
-						text.setValue(this.spec.yExpression ?? '')
-							.onChange(value => {
-								this.spec.yExpression = value;
-								this.updatePreview();
-							});
-					});
+				this.formText(grid, 'Parameter', this.spec.parameter ?? 't', value => {
+					this.spec.parameter = value || 't';
+				}, { placeholder: 't' });
+				this.formText(grid, 'x(t)', this.spec.xExpression ?? '', value => {
+					this.spec.xExpression = value;
+				}, { wide: true });
+				this.formText(grid, 'y(t)', this.spec.yExpression ?? '', value => {
+					this.spec.yExpression = value;
+				}, { wide: true });
 				if (this.spec.type === 'parametric3d') {
-					new Setting(this.equationSection)
-						.setName('z(t)')
-						.addText(text => {
-							text.inputEl.addClass('mathgraph-input');
-							text.setValue(this.spec.zExpression ?? '')
-								.onChange(value => {
-									this.spec.zExpression = value;
-									this.updatePreview();
-								});
-						});
+					this.formText(grid, 'z(t)', this.spec.zExpression ?? '', value => {
+						this.spec.zExpression = value;
+					}, { wide: true });
 				}
 				break;
 			case 'ode':
 			case 'pde':
-				new Setting(this.equationSection)
-					.setName('Equation label')
-					.setDesc('Displayed as the equation caption; not evaluated.')
-					.addText(text => {
-						text.inputEl.addClass('mathgraph-input');
-						text.setPlaceholder('u_t = u_xx + u_yy')
-							.setValue(this.spec.equation ?? '')
-							.onChange(value => {
-								this.spec.equation = value;
-								this.updatePreview();
-							});
+				this.formText(grid, 'Equation label', this.spec.equation ?? '', value => {
+					this.spec.equation = value;
+				}, {
+					placeholder: this.spec.type === 'pde' ? 'u_t = u_xx + u_yy' : "y' = -2y",
+					wide: true,
+				});
+				this.formText(grid, 'Solution', getUserFunction(this.spec), value => {
+					setUserFunction(this.spec, value);
+				}, {
+					placeholder: placeholderForGraphType(this.spec.type),
+					wide: true,
+				});
+				if (this.spec.type === 'pde') {
+					this.formSelect(grid, 'View', this.spec.view ?? '3d', [
+						{ value: '2d', label: '2D curve / slice' },
+						{ value: '3d', label: '3D surface' },
+					], value => {
+						this.spec.view = value as '2d' | '3d';
+						this.renderForm();
 					});
-				new Setting(this.equationSection)
-					.setName('Solution')
-					.addText(text => {
-						text.inputEl.addClass('mathgraph-input');
-						text.setPlaceholder(placeholderForGraphType(this.spec.type))
-							.setValue(getUserFunction(this.spec))
-							.onChange(value => {
-								setUserFunction(this.spec, value);
-								this.updatePreview();
-							});
-					});
-				new Setting(this.equationSection)
-					.setName('View')
-					.addDropdown(drop => {
-						drop.selectEl.addClass('mathgraph-select');
-						drop.addOption('2d', '2D curve / slice');
-						drop.addOption('3d', '3D surface');
-						drop.setValue(this.spec.view ?? (this.spec.type === 'pde' ? '3d' : '2d'));
-						drop.onChange(value => {
-							this.spec.view = value as '2d' | '3d';
-							this.renderForm();
-						});
-					});
+				}
+				this.renderParametersBlock(grid);
+				panel.createEl('p', {
+					cls: 'mathgraph-equation-tab-note',
+					text: 'ODE/PDE modes plot explicit solutions.',
+				});
 				break;
 			case 'data':
-				new Setting(this.equationSection)
-					.setName('Data points')
-					.setDesc('Enter x,y pairs below or paste comma-separated values.')
-					.addTextArea(text => {
-						text.inputEl.addClass('mathgraph-input');
-						const rows = (this.spec.data ?? []).map(row => `${row.x}, ${row.y}`).join('\n');
-						text.setValue(rows)
-							.onChange(raw => {
-								this.spec.data = raw.split('\n')
-									.map(line => line.trim())
-									.filter(Boolean)
-									.map(line => {
-										const [x, y] = line.split(',').map(part => part.trim());
-										return { x: x ?? '0', y: y ?? '0' };
-									});
-								this.updatePreview();
-							});
-					});
+				this.formTextArea(grid, 'Data points', (this.spec.data ?? [])
+					.map(row => `${row.x}, ${row.y}`).join('\n'), raw => {
+					this.spec.data = raw.split('\n')
+						.map(line => line.trim())
+						.filter(Boolean)
+						.map(line => {
+							const [x, y] = line.split(',').map(part => part.trim());
+							return { x: x ?? '0', y: y ?? '0' };
+						});
+				}, {
+					placeholder: '0, 0\n1, 1\n2, 4',
+					wide: true,
+				});
 				break;
 		}
 	}
 
-	private renderRanges(): void {
-		const ranges = this.spec.ranges ?? {};
-		const addRange = (key: 'x' | 'y' | 'z' | 't', label: string) => {
-			const current = ranges[key] ?? ['', ''];
-			new Setting(this.rangesSection)
-				.setName(`${label} range`)
-				.addText(min => {
-					min.inputEl.addClass('mathgraph-input');
-					min.setPlaceholder('min')
-						.setValue(current[0])
-						.onChange(value => {
-							this.spec.ranges = this.spec.ranges ?? {};
-							this.spec.ranges[key] = [value, this.spec.ranges[key]?.[1] ?? ''];
-							this.updatePreview();
-						});
-				})
-				.addText(max => {
-					max.inputEl.addClass('mathgraph-input');
-					max.setPlaceholder('max')
-						.setValue(current[1])
-						.onChange(value => {
-							this.spec.ranges = this.spec.ranges ?? {};
-							const minVal = this.spec.ranges[key]?.[0] ?? '';
-							this.spec.ranges[key] = [minVal, value];
-							this.updatePreview();
-						});
-				});
-		};
+	private renderParametersBlock(parent: HTMLElement): void {
+		const block = parent.createDiv({ cls: 'mathgraph-form-row-wide mathgraph-param-block' });
+		block.createEl('label', { cls: 'mathgraph-field-label', text: 'Parameters' });
+		const list = block.createDiv({ cls: 'mathgraph-param-list' });
 
+		const params = this.spec.parameters ?? {};
+		const entries = Object.entries(params);
+		if (entries.length === 0) {
+			this.addParameterRow(list, 't', '0');
+		} else {
+			for (const [name, value] of entries) {
+				this.addParameterRow(list, name, value);
+			}
+		}
+
+		block.createEl('button', {
+			type: 'button',
+			cls: 'mathgraph-button mathgraph-button-secondary mathgraph-inline-add-btn',
+			text: 'Add parameter',
+		}).addEventListener('click', () => this.addParameterRow(list, '', ''));
+	}
+
+	private addParameterRow(parent: HTMLElement, name: string, value: string): void {
+		const row = parent.createDiv({ cls: 'mathgraph-inline-row' });
+		const nameInput = row.createEl('input', {
+			type: 'text',
+			cls: 'mathgraph-input',
+			value: name,
+			attr: { placeholder: 'name' },
+		});
+		const valueInput = row.createEl('input', {
+			type: 'text',
+			cls: 'mathgraph-input',
+			value,
+			attr: { placeholder: 'value' },
+		});
+		const removeBtn = row.createEl('button', {
+			type: 'button',
+			cls: 'mathgraph-button mathgraph-button-secondary mathgraph-row-remove',
+			text: '×',
+			attr: { 'aria-label': 'Remove parameter' },
+		});
+		const sync = () => {
+			this.syncParametersFromDom(parent);
+		};
+		nameInput.addEventListener('input', sync);
+		valueInput.addEventListener('input', sync);
+		removeBtn.addEventListener('click', () => {
+			row.remove();
+			sync();
+		});
+	}
+
+	private syncParametersFromDom(list: HTMLElement): void {
+		const rows = list.querySelectorAll('.mathgraph-inline-row');
+		const params: Record<string, string> = {};
+		rows.forEach(row => {
+			const inputs = row.querySelectorAll('input');
+			const paramName = inputs[0]?.value.trim();
+			const paramValue = inputs[1]?.value.trim() ?? '';
+			if (paramName) {
+				params[paramName] = paramValue;
+			}
+		});
+		this.spec.parameters = params;
+	}
+
+	private renderRangesPanel(panel: HTMLElement): void {
+		const container = panel.createDiv({ cls: 'mathgraph-ranges-panel' });
+		const ranges = this.spec.ranges ?? {};
 		const type = this.spec.type;
 		const is3dView = this.spec.view === '3d';
+		const showZRange = type === 'surface3d'
+			|| type === 'parametric3d'
+			|| (type === 'pde' && is3dView);
+		const showSamplesY = showZRange;
+
+		const addRange = (key: 'x' | 'y' | 'z' | 't', label: string) => {
+			const current = ranges[key] ?? ['', ''];
+			this.formRangeRow(container, label, current, (min, max) => {
+				this.spec.ranges = this.spec.ranges ?? {};
+				this.spec.ranges[key] = [min, max];
+			});
+		};
 
 		if (type === 'parametric2d' || type === 'parametric3d') {
 			addRange('t', 't');
-		}
-
-		if (type !== 'parametric2d' && type !== 'parametric3d') {
-			addRange('x', 'x');
-		}
-
-		if (type === 'function2d' || type === 'ode' || type === 'data') {
-			addRange('y', 'y');
-		}
-
-		if (type === 'surface3d' || type === 'parametric3d' || (type === 'pde' && is3dView)) {
-			addRange('y', 'y');
-		}
-
-		if (type === 'surface3d' || type === 'parametric3d' || is3dView) {
-			addRange('z', 'z');
-		}
-
-		if (type === 'parametric2d' || type === 'parametric3d') {
 			addRange('x', 'x');
 			addRange('y', 'y');
+			if (type === 'parametric3d') {
+				addRange('z', 'z');
+			}
+		} else {
+			addRange('x', 'x');
+			addRange('y', 'y');
+			if (showZRange) {
+				addRange('z', 'z');
+			}
 		}
 
-		new Setting(this.rangesSection)
-			.setName('Samples')
-			.addText(text => {
-				text.inputEl.addClass('mathgraph-input');
-				text.setValue(String(this.spec.samples ?? 100))
-					.onChange(value => {
-						const parsed = Number.parseInt(value, 10);
-						this.spec.samples = Number.isFinite(parsed) ? parsed : 100;
-					});
+		const samplesRow = container.createDiv({
+			cls: `mathgraph-samples-row${showSamplesY ? '' : ' mathgraph-samples-row-2d'}`,
+		});
+
+		this.formSampleField(samplesRow, 'Samples', String(this.spec.samples ?? 100), value => {
+			const parsed = Number.parseInt(value, 10);
+			this.spec.samples = Number.isFinite(parsed) ? parsed : 100;
+		});
+
+		if (showSamplesY) {
+			this.formSampleField(samplesRow, 'Samples Y', String(this.spec.samplesY ?? 35), value => {
+				const parsed = Number.parseInt(value, 10);
+				this.spec.samplesY = Number.isFinite(parsed) ? parsed : 35;
 			});
-
-		if (this.spec.view === '3d' || this.spec.type === 'surface3d' || this.spec.type === 'pde') {
-			new Setting(this.rangesSection)
-				.setName('Samples Y')
-				.addText(text => {
-					text.inputEl.addClass('mathgraph-input');
-					text.setValue(String(this.spec.samplesY ?? 35))
-						.onChange(value => {
-							const parsed = Number.parseInt(value, 10);
-							this.spec.samplesY = Number.isFinite(parsed) ? parsed : 35;
-						});
-				});
 		}
 	}
 
-	private renderLabels(): void {
+	private renderStylePanel(panel: HTMLElement): void {
+		const grid = this.formGrid(panel);
+		const style = this.spec.style ?? {};
+		hydrateGraphStyle(this.spec);
+
+		if (graphSupportsGridToggle(this.spec)) {
+			this.formSelect(grid, 'Grid', gridEnabledForGraph(this.spec) ? 'on' : 'off', [
+				{ value: 'on', label: 'On' },
+				{ value: 'off', label: 'Off' },
+			], value => {
+				this.spec.style = this.spec.style ?? {};
+				this.spec.style.grid = value === 'on';
+			});
+		}
+
+		if (graphSupportsSurfaceStyleControl(this.spec)) {
+			this.formSelect(grid, 'Surface style', style.surfaceStyle ?? 'colored', [
+				{ value: 'colored', label: 'Colored' },
+				{ value: 'wireframe', label: 'Wireframe' },
+				{ value: 'solid', label: 'Solid' },
+			], value => {
+				this.spec.style = this.spec.style ?? {};
+				this.spec.style.surfaceStyle = value as SurfaceStyle;
+			});
+		} else {
+			this.formText(grid, 'Color', style.color ?? '', value => {
+				this.spec.style = this.spec.style ?? {};
+				this.spec.style.color = value;
+			}, { placeholder: 'auto' });
+		}
+
+		this.formText(grid, 'Line width', style.width ?? '', value => {
+			this.spec.style = this.spec.style ?? {};
+			this.spec.style.width = value;
+		}, { placeholder: '1pt' });
+
 		const labels = this.spec.labels ?? {};
 		for (const axis of ['x', 'y', 'z'] as const) {
 			if (axis === 'z' && this.spec.type === 'function2d') {
 				continue;
 			}
-			new Setting(this.styleSection)
-				.setName(`${axis}-axis label`)
-				.addText(text => {
-					text.inputEl.addClass('mathgraph-input');
-					text.setValue(labels[axis] ?? axis)
-						.onChange(value => {
-							this.spec.labels = this.spec.labels ?? {};
-							this.spec.labels[axis] = value;
-						});
-				});
+			this.formText(grid, `${axis}-axis label`, labels[axis] ?? axis, value => {
+				this.spec.labels = this.spec.labels ?? {};
+				this.spec.labels[axis] = value;
+			});
 		}
 	}
 
-	private renderStyle(): void {
-		const style = this.spec.style ?? {};
-		new Setting(this.styleSection)
-			.setName('Color')
-			.addText(text => {
-				text.inputEl.addClass('mathgraph-input');
-				text.setPlaceholder('blue')
-					.setValue(style.color ?? '')
-					.onChange(value => {
-						this.spec.style = this.spec.style ?? {};
-						this.spec.style.color = value;
-					});
-			});
+	private renderSizePanel(panel: HTMLElement): void {
+		const grid = this.formGrid(panel);
+		grid.addClass('mathgraph-size-section');
+		const size = ensureGraphSize(this.spec);
 
-		new Setting(this.styleSection)
-			.setName('Line width')
-			.addText(text => {
-				text.inputEl.addClass('mathgraph-input');
-				text.setPlaceholder('1pt')
-					.setValue(style.width ?? '')
-					.onChange(value => {
-						this.spec.style = this.spec.style ?? {};
-						this.spec.style.width = value;
-					});
-			});
-	}
-
-	private renderSize(): void {
-		const size = ensureGraphSize(this.spec, this.plugin.settings);
-		const dims = resolveGraphDimensions(this.spec, this.plugin.settings);
-
-		const latexHeader = this.sizeSection.createDiv({ cls: 'mathgraph-size-subsection-header' });
-		latexHeader.createDiv({ cls: 'mathgraph-size-subsection-title', text: 'Graph size (LaTeX)' });
-		latexHeader.createDiv({
-			cls: 'mathgraph-size-subsection-desc',
-			text: 'PGFPlots axis width and height. Affects labels, spacing, quality, and SVG/PNG export. Saving changes re-renders the graph.',
+		this.formSelect(grid, 'LaTeX size preset', size.preset, Object.entries(GRAPH_SIZE_PRESET_LABELS)
+			.map(([value, label]) => ({ value, label })), value => {
+			this.spec.size = applyPresetToGraphSize(
+				value as GraphSizePreset,
+				this.spec.size,
+				this.spec,
+			);
+			this.renderForm();
+			this.switchTab('size');
+		}, {
+			wide: true,
 		});
 
-		new Setting(this.sizeSection)
-			.setName('Size preset')
-			.setDesc(`Current axis: ${dims.width} × ${dims.height}`)
-			.addDropdown(drop => {
-				drop.selectEl.addClass('mathgraph-select');
-				for (const [value, label] of Object.entries(GRAPH_SIZE_PRESET_LABELS)) {
-					drop.addOption(value, label);
-				}
-				drop.setValue(size.preset);
-				drop.onChange(value => {
-					this.spec.size = applyPresetToGraphSize(
-						value as GraphSizePreset,
-						this.spec.size,
-						this.plugin.settings,
-						this.spec,
-					);
-					this.renderForm();
-				});
-			});
+		if (graphUses2dAspectRatio(this.spec)) {
+			this.formSelect(
+				grid,
+				'Aspect',
+				size.aspectMode ?? 'auto',
+				Object.entries(ASPECT_MODE_LABELS).map(([value, label]) => ({ value, label })),
+				value => {
+					this.spec.size = {
+						...ensureGraphSize(this.spec),
+						aspectMode: value as AspectMode,
+					};
+				},
+				{ wide: true },
+			);
+		}
 
-		this.customSizeFields = this.sizeSection.createDiv({ cls: 'mathgraph-field-grid' });
-		this.customSizeFields.toggleVisibility(size.preset === 'custom');
+		if (size.preset === 'custom') {
+			this.formText(grid, 'Width', size.width ?? '', value => {
+				this.spec.size = {
+					...ensureGraphSize(this.spec),
+					preset: 'custom',
+					width: value.trim(),
+				};
+			}, { placeholder: '15cm' });
 
-		const widthField = this.customSizeFields.createDiv({ cls: 'mathgraph-field' });
-		widthField.createEl('label', { text: 'Width', cls: 'mathgraph-label' });
-		const widthInput = widthField.createEl('input', {
-			type: 'text',
-			cls: 'mathgraph-input',
-			value: size.width ?? '',
+			this.formText(grid, 'Height', size.height ?? '', value => {
+				this.spec.size = {
+					...ensureGraphSize(this.spec),
+					preset: 'custom',
+					height: value.trim(),
+				};
+			}, { placeholder: '10cm' });
+		}
+
+		const scaleRow = grid.createDiv({ cls: 'mathgraph-form-row mathgraph-form-row-wide' });
+		scaleRow.createEl('label', { cls: 'mathgraph-field-label', text: 'Display scale' });
+		const scaleField = scaleRow.createDiv({ cls: 'mathgraph-field mathgraph-size-scale-field' });
+		const scaleValue = scaleField.createSpan({
+			cls: 'mathgraph-size-scale-value',
+			text: formatDisplayScaleLabel(size.displayScale ?? 1),
 		});
-		widthInput.placeholder = '15cm';
-		widthInput.addEventListener('change', () => {
-			this.spec.size = {
-				...ensureGraphSize(this.spec, this.plugin.settings),
-				preset: 'custom',
-				width: widthInput.value.trim(),
-			};
-			this.updatePreview();
-		});
-
-		const heightField = this.customSizeFields.createDiv({ cls: 'mathgraph-field' });
-		heightField.createEl('label', { text: 'Height', cls: 'mathgraph-label' });
-		const heightInput = heightField.createEl('input', {
-			type: 'text',
-			cls: 'mathgraph-input',
-			value: size.height ?? '',
-		});
-		heightInput.placeholder = '9cm';
-		heightInput.addEventListener('change', () => {
-			this.spec.size = {
-				...ensureGraphSize(this.spec, this.plugin.settings),
-				preset: 'custom',
-				height: heightInput.value.trim(),
-			};
-			this.updatePreview();
-		});
-
-		const displayHeader = this.sizeSection.createDiv({ cls: 'mathgraph-size-subsection-header' });
-		displayHeader.createDiv({ cls: 'mathgraph-size-subsection-title', text: 'Display scale (Obsidian)' });
-		displayHeader.createDiv({
-			cls: 'mathgraph-size-subsection-desc',
-			text: 'Visual zoom in Reading View only. Use hover − / + on the graph for quick adjustments without recompiling LaTeX.',
-		});
-
-		const scaleField = this.sizeSection.createDiv({ cls: 'mathgraph-field mathgraph-field-wide' });
-		const scaleHeader = scaleField.createDiv({ cls: 'mathgraph-size-scale-header' });
-		scaleHeader.createEl('label', { text: 'Display scale', cls: 'mathgraph-label' });
-		const scaleValue = scaleHeader.createSpan({ cls: 'mathgraph-size-scale-value' });
-		scaleValue.setText(String(clampDisplayScale(size.displayScale ?? 1)));
-
 		const scaleInput = scaleField.createEl('input', {
 			type: 'range',
 			cls: 'mathgraph-size-slider',
@@ -549,218 +618,215 @@ export class GraphBuilderModal extends Modal {
 		scaleInput.value = String(clampDisplayScale(size.displayScale ?? 1));
 		scaleInput.addEventListener('input', () => {
 			const next = clampDisplayScale(Number.parseFloat(scaleInput.value));
-			scaleValue.setText(String(next));
+			scaleValue.setText(formatDisplayScaleLabel(next));
 			this.spec.size = {
-				...ensureGraphSize(this.spec, this.plugin.settings),
+				...ensureGraphSize(this.spec),
 				displayScale: next,
 			};
-			this.updatePreview();
 		});
 	}
 
-	private renderParameters(): void {
-		if (this.spec.type !== 'ode' && this.spec.type !== 'pde') {
-			return;
-		}
-
-		const params = this.spec.parameters ?? {};
-		const entries = Object.entries(params);
-
-		if (entries.length === 0) {
-			this.addParameterRow('t', '0');
-		} else {
-			for (const [name, value] of entries) {
-				this.addParameterRow(name, value);
-			}
-		}
-
-		new Setting(this.parametersSection)
-			.addButton(btn => {
-				btn.setButtonText('Add parameter');
-				btn.buttonEl.addClass('mathgraph-button', 'mathgraph-button-secondary');
-				btn.onClick(() => this.addParameterRow('', ''));
-			});
-	}
-
-	private addParameterRow(name: string, value: string): void {
-		const row = this.parametersSection.createDiv({ cls: 'mathgraph-param-row' });
-		new Setting(row)
-			.addText(text => {
-				text.inputEl.addClass('mathgraph-input');
-				text.setPlaceholder('name')
-					.setValue(name)
-					.onChange(() => this.syncParametersFromDom());
-			})
-			.addText(text => {
-				text.inputEl.addClass('mathgraph-input');
-				text.setPlaceholder('value')
-					.setValue(value)
-					.onChange(() => this.syncParametersFromDom());
-			})
-			.addExtraButton(btn => {
-				btn.setIcon('trash')
-					.setTooltip('Remove')
-					.onClick(() => {
-						row.remove();
-						this.syncParametersFromDom();
-						this.updatePreview();
-					});
-			});
-	}
-
-	private syncParametersFromDom(): void {
-		const rows = this.parametersSection.querySelectorAll('.mathgraph-param-row');
-		const params: Record<string, string> = {};
-		rows.forEach(row => {
-			const inputs = row.querySelectorAll('input');
-			const paramName = inputs[0]?.value.trim();
-			const value = inputs[1]?.value.trim() ?? '';
-			if (paramName) {
-				params[paramName] = value;
-			}
-		});
-		this.spec.parameters = params;
-	}
-
-	private renderDataEditor(): void {
+	private renderPointsPanel(panel: HTMLElement): void {
 		if (this.spec.type === 'data') {
+			panel.createEl('p', {
+				cls: 'mathgraph-field-help',
+				text: 'Data plots use the Equation tab for point values.',
+			});
 			return;
 		}
+
+		const is3d = graphUses3dPoints(this.spec);
+		const autoY = graphSupportsAutoComputeY(this.spec);
+		const autoZ = graphSupportsAutoComputeZ(this.spec);
+		const list = panel.createDiv({ cls: 'mathgraph-point-list' });
 		const points = this.spec.points ?? [];
+		const emptyPoint: GraphPoint = is3d
+			? { x: '', y: '', z: '', label: '' }
+			: { x: '', y: autoY ? '' : '', label: '' };
+
 		if (points.length === 0) {
-			this.addPointRow({ x: '', y: '', label: '' });
+			this.addPointRow(list, emptyPoint, is3d, autoY, autoZ);
 		} else {
 			for (const point of points) {
-				this.addPointRow(point);
+				this.addPointRow(list, point, is3d, autoY, autoZ);
 			}
 		}
-		new Setting(this.pointsSection)
-			.addButton(btn => {
-				btn.setButtonText('Add point');
-				btn.buttonEl.addClass('mathgraph-button', 'mathgraph-button-secondary');
-				btn.onClick(() => this.addPointRow({ x: '', y: '', label: '' }));
-			});
+
+		panel.createEl('button', {
+			type: 'button',
+			cls: 'mathgraph-button mathgraph-button-secondary mathgraph-inline-add-btn',
+			text: 'Add point',
+		}).addEventListener('click', () => this.addPointRow(list, { ...emptyPoint }, is3d, autoY, autoZ));
+
+		this.pointWarningsEl = panel.createDiv({ cls: 'mathgraph-point-warnings' });
+		this.refreshPointWarnings(list, is3d);
 	}
 
-	private addPointRow(point: GraphPoint): void {
-		const row = this.pointsSection.createDiv({ cls: 'mathgraph-point-row' });
-		new Setting(row)
-			.addText(text => {
-				text.inputEl.addClass('mathgraph-input');
-				text.setPlaceholder('x')
-					.setValue(point.x)
-					.onChange(() => this.syncPointsFromDom());
-			})
-			.addText(text => {
-				text.inputEl.addClass('mathgraph-input');
-				text.setPlaceholder('y')
-					.setValue(point.y)
-					.onChange(() => this.syncPointsFromDom());
-			})
-			.addText(text => {
-				text.inputEl.addClass('mathgraph-input');
-				text.setPlaceholder('label')
-					.setValue(point.label ?? '')
-					.onChange(() => this.syncPointsFromDom());
-			})
-			.addExtraButton(btn => {
-				btn.setIcon('trash')
-					.onClick(() => {
-						row.remove();
-						this.syncPointsFromDom();
-					});
-			});
+	private addPointRow(
+		parent: HTMLElement,
+		point: GraphPoint,
+		is3d: boolean,
+		autoY: boolean,
+		autoZ: boolean,
+	): void {
+		const wrap = parent.createDiv({ cls: 'mathgraph-point-row-wrap' });
+		const row = wrap.createDiv({ cls: 'mathgraph-inline-row mathgraph-point-row' });
+		const sync = () => {
+			this.syncPointsFromDom(parent, is3d);
+			this.refreshPointWarnings(parent, is3d);
+		};
+
+		row.createEl('input', {
+			type: 'text',
+			cls: 'mathgraph-input',
+			value: point.x,
+			attr: { placeholder: 'x' },
+		}).addEventListener('input', sync);
+
+		row.createEl('input', {
+			type: 'text',
+			cls: 'mathgraph-input',
+			value: point.y ?? '',
+			attr: { placeholder: autoY ? 'y (optional)' : 'y' },
+		}).addEventListener('input', sync);
+
+		if (is3d) {
+			row.createEl('input', {
+				type: 'text',
+				cls: 'mathgraph-input',
+				value: point.z ?? '',
+				attr: { placeholder: autoZ ? 'z (optional)' : 'z' },
+			}).addEventListener('input', sync);
+		}
+
+		row.createEl('input', {
+			type: 'text',
+			cls: 'mathgraph-input',
+			value: point.label ?? '',
+			attr: { placeholder: 'label' },
+		}).addEventListener('input', sync);
+
+		row.createEl('button', {
+			type: 'button',
+			cls: 'mathgraph-button mathgraph-button-secondary mathgraph-row-remove',
+			text: '×',
+			attr: { 'aria-label': 'Remove point' },
+		}).addEventListener('click', () => {
+			wrap.remove();
+			sync();
+		});
+
+		const status = wrap.createDiv({ cls: 'mathgraph-point-status' });
+		this.updatePointRowStatus(status, point);
 	}
 
-	private syncPointsFromDom(): void {
-		const rows = this.pointsSection.querySelectorAll('.mathgraph-point-row');
+	private updatePointRowStatus(statusEl: HTMLElement, point: GraphPoint): void {
+		statusEl.empty();
+		statusEl.removeClass(
+			'mathgraph-point-status-computed',
+			'mathgraph-point-status-warning',
+			'mathgraph-point-status-error',
+		);
+
+		const analysis = analyzeGraphPoint(this.spec, point);
+		if (!analysis?.statusText) {
+			return;
+		}
+
+		statusEl.setText(analysis.statusText);
+		if (analysis.status === 'computed-y' || analysis.status === 'computed-z') {
+			statusEl.addClass('mathgraph-point-status-computed');
+		} else if (analysis.status === 'not-on-graph') {
+			statusEl.addClass('mathgraph-point-status-warning');
+		} else if (analysis.status === 'could-not-evaluate') {
+			statusEl.addClass('mathgraph-point-status-error');
+		}
+	}
+
+	private refreshPointWarnings(list: HTMLElement, is3d: boolean): void {
+		this.syncPointsFromDom(list, is3d);
+
+		list.querySelectorAll('.mathgraph-point-row-wrap').forEach((wrap, index) => {
+			const statusEl = wrap.querySelector('.mathgraph-point-status');
+			const point = this.spec.points?.[index];
+			if (statusEl instanceof HTMLElement && point) {
+				this.updatePointRowStatus(statusEl, point);
+			}
+		});
+
+		if (!this.pointWarningsEl) {
+			return;
+		}
+
+		this.pointWarningsEl.empty();
+		const warning = summarizeGraphPointWarnings(this.spec);
+		if (warning) {
+			this.pointWarningsEl.createDiv({
+				cls: 'mathgraph-point-warning-banner',
+				text: warning,
+			});
+		}
+	}
+
+	private syncPointsFromDom(list: HTMLElement, is3d = graphUses3dPoints(this.spec)): void {
+		const rows = list.querySelectorAll('.mathgraph-point-row');
 		const points: GraphPoint[] = [];
+		const autoY = graphSupportsAutoComputeY(this.spec);
+		const autoZ = graphSupportsAutoComputeZ(this.spec);
+
 		rows.forEach(row => {
 			const inputs = row.querySelectorAll('input');
 			const x = inputs[0]?.value.trim() ?? '';
 			const y = inputs[1]?.value.trim() ?? '';
-			const label = inputs[2]?.value.trim();
-			if (x && y) {
-				points.push({ x, y, label: label || undefined });
+			const z = is3d ? inputs[2]?.value.trim() ?? '' : undefined;
+			const labelIndex = is3d ? 3 : 2;
+			const label = inputs[labelIndex]?.value.trim();
+
+			if (!x) {
+				return;
 			}
-		});
-		this.spec.points = points;
-	}
+			if (!autoY && !y) {
+				return;
+			}
+			if (!autoZ && is3d && !z) {
+				return;
+			}
+			if (autoZ && is3d && !y) {
+				return;
+			}
 
-	private updatePreview(): void {
-		this.previewSection.empty();
-
-		const header = this.previewSection.createDiv({ cls: 'mathgraph-preview-card-header' });
-		header.createDiv({
-			cls: 'mathgraph-pill mathgraph-pill-accent',
-			text: GRAPH_TYPE_LABELS[this.spec.type],
-		});
-
-		const renderEngine = this.spec.renderEngine ?? 'auto';
-		header.createDiv({ cls: 'mathgraph-pill', text: `Render: ${renderEngine}` });
-
-		const expression = this.previewExpressionText();
-		if (expression) {
-			this.previewSection.createDiv({
-				cls: 'mathgraph-preview-expression',
-				text: expression,
-			});
-		}
-
-		const rangeSummary = this.previewRangeSummary();
-		const dims = resolveGraphDimensions(this.spec, this.plugin.settings);
-		const size = ensureGraphSize(this.spec, this.plugin.settings);
-		this.previewSection.createDiv({
-			cls: 'mathgraph-preview-meta',
-			text: `LaTeX: ${dims.width} × ${dims.height} · Display: ${formatDisplayScaleLabel(size.displayScale ?? 1)}${rangeSummary ? ` · ${rangeSummary}` : ''}`,
+			const entry: GraphPoint = {
+				x,
+				label: label || undefined,
+			};
+			if (autoY) {
+				entry.y = y;
+			} else if (y) {
+				entry.y = y;
+			}
+			if (is3d) {
+				entry.z = autoZ ? z : (z || undefined);
+			}
+			points.push(entry);
 		});
 
-		const clipWarning = surfaceZRangeClipWarning(this.spec);
-		if (clipWarning) {
-			this.previewSection.createDiv({
-				cls: 'mathgraph-preview-warning',
-				text: clipWarning,
-			});
-		}
-	}
-
-	private previewExpressionText(): string {
-		switch (this.spec.type) {
-			case 'parametric2d':
-			case 'parametric3d': {
-				const parts = [
-					this.spec.xExpression?.trim(),
-					this.spec.yExpression?.trim(),
-					this.spec.zExpression?.trim(),
-				].filter(Boolean);
-				return parts.length ? parts.join(' ; ') : '';
-			}
-			case 'data':
-				return `${this.spec.data?.length ?? 0} data points`;
-			default:
-				return getUserFunction(this.spec);
-		}
-	}
-
-	private previewRangeSummary(): string {
-		const ranges = this.spec.ranges ?? {};
-		const parts: string[] = [];
-		for (const key of ['x', 'y', 'z', 't'] as const) {
-			const range = ranges[key];
-			if (range?.[0] && range?.[1]) {
-				parts.push(`${key}: [${range[0]}, ${range[1]}]`);
-			}
-		}
-		return parts.join(' · ');
+		this.spec.points = attachComputedCoordinates(this.spec, points);
 	}
 
 	private async submit(): Promise<void> {
-		this.syncParametersFromDom();
-		this.syncPointsFromDom();
+		const paramList = this.panels.get('equation')?.querySelector('.mathgraph-param-list');
+		if (paramList instanceof HTMLElement) {
+			this.syncParametersFromDom(paramList);
+		}
+		const pointList = this.panels.get('points')?.querySelector('.mathgraph-point-list');
+		if (pointList instanceof HTMLElement) {
+			this.syncPointsFromDom(pointList);
+		}
 
-		const sizeError = validateGraphSize(ensureGraphSize(this.spec, this.plugin.settings));
+		const sizeError = validateGraphSize(ensureGraphSize(this.spec));
 		if (sizeError) {
 			new Notice(sizeError);
+			this.switchTab('size');
 			return;
 		}
 

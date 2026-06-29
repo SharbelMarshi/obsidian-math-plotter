@@ -18,7 +18,6 @@ import {
 } from './inlineGraphDefaults';
 import { placeholderForGraphType } from './functionPlaceholders';
 import { INLINE_SIZE_PRESET_LABELS } from './graphSize';
-import { decorateMathGraphRoot } from './uiStyle';
 
 export interface InlineGraphBuilderOptions {
 	plugin: MathGraphStudioPlugin;
@@ -31,11 +30,10 @@ export function renderInlineGraphBuilder(
 	options: InlineGraphBuilderOptions,
 ): void {
 	el.empty();
-	el.addClass('mathgraph-processor-root');
-	decorateMathGraphRoot(el, options.plugin.settings);
+	el.addClass('mathgraph-processor-root', 'mathgraph-inline-builder-wrapper');
 
 	const card = el.createDiv({ cls: 'mathgraph-inline-builder' });
-	card.createDiv({ cls: 'mathgraph-inline-builder-header', text: 'Create Math Graph' });
+	card.createDiv({ cls: 'mathgraph-inline-builder-header', text: 'Create Function Plot' });
 	card.createDiv({
 		cls: 'mathgraph-inline-builder-subtitle',
 		text: 'Quick setup — use More Options for advanced settings.',
@@ -95,6 +93,13 @@ export function renderInlineGraphBuilder(
 	});
 	paramInput.value = fields.paramT;
 
+	const gridRow = grid.createDiv({ cls: 'mathgraph-field' });
+	gridRow.createEl('label', { text: 'Grid', cls: 'mathgraph-label' });
+	const gridSelect = gridRow.createEl('select', { cls: 'mathgraph-select' });
+	gridSelect.createEl('option', { text: 'On', value: 'on' });
+	gridSelect.createEl('option', { text: 'Off', value: 'off' });
+	gridSelect.value = fields.grid ? 'on' : 'off';
+
 	const errorEl = card.createDiv({ cls: 'mathgraph-inline-error' });
 	errorEl.hide();
 
@@ -115,6 +120,7 @@ export function renderInlineGraphBuilder(
 		zMinInput.value = defaults.zMin;
 		zMaxInput.value = defaults.zMax;
 		paramInput.value = defaults.paramT;
+		gridSelect.value = defaults.grid ? 'on' : 'off';
 		updateVisibility(type);
 	}
 
@@ -123,6 +129,7 @@ export function renderInlineGraphBuilder(
 		zMinWrap.toggleVisibility(show3d);
 		zMaxWrap.toggleVisibility(show3d);
 		paramRow.toggleVisibility(type === 'pde');
+		gridRow.toggleVisibility(type === 'function2d');
 	}
 
 	function readFields(): InlineBuilderFields {
@@ -138,6 +145,7 @@ export function renderInlineGraphBuilder(
 			zMin: zMinInput.value,
 			zMax: zMaxInput.value,
 			paramT: paramInput.value,
+			grid: gridSelect.value === 'on',
 		};
 	}
 

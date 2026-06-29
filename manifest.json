@@ -1,10 +1,9 @@
 {
-	"id": "mathgraph-studio",
-	"name": "MathGraph Studio",
+	"id": "math-plotter",
+	"name": "Math Plotter",
 	"version": "0.1.0",
 	"minAppVersion": "1.5.0",
-	"description": "GUI-first math graphing for Obsidian. Insert graphs via forms — never write plot code.",
+	"description": "Create math graphs from a GUI. Insert plots via forms without writing plot code.",
 	"author": "Sharbel Marshi",
-	"authorUrl": "",
 	"isDesktopOnly": true
 }

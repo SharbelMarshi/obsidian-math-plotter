@@ -49,8 +49,8 @@ assert(!json.includes('.^'), 'serializeGraphSpec stores user syntax without Octa
 assert(json.includes('x^2 + y^2'), 'serializeGraphSpec preserves restored user syntax');
 
 const dims = resolveLatexGraphDimensions(defaultGraphSpec('surface3d'));
-assert(dims.width === '15cm', 'default 3D width is 15cm');
-assert(dims.height === '10cm', 'default 3D height is 10cm');
+assert(dims.width === '17cm', 'default 3D width is 17cm');
+assert(dims.height === '11cm', 'default 3D height is 11cm');
 
 if (failed > 0) {
 	process.exitCode = 1;

@@ -5,6 +5,7 @@ import {
 	FUNCTION_PLACEHOLDER_PDE,
 } from './functionPlaceholders';
 import { inlinePresetToGraphSize, type InlineSizePreset } from './graphSize';
+import { gridEnabledForGraph } from './graphGridStyle';
 import { getUserFunction, setUserFunction, type GraphSpec } from './graphSpec';
 
 /** Graph types exposed in the compact inline builder. */
@@ -29,6 +30,7 @@ export interface InlineBuilderFields {
 	zMin: string;
 	zMax: string;
 	paramT: string;
+	grid: boolean;
 }
 
 export function inlineFieldsFromSpec(spec: GraphSpec): InlineBuilderFields {
@@ -49,6 +51,7 @@ export function inlineFieldsFromSpec(spec: GraphSpec): InlineBuilderFields {
 		zMin: spec.ranges?.z?.[0] ?? '',
 		zMax: spec.ranges?.z?.[1] ?? '',
 		paramT: spec.parameters?.t ?? '',
+		grid: gridEnabledForGraph(spec),
 	};
 }
 
@@ -74,6 +77,7 @@ export function defaultInlineFields(type: InlineGraphType = 'function2d'): Inlin
 				zMin: '',
 				zMax: '',
 				paramT: '',
+				grid: true,
 			};
 		case 'surface3d':
 			return {
@@ -88,6 +92,7 @@ export function defaultInlineFields(type: InlineGraphType = 'function2d'): Inlin
 				zMin: '-1',
 				zMax: '1',
 				paramT: '',
+				grid: true,
 			};
 		case 'ode':
 			return {
@@ -102,6 +107,7 @@ export function defaultInlineFields(type: InlineGraphType = 'function2d'): Inlin
 				zMin: '',
 				zMax: '',
 				paramT: '',
+				grid: true,
 			};
 		case 'pde':
 			return {
@@ -116,6 +122,7 @@ export function defaultInlineFields(type: InlineGraphType = 'function2d'): Inlin
 				zMin: '-1',
 				zMax: '1',
 				paramT: '0.25',
+				grid: true,
 			};
 	}
 }
@@ -140,6 +147,9 @@ export function specFromInlineFields(fields: InlineBuilderFields): GraphSpec {
 	switch (fields.type) {
 		case 'function2d':
 			setUserFunction(base, fields.expression);
+			if (!fields.grid) {
+				base.style = { ...(base.style ?? {}), grid: false };
+			}
 			return base;
 		case 'surface3d':
 			setUserFunction(base, fields.expression);

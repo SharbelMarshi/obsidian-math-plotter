@@ -1,6 +1,5 @@
-import {
-	sanitizeUserExpressionForStorage,
-} from '../graphSyntax';
+import { hydrateGraphStyle, type ColormapName, type SurfaceStyle } from './graphPlotStyle';
+import { sanitizeUserExpressionForStorage } from '../graphSyntax';
 import { defaultGraphSize, hydrateGraphSize, type GraphSizeSettings } from './graphSize';
 import type { MathGraphSettings } from './settings';
 import {
@@ -23,9 +22,16 @@ export type GraphView = '2d' | '3d';
 
 export interface GraphPoint {
 	x: string;
-	y: string;
+	y?: string;
+	z?: string;
 	label?: string;
+	computed?: {
+		y?: string;
+		z?: string;
+	};
 }
+
+export type { ColormapName, SurfaceStyle } from './graphPlotStyle';
 
 export interface GraphStyle {
 	color?: string;
@@ -33,6 +39,12 @@ export interface GraphStyle {
 	fill?: 'under' | 'between' | 'none';
 	opacity?: number;
 	legend?: string;
+	/** 3D surfaces — colored (default), wireframe, or solid. */
+	surfaceStyle?: SurfaceStyle;
+	/** Colormap for colored/solid 3D surfaces. Default heat. */
+	colormap?: ColormapName | string;
+	/** 2D graphs only — show background grid lines. Default true when omitted. */
+	grid?: boolean;
 }
 
 export interface GraphExportSettings {
@@ -40,6 +52,7 @@ export interface GraphExportSettings {
 	height?: string;
 }
 
+/** @deprecated Internal migration only — rendering backend is chosen automatically. */
 export type GraphRenderEngine = 'auto' | 'symbolic' | 'octave';
 
 export interface GraphSpec {
@@ -81,6 +94,7 @@ export interface GraphSpec {
 	export?: GraphExportSettings;
 	numericMode?: boolean;
 	implicit?: boolean;
+	/** @deprecated Not user-configurable — kept for legacy graph JSON only. */
 	renderEngine?: GraphRenderEngine;
 }
 
@@ -120,7 +134,8 @@ export function hydrateGraphSpec(spec: GraphSpec, settings?: Partial<MathGraphSe
 		setUserFunction(spec, fn);
 	}
 
-	hydrateGraphSize(spec, settings);
+	hydrateGraphSize(spec);
+	hydrateGraphStyle(spec);
 	return spec;
 }
 
@@ -138,6 +153,16 @@ export function defaultGraphSpec(
 	type: GraphType = 'function2d',
 	settings?: Partial<MathGraphSettings>,
 ): GraphSpec {
+	const baseStyle = (): GraphSpec['style'] => {
+		if (type === 'surface3d') {
+			return { surfaceStyle: 'colored', colormap: 'heat', grid: false };
+		}
+		if (type === 'pde') {
+			return { color: 'auto', surfaceStyle: 'colored', colormap: 'heat', grid: false };
+		}
+		return { color: 'auto', surfaceStyle: 'wireframe', grid: true };
+	};
+
 	const base: GraphSpec = {
 		version: 1,
 		type,
@@ -150,8 +175,8 @@ export function defaultGraphSpec(
 		samples: 100,
 		samplesY: 35,
 		points: [],
-		style: {},
-		size: defaultGraphSize(settings),
+		style: baseStyle(),
+		size: defaultGraphSize(),
 	};
 
 	switch (type) {
@@ -191,6 +216,7 @@ export function defaultGraphSpec(
 		case 'pde':
 			return setUserFunctionOnSpec({
 				...base,
+				style: { color: 'auto', surfaceStyle: 'colored', colormap: 'heat', grid: false },
 				title: '2D Heat Equation',
 				equation: 'u_t = u_xx + u_yy',
 				view: '3d',
@@ -258,6 +284,7 @@ export function serializeGraphSpec(spec: GraphSpec): string {
 	delete stored.compiledExpression;
 	delete stored.octaveExpression;
 	delete stored.export;
+	delete stored.renderEngine;
 
 	return JSON.stringify(stored, null, 2);
 }

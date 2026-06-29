@@ -68,13 +68,43 @@ var __async = (__this, __arguments, generator) => {
 __export(exports, {
   default: () => MathGraphStudioPlugin
 });
-var import_obsidian7 = __toModule(require("obsidian"));
+var import_obsidian8 = __toModule(require("obsidian"));
 
 // render/renderer.ts
 var import_crypto = __toModule(require("crypto"));
-var fs2 = __toModule(require("fs"));
+var fs3 = __toModule(require("fs"));
 var os = __toModule(require("os"));
-var path = __toModule(require("path"));
+var path2 = __toModule(require("path"));
+
+// src/fastSvgRouter.ts
+function shouldUseFastSvg(spec) {
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+  switch (spec.type) {
+    case "function2d":
+      return !spec.implicit;
+    case "ode":
+      return ((_a = spec.view) != null ? _a : "2d") === "2d";
+    case "surface3d":
+      return true;
+    case "pde":
+      return true;
+    case "data":
+      return ((_e = (_d = (_b = spec.data) == null ? void 0 : _b.length) != null ? _d : (_c = spec.points) == null ? void 0 : _c.length) != null ? _e : 0) > 0;
+    case "parametric2d":
+      return Boolean(((_f = spec.xExpression) == null ? void 0 : _f.trim()) && ((_g = spec.yExpression) == null ? void 0 : _g.trim()));
+    case "parametric3d":
+      return Boolean(((_h = spec.xExpression) == null ? void 0 : _h.trim()) && ((_i = spec.yExpression) == null ? void 0 : _i.trim()) && ((_j = spec.zExpression) == null ? void 0 : _j.trim()));
+    default:
+      return false;
+  }
+}
+function isFastSvg3dGraph(spec) {
+  var _a;
+  if (spec.type === "surface3d" || spec.type === "parametric3d") {
+    return true;
+  }
+  return spec.type === "pde" && ((_a = spec.view) != null ? _a : "3d") === "3d";
+}
 
 // render/commandResolver.ts
 var import_child_process = __toModule(require("child_process"));
@@ -131,8 +161,17 @@ function resolveCommand(candidates) {
     return null;
   });
 }
-function resolveLuaLatex() {
+function resolveLuaLatex(customPath) {
   return __async(this, null, function* () {
+    const trimmed = customPath == null ? void 0 : customPath.trim();
+    if (trimmed) {
+      if (trimmed.includes("/") && fs.existsSync(trimmed)) {
+        return trimmed;
+      }
+      if (!trimmed.includes("/")) {
+        return resolveCommand([trimmed]);
+      }
+    }
     return resolveCommand([
       "/Library/TeX/texbin/lualatex",
       "/usr/local/texlive/2025/bin/universal-darwin/lualatex",
@@ -170,445 +209,1613 @@ function formatExecError(err) {
   return String(err);
 }
 
-// render/latexErrorMapping.ts
-var LATEX_LINE_PATTERN = /(?:^|\n)\s*l\.(\d+)/;
-function getUserSourceLineOffset(wrapperPrefix) {
-  if (!wrapperPrefix) {
-    return 0;
-  }
-  return wrapperPrefix.split("\n").length;
+// node_modules/expr-eval/dist/index.mjs
+var INUMBER = "INUMBER";
+var IOP1 = "IOP1";
+var IOP2 = "IOP2";
+var IOP3 = "IOP3";
+var IVAR = "IVAR";
+var IVARNAME = "IVARNAME";
+var IFUNCALL = "IFUNCALL";
+var IFUNDEF = "IFUNDEF";
+var IEXPR = "IEXPR";
+var IEXPREVAL = "IEXPREVAL";
+var IMEMBER = "IMEMBER";
+var IENDSTATEMENT = "IENDSTATEMENT";
+var IARRAY = "IARRAY";
+function Instruction(type, value) {
+  this.type = type;
+  this.value = value !== void 0 && value !== null ? value : 0;
 }
-function parseLatexErrorLine(raw) {
-  const match = raw.match(LATEX_LINE_PATTERN);
-  if (!match) {
-    return null;
-  }
-  const line = parseInt(match[1], 10);
-  return Number.isFinite(line) ? line : null;
-}
-function extractUsefulLatexError(raw) {
-  const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const bangLine = lines.find((line) => line.startsWith("! "));
-  if (bangLine) {
-    return bangLine.replace(/^!\s*/, "").trim();
-  }
-  const usefulLine = lines.find((line) => line.includes("Undefined control sequence") || line.includes("Missing") || line.includes("Runaway argument") || line.includes("Fatal error"));
-  if (usefulLine) {
-    return usefulLine.trim();
-  }
-  return "Syntax error";
-}
-function mapTidiedLineToNoteLine(blockStartLine, blockEndLine, getLineText, tidiedLine) {
-  let nonEmptyIndex = 0;
-  for (let line = blockStartLine + 1; line < blockEndLine; line++) {
-    const text = getLineText(line).trim();
-    if (!text) {
-      continue;
-    }
-    nonEmptyIndex++;
-    if (nonEmptyIndex === tidiedLine) {
-      return line + 1;
-    }
-  }
-  return null;
-}
-function formatLatexErrorWithLineMapping(raw, tidiedSource, sourceLineOffset, noteLineMapper) {
-  var _a, _b;
-  const usefulError = extractUsefulLatexError(raw);
-  const latexLine = parseLatexErrorLine(raw);
-  if (latexLine === null || latexLine <= sourceLineOffset) {
-    return { message: usefulError };
-  }
-  const userLine = latexLine - sourceLineOffset;
-  const sourceLines = tidiedSource.split("\n");
-  const lineContent = (_a = sourceLines[userLine - 1]) == null ? void 0 : _a.trim();
-  const noteLine = (_b = noteLineMapper == null ? void 0 : noteLineMapper(userLine)) != null ? _b : void 0;
-  const snippet = lineContent ? lineContent.length > 80 ? `${lineContent.slice(0, 77)}...` : lineContent : usefulError;
-  if (noteLine !== void 0) {
-    return {
-      message: `Line ${noteLine}: ${snippet}`,
-      userLine,
-      lineContent,
-      noteLine
-    };
-  }
-  return {
-    message: `Line ${userLine}: ${snippet}`,
-    userLine,
-    lineContent
-  };
-}
-
-// render/simpleShapes.ts
-var SIMPLE_TIKZ_HELPERS = String.raw`
-% logic gate scaling
-\tikzset{
-  every and gate US/.append style={transform shape},
-  every or gate US/.append style={transform shape},
-  every not gate US/.append style={transform shape},
-  every nand gate US/.append style={transform shape},
-  every nor gate US/.append style={transform shape},
-  every xor gate US/.append style={transform shape},
-  every xnor gate US/.append style={transform shape},
-  every buffer gate US/.append style={transform shape},
-}
-
-% shapes
-\def\Circle(#1,#2,#3){\draw (#1,#2) circle (#3);}
-\def\FilledCircle(#1,#2,#3){\fill (#1,#2) circle (#3);}
-\def\Point(#1,#2){\fill (#1,#2) circle (1.7pt);}
-\def\Line(#1,#2,#3,#4){\draw (#1,#2) -- (#3,#4);}
-\def\Arrow(#1,#2,#3,#4){\draw[->] (#1,#2) -- (#3,#4);}
-\def\DArrow(#1,#2,#3,#4){\draw[<->] (#1,#2) -- (#3,#4);}
-\def\DashedLine(#1,#2,#3,#4){\draw[dashed] (#1,#2) -- (#3,#4);}
-\def\DottedLine(#1,#2,#3,#4){\draw[dotted] (#1,#2) -- (#3,#4);}
-\def\HLine(#1,#2,#3){\draw (#1,#3) -- (#2,#3);}
-\def\VLine(#1,#2,#3){\draw (#3,#1) -- (#3,#2);}
-\def\Rect(#1,#2,#3,#4){\draw (#1,#2) rectangle (#3,#4);}
-\def\FilledRect(#1,#2,#3,#4){\fill (#1,#2) rectangle (#3,#4);}
-\def\RoundedRect(#1,#2,#3,#4){\draw[rounded corners] (#1,#2) rectangle (#3,#4);}
-\def\FilledRoundedRect(#1,#2,#3,#4){\fill[rounded corners] (#1,#2) rectangle (#3,#4);}
-\def\Ellipse(#1,#2,#3,#4){\draw (#1,#2) ellipse (#3 and #4);}
-\def\FilledEllipse(#1,#2,#3,#4){\fill (#1,#2) ellipse (#3 and #4);}
-\def\Cross(#1,#2,#3){
-\draw (#1-#3,#2) -- (#1+#3,#2);
-\draw (#1,#2-#3) -- (#1,#2+#3);
-}
-\def\Diamond(#1,#2,#3,#4){
-\draw (#1,#2+#4) -- (#1+#3,#2) -- (#1,#2-#4) -- (#1-#3,#2) -- cycle;
-}
-\def\FilledDiamond(#1,#2,#3,#4){
-\fill (#1,#2+#4) -- (#1+#3,#2) -- (#1,#2-#4) -- (#1-#3,#2) -- cycle;
-}
-\def\Arc(#1,#2,#3,#4,#5){\draw (#1,#2) arc (#4:#5:#3);}
-\def\RightAngle(#1,#2,#3){
-\draw (#1,#2+#3) -- (#1,#2) -- (#1+#3,#2);
-}
-\def\Grid(#1,#2,#3,#4,#5){
-\draw[step=#5] (#1,#2) grid (#3,#4);
-}
-\def\Axis(#1,#2,#3,#4){
-\draw[->] (#1,0) -- (#2,0) node[right] {$x$};
-\draw[->] (0,#3) -- (0,#4) node[above] {$y$};
-}
-\def\AxisNamed(#1,#2,#3,#4,#5,#6){
-\draw[->] (#1,0) -- (#2,0) node[right] {#5};
-\draw[->] (0,#3) -- (0,#4) node[above] {#6};
-}
-
-% text
-\def\Text(#1,#2,#3){\node[transform shape] at (#1,#2) {#3};}
-\def\SmallText(#1,#2,#3){\node[font=\small, transform shape] at (#1,#2) {#3};}
-\def\TinyText(#1,#2,#3){\node[font=\tiny, transform shape] at (#1,#2) {#3};}
-\def\TextAbove(#1,#2,#3){\node[above, transform shape] at (#1,#2) {#3};}
-\def\TextBelow(#1,#2,#3){\node[below, transform shape] at (#1,#2) {#3};}
-\def\TextLeft(#1,#2,#3){\node[left, transform shape] at (#1,#2) {#3};}
-\def\TextRight(#1,#2,#3){\node[right, transform shape] at (#1,#2) {#3};}
-
-% gates
-\def\ANDgate(#1,#2,#3){
-\node[and gate US, draw, logic gate inputs=nn, anchor=input 1, transform shape] (#3) at (#1,#2) {};
-}
-
-\def\ORgate(#1,#2,#3){
-\node[or gate US, draw, logic gate inputs=nn, anchor=input 1, transform shape] (#3) at (#1,#2) {};
-}
-
-\def\NOTgate(#1,#2,#3){
-\node[not gate US, draw, anchor=input, transform shape] (#3) at (#1,#2) {};
-}
-
-\def\BUFFERgate(#1,#2,#3){
-\node[buffer gate US, draw, anchor=input, transform shape] (#3) at (#1,#2) {};
-}
-
-\def\NANDgate(#1,#2,#3){
-\node[nand gate US, draw, logic gate inputs=nn, anchor=input 1, transform shape] (#3) at (#1,#2) {};
-}
-
-\def\NORgate(#1,#2,#3){
-\node[nor gate US, draw, logic gate inputs=nn, anchor=input 1, transform shape] (#3) at (#1,#2) {};
-}
-
-\def\XORgate(#1,#2,#3){
-\node[xor gate US, draw, logic gate inputs=nn, anchor=input 1, transform shape] (#3) at (#1,#2) {};
-}
-
-\def\XNORgate(#1,#2,#3){
-\node[xnor gate US, draw, logic gate inputs=nn, anchor=input 1, transform shape] (#3) at (#1,#2) {};
-}
-
-% wires
-\def\LogicWire(#1,#2){
-\draw (#1) -- ++(0.35,0) |- (#2);
-}
-
-\def\LogicWireArrow(#1,#2){
-\draw[->] (#1) -- ++(0.35,0) |- (#2);
-}
-
-\def\LogicWireDirect(#1,#2){
-\draw (#1) -- (#2);
-}
-
-\def\LogicWireFrom(#1,#2,#3){
-\draw (#1,#2) -- ++(0.35,0) |- (#3);
-}
-
-\def\LogicWireFromArrow(#1,#2,#3){
-\draw[->] (#1,#2) -- ++(0.35,0) |- (#3);
-}
-
-\def\LogicWireTo(#1,#2,#3){
-\draw (#1) -- ++(0.35,0) |- (#2,#3);
-}
-
-\def\LogicWireToArrow(#1,#2,#3){
-\draw[->] (#1) -- ++(0.35,0) |- (#2,#3);
-}
-
-\def\Triangle(#1,#2,#3,#4,#5,#6){
-\draw (#1,#2) -- (#3,#4) -- (#5,#6) -- cycle;
-}
-
-\def\FilledTriangle(#1,#2,#3,#4,#5,#6){
-\fill (#1,#2) -- (#3,#4) -- (#5,#6) -- cycle;
-}
-
-% circuit symbols
-\def\Resistor(#1,#2,#3,#4){
-\draw (#1,#2) -- ++(0.15,0);
-\draw (#1+0.15,#2-#4/2) rectangle ++(#3-0.3,#4);
-\draw (#1+#3-0.15,#2) -- ++(0.15,0);
-}
-
-\def\Capacitor(#1,#2,#3,#4){
-\draw (#1,#2) -- ++(0.15,0);
-\draw (#1+0.15,#2-#4) -- (#1+0.15,#2+#4);
-\draw (#1+0.15+#3,#2-#4) -- (#1+0.15+#3,#2+#4);
-\draw (#1+0.15+#3,#2) -- ++(0.15,0);
-}
-
-\def\Ground(#1,#2,#3){
-\draw (#1,#2) -- (#1,#2-#3);
-\draw (#1-0.25,#2-#3) -- (#1+0.25,#2-#3);
-\draw (#1-0.15,#2-#3-0.12) -- (#1+0.15,#2-#3-0.12);
-\draw (#1-0.08,#2-#3-0.24) -- (#1+0.08,#2-#3-0.24);
-}
-
-\def\VSource(#1,#2,#3,#4){
-\draw (#1,#2) circle (#3);
-\node[transform shape] at (#1,#2) {$#4$};
-}
-`;
-
-// render/tikzSource.ts
-var DOCUMENTCLASS_LINE = "\\documentclass[tikz,border=0pt]{standalone}\n";
-var LATEX_WRAPPER_PREFIX = `${DOCUMENTCLASS_LINE}\\usepackage{fontspec}
-\\usepackage{polyglossia}
-
-\\setmainlanguage{english}
-
-\\usepackage{tikz}
-\\usetikzlibrary{arrows.meta,positioning,calc,shapes,decorations.pathmorphing}
-\\usepackage{amsmath}
-\\usepackage{amssymb}
-\\usepackage{pgfplots}
-\\usepgfplotslibrary{fillbetween}
-\\usetikzlibrary{intersections}
-\\pgfplotsset{
-	compat=1.18,
-	every axis/.append style={
-		axis background/.style={fill=none},
-	},
-}
-
-${SIMPLE_TIKZ_HELPERS}
-\\begin{document}
-`;
-var LATEX_WRAPPER_SUFFIX = `
-\\end{document}
-`;
-var USER_SOURCE_LINE_OFFSET = getUserSourceLineOffset(LATEX_WRAPPER_PREFIX);
-function wrapLatexSource(source) {
-  let cleanedSource = source;
-  cleanedSource = cleanedSource.replace(/\\documentclass(?:\[[^\]]*\])?\{[^}]+\}/g, "");
-  cleanedSource = cleanedSource.replace(/\\usepackage(?:\[[^\]]*\])?\{[^}]+\}/g, "");
-  cleanedSource = cleanedSource.replace(/\\pgfplotsset\{[^}]*\}/g, "");
-  cleanedSource = cleanedSource.replace(/\\begin\{document\}/g, "");
-  cleanedSource = cleanedSource.replace(/\\end\{document\}/g, "");
-  cleanedSource = cleanedSource.replace(/\\setmainlanguage\{[^}]+\}/g, "");
-  cleanedSource = cleanedSource.replace(/\\setotherlanguage\{[^}]+\}/g, "");
-  cleanedSource = cleanedSource.replace(/\\setmainfont(?:\[[^\]]*\])?\{[^}]+\}/g, "");
-  cleanedSource = cleanedSource.replace(/\\setsansfont(?:\[[^\]]*\])?\{[^}]+\}/g, "");
-  cleanedSource = cleanedSource.replace(/\\newfontfamily\\\w+(?:\[[^\]]*\])?\{[^}]+\}/g, "");
-  return LATEX_WRAPPER_PREFIX + cleanedSource.trim() + LATEX_WRAPPER_SUFFIX;
-}
-
-// render/renderer.ts
-var RENDER_TIMEOUT_MS = 6e4;
-var CACHE_MAX = 32;
-var CACHE_TTL_MS = 30 * 60 * 1e3;
-function cacheKey(source, invertDark, assets) {
-  const assetPart = assets ? (0, import_crypto.createHash)("sha256").update(JSON.stringify(Object.entries(assets).sort())).digest("hex") : "";
-  return (0, import_crypto.createHash)("sha256").update(source).update(assetPart).update(invertDark ? ":dark" : ":light").digest("hex");
-}
-function svgDataUrl(svgText) {
-  return `data:image/svg+xml;base64,${Buffer.from(svgText, "utf8").toString("base64")}`;
-}
-function invertSvgForDarkMode(svg) {
-  return svg.replaceAll("rgb(0%,0%,0%)", "rgb(100%,100%,100%)").replace(/rgb[(]0%,[ \t]*0%,[ \t]*0%[)]/g, "rgb(100%,100%,100%)").replace(/rgb[(]0,[ \t]*0,[ \t]*0[)]/g, "rgb(255,255,255)").replace(/#000000(?![0-9a-f])/gi, "#ffffff").replace(/#000(?![0-9a-f])/gi, "#fff").replace(/stroke:[ \t]*black/gi, "stroke:white").replace(/fill:[ \t]*black/gi, "fill:white").replace(/stroke="black"/gi, 'stroke="white"').replace(/fill="black"/gi, 'fill="white"');
-}
-function stripSvgPageBackground(svg) {
-  let result = svg;
-  result = result.replace(/<rect[^>]*\bwidth="[^"]+"[^>]*\bheight="[^"]+"[^>]*\bfill="(?:#fff(?:fff)?|white|rgb\(100%,100%,100%\))"[^>]*\/?>/gi, "");
-  result = result.replace(/<rect[^>]*\bfill="(?:#fff(?:fff)?|white|rgb\(100%,100%,100%\))"[^>]*\bwidth="[^"]+"[^>]*\bheight="[^"]+"[^>]*\/?>/gi, "");
-  result = result.replace(/<rect[^>]*style="[^"]*fill:rgb\(100%,100%,100%\)[^"]*"[^>]*\/?>/gi, "");
-  return result;
-}
-var TikzRenderer = class {
-  constructor(isDarkTheme) {
-    this.isDarkTheme = isDarkTheme;
-    this.cache = new Map();
-    this.inFlight = new Map();
-  }
-  renderToSvg(source, errorContext, assets) {
-    return __async(this, null, function* () {
-      const invertDark = this.isDarkTheme();
-      const key = cacheKey(source, invertDark, assets);
-      const hit = this.cache.get(key);
-      if (hit && Date.now() - hit.createdAt <= CACHE_TTL_MS) {
-        this.cache.delete(key);
-        this.cache.set(key, hit);
-        return { ok: true, svgText: hit.svgText, dataUrl: svgDataUrl(hit.svgText) };
-      }
-      if (hit) {
-        this.cache.delete(key);
-      }
-      const pending = this.inFlight.get(key);
-      if (pending !== void 0) {
-        return pending;
-      }
-      const renderPromise = this.compile(source, errorContext, invertDark, key, assets).finally(() => this.inFlight.delete(key));
-      this.inFlight.set(key, renderPromise);
-      return renderPromise;
-    });
-  }
-  clearCache() {
-    this.cache.clear();
-    this.inFlight.clear();
-  }
-  latexError(rawError, source, errorContext, timedOut = false) {
-    const block = errorContext == null ? void 0 : errorContext.block;
-    const editor = errorContext == null ? void 0 : errorContext.editor;
-    const noteLineMapper = block && editor ? (userLine) => mapTidiedLineToNoteLine(block.startLine, block.endLine, (line) => editor.getLine(line), userLine) : void 0;
-    const mapped = formatLatexErrorWithLineMapping(rawError, source, USER_SOURCE_LINE_OFFSET, noteLineMapper);
-    return {
-      ok: false,
-      error: timedOut ? "Timed out." : mapped.message,
-      rawLog: rawError,
-      userLine: mapped.userLine,
-      noteLine: mapped.noteLine,
-      lineContent: mapped.lineContent,
-      timedOut
-    };
-  }
-  remember(key, svgText) {
-    if (this.cache.has(key)) {
-      this.cache.delete(key);
-    }
-    this.cache.set(key, { svgText, createdAt: Date.now() });
-    while (this.cache.size > CACHE_MAX) {
-      const nextKey = this.cache.keys().next();
-      if (nextKey.done || nextKey.value === void 0) {
-        break;
-      }
-      this.cache.delete(nextKey.value);
-    }
-  }
-  compile(source, errorContext, invertDark, key, assets) {
-    return __async(this, null, function* () {
-      const tmpDir = fs2.mkdtempSync(path.join(os.tmpdir(), "obsidian-tikz-"));
-      const texPath = path.join(tmpDir, "diagram.tex");
-      const pdfPath = path.join(tmpDir, "diagram.pdf");
-      const logPath = path.join(tmpDir, "diagram.log");
-      const svgPath = path.join(tmpDir, "diagram.svg");
-      try {
-        if (assets) {
-          for (const [name, content] of Object.entries(assets)) {
-            fs2.writeFileSync(path.join(tmpDir, name), content, "utf8");
-          }
-        }
-        fs2.writeFileSync(texPath, wrapLatexSource(source), "utf8");
-        const lualatex = yield resolveLuaLatex();
-        if (!lualatex) {
-          return {
-            ok: false,
-            error: "LuaLaTeX not found.",
-            rawLog: "Expected at /Library/TeX/texbin/lualatex\nCheck: which lualatex"
-          };
-        }
-        try {
-          yield execFileWithTimeout(lualatex, [
-            "-interaction=nonstopmode",
-            "-halt-on-error",
-            `-output-directory=${tmpDir}`,
-            texPath
-          ], { cwd: tmpDir, maxBuffer: 10 * 1024 * 1024 }, RENDER_TIMEOUT_MS);
-        } catch (err) {
-          const logTail = readLogTail(logPath);
-          const raw = [formatExecError(err), logTail && `
---- log ---
-${logTail}`].filter(Boolean).join("\n");
-          return this.latexError(raw, source, errorContext, err instanceof RenderTimeoutError);
-        }
-        if (!fs2.existsSync(pdfPath)) {
-          const logTail = readLogTail(logPath);
-          if (logTail) {
-            return this.latexError(`No PDF produced.
---- log ---
-${logTail}`, source, errorContext);
-          }
-          return { ok: false, error: "No PDF produced.", rawLog: "LuaLaTeX exited without diagram.pdf." };
-        }
-        const pdftocairo = yield resolvePdfToCairo();
-        if (!pdftocairo) {
-          return {
-            ok: false,
-            error: "pdftocairo not found.",
-            rawLog: "Install: brew install poppler"
-          };
-        }
-        try {
-          yield execFileWithTimeout(pdftocairo, ["-svg", pdfPath, svgPath], {
-            cwd: tmpDir,
-            maxBuffer: 30 * 1024 * 1024
-          }, RENDER_TIMEOUT_MS);
-        } catch (err) {
-          return this.latexError(formatExecError(err), source, errorContext, err instanceof RenderTimeoutError);
-        }
-        if (!fs2.existsSync(svgPath)) {
-          return { ok: false, error: "No SVG produced.", rawLog: `PDF: ${pdfPath}` };
-        }
-        let svgText = fs2.readFileSync(svgPath, "utf8");
-        svgText = stripSvgPageBackground(svgText);
-        if (invertDark) {
-          svgText = invertSvgForDarkMode(svgText);
-        }
-        this.remember(key, svgText);
-        return { ok: true, svgText, dataUrl: svgDataUrl(svgText) };
-      } finally {
-        try {
-          fs2.rmSync(tmpDir, { recursive: true, force: true });
-        } catch (e) {
-        }
-      }
-    });
+Instruction.prototype.toString = function() {
+  switch (this.type) {
+    case INUMBER:
+    case IOP1:
+    case IOP2:
+    case IOP3:
+    case IVAR:
+    case IVARNAME:
+    case IENDSTATEMENT:
+      return this.value;
+    case IFUNCALL:
+      return "CALL " + this.value;
+    case IFUNDEF:
+      return "DEF " + this.value;
+    case IARRAY:
+      return "ARRAY " + this.value;
+    case IMEMBER:
+      return "." + this.value;
+    default:
+      return "Invalid Instruction";
   }
 };
-
-// src/GraphBlockUpdater.ts
-var import_obsidian = __toModule(require("obsidian"));
+function unaryInstruction(value) {
+  return new Instruction(IOP1, value);
+}
+function binaryInstruction(value) {
+  return new Instruction(IOP2, value);
+}
+function ternaryInstruction(value) {
+  return new Instruction(IOP3, value);
+}
+function simplify(tokens, unaryOps, binaryOps, ternaryOps, values) {
+  var nstack = [];
+  var newexpression = [];
+  var n1, n2, n3;
+  var f;
+  for (var i = 0; i < tokens.length; i++) {
+    var item = tokens[i];
+    var type = item.type;
+    if (type === INUMBER || type === IVARNAME) {
+      if (Array.isArray(item.value)) {
+        nstack.push.apply(nstack, simplify(item.value.map(function(x) {
+          return new Instruction(INUMBER, x);
+        }).concat(new Instruction(IARRAY, item.value.length)), unaryOps, binaryOps, ternaryOps, values));
+      } else {
+        nstack.push(item);
+      }
+    } else if (type === IVAR && values.hasOwnProperty(item.value)) {
+      item = new Instruction(INUMBER, values[item.value]);
+      nstack.push(item);
+    } else if (type === IOP2 && nstack.length > 1) {
+      n2 = nstack.pop();
+      n1 = nstack.pop();
+      f = binaryOps[item.value];
+      item = new Instruction(INUMBER, f(n1.value, n2.value));
+      nstack.push(item);
+    } else if (type === IOP3 && nstack.length > 2) {
+      n3 = nstack.pop();
+      n2 = nstack.pop();
+      n1 = nstack.pop();
+      if (item.value === "?") {
+        nstack.push(n1.value ? n2.value : n3.value);
+      } else {
+        f = ternaryOps[item.value];
+        item = new Instruction(INUMBER, f(n1.value, n2.value, n3.value));
+        nstack.push(item);
+      }
+    } else if (type === IOP1 && nstack.length > 0) {
+      n1 = nstack.pop();
+      f = unaryOps[item.value];
+      item = new Instruction(INUMBER, f(n1.value));
+      nstack.push(item);
+    } else if (type === IEXPR) {
+      while (nstack.length > 0) {
+        newexpression.push(nstack.shift());
+      }
+      newexpression.push(new Instruction(IEXPR, simplify(item.value, unaryOps, binaryOps, ternaryOps, values)));
+    } else if (type === IMEMBER && nstack.length > 0) {
+      n1 = nstack.pop();
+      nstack.push(new Instruction(INUMBER, n1.value[item.value]));
+    } else {
+      while (nstack.length > 0) {
+        newexpression.push(nstack.shift());
+      }
+      newexpression.push(item);
+    }
+  }
+  while (nstack.length > 0) {
+    newexpression.push(nstack.shift());
+  }
+  return newexpression;
+}
+function substitute(tokens, variable, expr) {
+  var newexpression = [];
+  for (var i = 0; i < tokens.length; i++) {
+    var item = tokens[i];
+    var type = item.type;
+    if (type === IVAR && item.value === variable) {
+      for (var j = 0; j < expr.tokens.length; j++) {
+        var expritem = expr.tokens[j];
+        var replitem;
+        if (expritem.type === IOP1) {
+          replitem = unaryInstruction(expritem.value);
+        } else if (expritem.type === IOP2) {
+          replitem = binaryInstruction(expritem.value);
+        } else if (expritem.type === IOP3) {
+          replitem = ternaryInstruction(expritem.value);
+        } else {
+          replitem = new Instruction(expritem.type, expritem.value);
+        }
+        newexpression.push(replitem);
+      }
+    } else if (type === IEXPR) {
+      newexpression.push(new Instruction(IEXPR, substitute(item.value, variable, expr)));
+    } else {
+      newexpression.push(item);
+    }
+  }
+  return newexpression;
+}
+function evaluate(tokens, expr, values) {
+  var nstack = [];
+  var n1, n2, n3;
+  var f, args, argCount;
+  if (isExpressionEvaluator(tokens)) {
+    return resolveExpression(tokens, values);
+  }
+  var numTokens = tokens.length;
+  for (var i = 0; i < numTokens; i++) {
+    var item = tokens[i];
+    var type = item.type;
+    if (type === INUMBER || type === IVARNAME) {
+      nstack.push(item.value);
+    } else if (type === IOP2) {
+      n2 = nstack.pop();
+      n1 = nstack.pop();
+      if (item.value === "and") {
+        nstack.push(n1 ? !!evaluate(n2, expr, values) : false);
+      } else if (item.value === "or") {
+        nstack.push(n1 ? true : !!evaluate(n2, expr, values));
+      } else if (item.value === "=") {
+        f = expr.binaryOps[item.value];
+        nstack.push(f(n1, evaluate(n2, expr, values), values));
+      } else {
+        f = expr.binaryOps[item.value];
+        nstack.push(f(resolveExpression(n1, values), resolveExpression(n2, values)));
+      }
+    } else if (type === IOP3) {
+      n3 = nstack.pop();
+      n2 = nstack.pop();
+      n1 = nstack.pop();
+      if (item.value === "?") {
+        nstack.push(evaluate(n1 ? n2 : n3, expr, values));
+      } else {
+        f = expr.ternaryOps[item.value];
+        nstack.push(f(resolveExpression(n1, values), resolveExpression(n2, values), resolveExpression(n3, values)));
+      }
+    } else if (type === IVAR) {
+      if (item.value in expr.functions) {
+        nstack.push(expr.functions[item.value]);
+      } else if (item.value in expr.unaryOps && expr.parser.isOperatorEnabled(item.value)) {
+        nstack.push(expr.unaryOps[item.value]);
+      } else {
+        var v = values[item.value];
+        if (v !== void 0) {
+          nstack.push(v);
+        } else {
+          throw new Error("undefined variable: " + item.value);
+        }
+      }
+    } else if (type === IOP1) {
+      n1 = nstack.pop();
+      f = expr.unaryOps[item.value];
+      nstack.push(f(resolveExpression(n1, values)));
+    } else if (type === IFUNCALL) {
+      argCount = item.value;
+      args = [];
+      while (argCount-- > 0) {
+        args.unshift(resolveExpression(nstack.pop(), values));
+      }
+      f = nstack.pop();
+      if (f.apply && f.call) {
+        nstack.push(f.apply(void 0, args));
+      } else {
+        throw new Error(f + " is not a function");
+      }
+    } else if (type === IFUNDEF) {
+      nstack.push(function() {
+        var n22 = nstack.pop();
+        var args2 = [];
+        var argCount2 = item.value;
+        while (argCount2-- > 0) {
+          args2.unshift(nstack.pop());
+        }
+        var n12 = nstack.pop();
+        var f2 = function() {
+          var scope = Object.assign({}, values);
+          for (var i2 = 0, len = args2.length; i2 < len; i2++) {
+            scope[args2[i2]] = arguments[i2];
+          }
+          return evaluate(n22, expr, scope);
+        };
+        Object.defineProperty(f2, "name", {
+          value: n12,
+          writable: false
+        });
+        values[n12] = f2;
+        return f2;
+      }());
+    } else if (type === IEXPR) {
+      nstack.push(createExpressionEvaluator(item, expr));
+    } else if (type === IEXPREVAL) {
+      nstack.push(item);
+    } else if (type === IMEMBER) {
+      n1 = nstack.pop();
+      nstack.push(n1[item.value]);
+    } else if (type === IENDSTATEMENT) {
+      nstack.pop();
+    } else if (type === IARRAY) {
+      argCount = item.value;
+      args = [];
+      while (argCount-- > 0) {
+        args.unshift(nstack.pop());
+      }
+      nstack.push(args);
+    } else {
+      throw new Error("invalid Expression");
+    }
+  }
+  if (nstack.length > 1) {
+    throw new Error("invalid Expression (parity)");
+  }
+  return nstack[0] === 0 ? 0 : resolveExpression(nstack[0], values);
+}
+function createExpressionEvaluator(token, expr, values) {
+  if (isExpressionEvaluator(token))
+    return token;
+  return {
+    type: IEXPREVAL,
+    value: function(scope) {
+      return evaluate(token.value, expr, scope);
+    }
+  };
+}
+function isExpressionEvaluator(n) {
+  return n && n.type === IEXPREVAL;
+}
+function resolveExpression(n, values) {
+  return isExpressionEvaluator(n) ? n.value(values) : n;
+}
+function expressionToString(tokens, toJS) {
+  var nstack = [];
+  var n1, n2, n3;
+  var f, args, argCount;
+  for (var i = 0; i < tokens.length; i++) {
+    var item = tokens[i];
+    var type = item.type;
+    if (type === INUMBER) {
+      if (typeof item.value === "number" && item.value < 0) {
+        nstack.push("(" + item.value + ")");
+      } else if (Array.isArray(item.value)) {
+        nstack.push("[" + item.value.map(escapeValue).join(", ") + "]");
+      } else {
+        nstack.push(escapeValue(item.value));
+      }
+    } else if (type === IOP2) {
+      n2 = nstack.pop();
+      n1 = nstack.pop();
+      f = item.value;
+      if (toJS) {
+        if (f === "^") {
+          nstack.push("Math.pow(" + n1 + ", " + n2 + ")");
+        } else if (f === "and") {
+          nstack.push("(!!" + n1 + " && !!" + n2 + ")");
+        } else if (f === "or") {
+          nstack.push("(!!" + n1 + " || !!" + n2 + ")");
+        } else if (f === "||") {
+          nstack.push("(function(a,b){ return Array.isArray(a) && Array.isArray(b) ? a.concat(b) : String(a) + String(b); }((" + n1 + "),(" + n2 + ")))");
+        } else if (f === "==") {
+          nstack.push("(" + n1 + " === " + n2 + ")");
+        } else if (f === "!=") {
+          nstack.push("(" + n1 + " !== " + n2 + ")");
+        } else if (f === "[") {
+          nstack.push(n1 + "[(" + n2 + ") | 0]");
+        } else {
+          nstack.push("(" + n1 + " " + f + " " + n2 + ")");
+        }
+      } else {
+        if (f === "[") {
+          nstack.push(n1 + "[" + n2 + "]");
+        } else {
+          nstack.push("(" + n1 + " " + f + " " + n2 + ")");
+        }
+      }
+    } else if (type === IOP3) {
+      n3 = nstack.pop();
+      n2 = nstack.pop();
+      n1 = nstack.pop();
+      f = item.value;
+      if (f === "?") {
+        nstack.push("(" + n1 + " ? " + n2 + " : " + n3 + ")");
+      } else {
+        throw new Error("invalid Expression");
+      }
+    } else if (type === IVAR || type === IVARNAME) {
+      nstack.push(item.value);
+    } else if (type === IOP1) {
+      n1 = nstack.pop();
+      f = item.value;
+      if (f === "-" || f === "+") {
+        nstack.push("(" + f + n1 + ")");
+      } else if (toJS) {
+        if (f === "not") {
+          nstack.push("(!" + n1 + ")");
+        } else if (f === "!") {
+          nstack.push("fac(" + n1 + ")");
+        } else {
+          nstack.push(f + "(" + n1 + ")");
+        }
+      } else if (f === "!") {
+        nstack.push("(" + n1 + "!)");
+      } else {
+        nstack.push("(" + f + " " + n1 + ")");
+      }
+    } else if (type === IFUNCALL) {
+      argCount = item.value;
+      args = [];
+      while (argCount-- > 0) {
+        args.unshift(nstack.pop());
+      }
+      f = nstack.pop();
+      nstack.push(f + "(" + args.join(", ") + ")");
+    } else if (type === IFUNDEF) {
+      n2 = nstack.pop();
+      argCount = item.value;
+      args = [];
+      while (argCount-- > 0) {
+        args.unshift(nstack.pop());
+      }
+      n1 = nstack.pop();
+      if (toJS) {
+        nstack.push("(" + n1 + " = function(" + args.join(", ") + ") { return " + n2 + " })");
+      } else {
+        nstack.push("(" + n1 + "(" + args.join(", ") + ") = " + n2 + ")");
+      }
+    } else if (type === IMEMBER) {
+      n1 = nstack.pop();
+      nstack.push(n1 + "." + item.value);
+    } else if (type === IARRAY) {
+      argCount = item.value;
+      args = [];
+      while (argCount-- > 0) {
+        args.unshift(nstack.pop());
+      }
+      nstack.push("[" + args.join(", ") + "]");
+    } else if (type === IEXPR) {
+      nstack.push("(" + expressionToString(item.value, toJS) + ")");
+    } else if (type === IENDSTATEMENT)
+      ;
+    else {
+      throw new Error("invalid Expression");
+    }
+  }
+  if (nstack.length > 1) {
+    if (toJS) {
+      nstack = [nstack.join(",")];
+    } else {
+      nstack = [nstack.join(";")];
+    }
+  }
+  return String(nstack[0]);
+}
+function escapeValue(v) {
+  if (typeof v === "string") {
+    return JSON.stringify(v).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  }
+  return v;
+}
+function contains(array, obj) {
+  for (var i = 0; i < array.length; i++) {
+    if (array[i] === obj) {
+      return true;
+    }
+  }
+  return false;
+}
+function getSymbols(tokens, symbols, options) {
+  options = options || {};
+  var withMembers = !!options.withMembers;
+  var prevVar = null;
+  for (var i = 0; i < tokens.length; i++) {
+    var item = tokens[i];
+    if (item.type === IVAR || item.type === IVARNAME) {
+      if (!withMembers && !contains(symbols, item.value)) {
+        symbols.push(item.value);
+      } else if (prevVar !== null) {
+        if (!contains(symbols, prevVar)) {
+          symbols.push(prevVar);
+        }
+        prevVar = item.value;
+      } else {
+        prevVar = item.value;
+      }
+    } else if (item.type === IMEMBER && withMembers && prevVar !== null) {
+      prevVar += "." + item.value;
+    } else if (item.type === IEXPR) {
+      getSymbols(item.value, symbols, options);
+    } else if (prevVar !== null) {
+      if (!contains(symbols, prevVar)) {
+        symbols.push(prevVar);
+      }
+      prevVar = null;
+    }
+  }
+  if (prevVar !== null && !contains(symbols, prevVar)) {
+    symbols.push(prevVar);
+  }
+}
+function Expression(tokens, parser2) {
+  this.tokens = tokens;
+  this.parser = parser2;
+  this.unaryOps = parser2.unaryOps;
+  this.binaryOps = parser2.binaryOps;
+  this.ternaryOps = parser2.ternaryOps;
+  this.functions = parser2.functions;
+}
+Expression.prototype.simplify = function(values) {
+  values = values || {};
+  return new Expression(simplify(this.tokens, this.unaryOps, this.binaryOps, this.ternaryOps, values), this.parser);
+};
+Expression.prototype.substitute = function(variable, expr) {
+  if (!(expr instanceof Expression)) {
+    expr = this.parser.parse(String(expr));
+  }
+  return new Expression(substitute(this.tokens, variable, expr), this.parser);
+};
+Expression.prototype.evaluate = function(values) {
+  values = values || {};
+  return evaluate(this.tokens, this, values);
+};
+Expression.prototype.toString = function() {
+  return expressionToString(this.tokens, false);
+};
+Expression.prototype.symbols = function(options) {
+  options = options || {};
+  var vars = [];
+  getSymbols(this.tokens, vars, options);
+  return vars;
+};
+Expression.prototype.variables = function(options) {
+  options = options || {};
+  var vars = [];
+  getSymbols(this.tokens, vars, options);
+  var functions = this.functions;
+  return vars.filter(function(name) {
+    return !(name in functions);
+  });
+};
+Expression.prototype.toJSFunction = function(param, variables) {
+  var expr = this;
+  var f = new Function(param, "with(this.functions) with (this.ternaryOps) with (this.binaryOps) with (this.unaryOps) { return " + expressionToString(this.simplify(variables).tokens, true) + "; }");
+  return function() {
+    return f.apply(expr, arguments);
+  };
+};
+var TEOF = "TEOF";
+var TOP = "TOP";
+var TNUMBER = "TNUMBER";
+var TSTRING = "TSTRING";
+var TPAREN = "TPAREN";
+var TBRACKET = "TBRACKET";
+var TCOMMA = "TCOMMA";
+var TNAME = "TNAME";
+var TSEMICOLON = "TSEMICOLON";
+function Token(type, value, index) {
+  this.type = type;
+  this.value = value;
+  this.index = index;
+}
+Token.prototype.toString = function() {
+  return this.type + ": " + this.value;
+};
+function TokenStream(parser2, expression) {
+  this.pos = 0;
+  this.current = null;
+  this.unaryOps = parser2.unaryOps;
+  this.binaryOps = parser2.binaryOps;
+  this.ternaryOps = parser2.ternaryOps;
+  this.consts = parser2.consts;
+  this.expression = expression;
+  this.savedPosition = 0;
+  this.savedCurrent = null;
+  this.options = parser2.options;
+  this.parser = parser2;
+}
+TokenStream.prototype.newToken = function(type, value, pos) {
+  return new Token(type, value, pos != null ? pos : this.pos);
+};
+TokenStream.prototype.save = function() {
+  this.savedPosition = this.pos;
+  this.savedCurrent = this.current;
+};
+TokenStream.prototype.restore = function() {
+  this.pos = this.savedPosition;
+  this.current = this.savedCurrent;
+};
+TokenStream.prototype.next = function() {
+  if (this.pos >= this.expression.length) {
+    return this.newToken(TEOF, "EOF");
+  }
+  if (this.isWhitespace() || this.isComment()) {
+    return this.next();
+  } else if (this.isRadixInteger() || this.isNumber() || this.isOperator() || this.isString() || this.isParen() || this.isBracket() || this.isComma() || this.isSemicolon() || this.isNamedOp() || this.isConst() || this.isName()) {
+    return this.current;
+  } else {
+    this.parseError('Unknown character "' + this.expression.charAt(this.pos) + '"');
+  }
+};
+TokenStream.prototype.isString = function() {
+  var r = false;
+  var startPos = this.pos;
+  var quote = this.expression.charAt(startPos);
+  if (quote === "'" || quote === '"') {
+    var index = this.expression.indexOf(quote, startPos + 1);
+    while (index >= 0 && this.pos < this.expression.length) {
+      this.pos = index + 1;
+      if (this.expression.charAt(index - 1) !== "\\") {
+        var rawString = this.expression.substring(startPos + 1, index);
+        this.current = this.newToken(TSTRING, this.unescape(rawString), startPos);
+        r = true;
+        break;
+      }
+      index = this.expression.indexOf(quote, index + 1);
+    }
+  }
+  return r;
+};
+TokenStream.prototype.isParen = function() {
+  var c = this.expression.charAt(this.pos);
+  if (c === "(" || c === ")") {
+    this.current = this.newToken(TPAREN, c);
+    this.pos++;
+    return true;
+  }
+  return false;
+};
+TokenStream.prototype.isBracket = function() {
+  var c = this.expression.charAt(this.pos);
+  if ((c === "[" || c === "]") && this.isOperatorEnabled("[")) {
+    this.current = this.newToken(TBRACKET, c);
+    this.pos++;
+    return true;
+  }
+  return false;
+};
+TokenStream.prototype.isComma = function() {
+  var c = this.expression.charAt(this.pos);
+  if (c === ",") {
+    this.current = this.newToken(TCOMMA, ",");
+    this.pos++;
+    return true;
+  }
+  return false;
+};
+TokenStream.prototype.isSemicolon = function() {
+  var c = this.expression.charAt(this.pos);
+  if (c === ";") {
+    this.current = this.newToken(TSEMICOLON, ";");
+    this.pos++;
+    return true;
+  }
+  return false;
+};
+TokenStream.prototype.isConst = function() {
+  var startPos = this.pos;
+  var i = startPos;
+  for (; i < this.expression.length; i++) {
+    var c = this.expression.charAt(i);
+    if (c.toUpperCase() === c.toLowerCase()) {
+      if (i === this.pos || c !== "_" && c !== "." && (c < "0" || c > "9")) {
+        break;
+      }
+    }
+  }
+  if (i > startPos) {
+    var str = this.expression.substring(startPos, i);
+    if (str in this.consts) {
+      this.current = this.newToken(TNUMBER, this.consts[str]);
+      this.pos += str.length;
+      return true;
+    }
+  }
+  return false;
+};
+TokenStream.prototype.isNamedOp = function() {
+  var startPos = this.pos;
+  var i = startPos;
+  for (; i < this.expression.length; i++) {
+    var c = this.expression.charAt(i);
+    if (c.toUpperCase() === c.toLowerCase()) {
+      if (i === this.pos || c !== "_" && (c < "0" || c > "9")) {
+        break;
+      }
+    }
+  }
+  if (i > startPos) {
+    var str = this.expression.substring(startPos, i);
+    if (this.isOperatorEnabled(str) && (str in this.binaryOps || str in this.unaryOps || str in this.ternaryOps)) {
+      this.current = this.newToken(TOP, str);
+      this.pos += str.length;
+      return true;
+    }
+  }
+  return false;
+};
+TokenStream.prototype.isName = function() {
+  var startPos = this.pos;
+  var i = startPos;
+  var hasLetter = false;
+  for (; i < this.expression.length; i++) {
+    var c = this.expression.charAt(i);
+    if (c.toUpperCase() === c.toLowerCase()) {
+      if (i === this.pos && (c === "$" || c === "_")) {
+        if (c === "_") {
+          hasLetter = true;
+        }
+        continue;
+      } else if (i === this.pos || !hasLetter || c !== "_" && (c < "0" || c > "9")) {
+        break;
+      }
+    } else {
+      hasLetter = true;
+    }
+  }
+  if (hasLetter) {
+    var str = this.expression.substring(startPos, i);
+    this.current = this.newToken(TNAME, str);
+    this.pos += str.length;
+    return true;
+  }
+  return false;
+};
+TokenStream.prototype.isWhitespace = function() {
+  var r = false;
+  var c = this.expression.charAt(this.pos);
+  while (c === " " || c === "	" || c === "\n" || c === "\r") {
+    r = true;
+    this.pos++;
+    if (this.pos >= this.expression.length) {
+      break;
+    }
+    c = this.expression.charAt(this.pos);
+  }
+  return r;
+};
+var codePointPattern = /^[0-9a-f]{4}$/i;
+TokenStream.prototype.unescape = function(v) {
+  var index = v.indexOf("\\");
+  if (index < 0) {
+    return v;
+  }
+  var buffer = v.substring(0, index);
+  while (index >= 0) {
+    var c = v.charAt(++index);
+    switch (c) {
+      case "'":
+        buffer += "'";
+        break;
+      case '"':
+        buffer += '"';
+        break;
+      case "\\":
+        buffer += "\\";
+        break;
+      case "/":
+        buffer += "/";
+        break;
+      case "b":
+        buffer += "\b";
+        break;
+      case "f":
+        buffer += "\f";
+        break;
+      case "n":
+        buffer += "\n";
+        break;
+      case "r":
+        buffer += "\r";
+        break;
+      case "t":
+        buffer += "	";
+        break;
+      case "u":
+        var codePoint = v.substring(index + 1, index + 5);
+        if (!codePointPattern.test(codePoint)) {
+          this.parseError("Illegal escape sequence: \\u" + codePoint);
+        }
+        buffer += String.fromCharCode(parseInt(codePoint, 16));
+        index += 4;
+        break;
+      default:
+        throw this.parseError('Illegal escape sequence: "\\' + c + '"');
+    }
+    ++index;
+    var backslash = v.indexOf("\\", index);
+    buffer += v.substring(index, backslash < 0 ? v.length : backslash);
+    index = backslash;
+  }
+  return buffer;
+};
+TokenStream.prototype.isComment = function() {
+  var c = this.expression.charAt(this.pos);
+  if (c === "/" && this.expression.charAt(this.pos + 1) === "*") {
+    this.pos = this.expression.indexOf("*/", this.pos) + 2;
+    if (this.pos === 1) {
+      this.pos = this.expression.length;
+    }
+    return true;
+  }
+  return false;
+};
+TokenStream.prototype.isRadixInteger = function() {
+  var pos = this.pos;
+  if (pos >= this.expression.length - 2 || this.expression.charAt(pos) !== "0") {
+    return false;
+  }
+  ++pos;
+  var radix;
+  var validDigit;
+  if (this.expression.charAt(pos) === "x") {
+    radix = 16;
+    validDigit = /^[0-9a-f]$/i;
+    ++pos;
+  } else if (this.expression.charAt(pos) === "b") {
+    radix = 2;
+    validDigit = /^[01]$/i;
+    ++pos;
+  } else {
+    return false;
+  }
+  var valid = false;
+  var startPos = pos;
+  while (pos < this.expression.length) {
+    var c = this.expression.charAt(pos);
+    if (validDigit.test(c)) {
+      pos++;
+      valid = true;
+    } else {
+      break;
+    }
+  }
+  if (valid) {
+    this.current = this.newToken(TNUMBER, parseInt(this.expression.substring(startPos, pos), radix));
+    this.pos = pos;
+  }
+  return valid;
+};
+TokenStream.prototype.isNumber = function() {
+  var valid = false;
+  var pos = this.pos;
+  var startPos = pos;
+  var resetPos = pos;
+  var foundDot = false;
+  var foundDigits = false;
+  var c;
+  while (pos < this.expression.length) {
+    c = this.expression.charAt(pos);
+    if (c >= "0" && c <= "9" || !foundDot && c === ".") {
+      if (c === ".") {
+        foundDot = true;
+      } else {
+        foundDigits = true;
+      }
+      pos++;
+      valid = foundDigits;
+    } else {
+      break;
+    }
+  }
+  if (valid) {
+    resetPos = pos;
+  }
+  if (c === "e" || c === "E") {
+    pos++;
+    var acceptSign = true;
+    var validExponent = false;
+    while (pos < this.expression.length) {
+      c = this.expression.charAt(pos);
+      if (acceptSign && (c === "+" || c === "-")) {
+        acceptSign = false;
+      } else if (c >= "0" && c <= "9") {
+        validExponent = true;
+        acceptSign = false;
+      } else {
+        break;
+      }
+      pos++;
+    }
+    if (!validExponent) {
+      pos = resetPos;
+    }
+  }
+  if (valid) {
+    this.current = this.newToken(TNUMBER, parseFloat(this.expression.substring(startPos, pos)));
+    this.pos = pos;
+  } else {
+    this.pos = resetPos;
+  }
+  return valid;
+};
+TokenStream.prototype.isOperator = function() {
+  var startPos = this.pos;
+  var c = this.expression.charAt(this.pos);
+  if (c === "+" || c === "-" || c === "*" || c === "/" || c === "%" || c === "^" || c === "?" || c === ":" || c === ".") {
+    this.current = this.newToken(TOP, c);
+  } else if (c === "\u2219" || c === "\u2022") {
+    this.current = this.newToken(TOP, "*");
+  } else if (c === ">") {
+    if (this.expression.charAt(this.pos + 1) === "=") {
+      this.current = this.newToken(TOP, ">=");
+      this.pos++;
+    } else {
+      this.current = this.newToken(TOP, ">");
+    }
+  } else if (c === "<") {
+    if (this.expression.charAt(this.pos + 1) === "=") {
+      this.current = this.newToken(TOP, "<=");
+      this.pos++;
+    } else {
+      this.current = this.newToken(TOP, "<");
+    }
+  } else if (c === "|") {
+    if (this.expression.charAt(this.pos + 1) === "|") {
+      this.current = this.newToken(TOP, "||");
+      this.pos++;
+    } else {
+      return false;
+    }
+  } else if (c === "=") {
+    if (this.expression.charAt(this.pos + 1) === "=") {
+      this.current = this.newToken(TOP, "==");
+      this.pos++;
+    } else {
+      this.current = this.newToken(TOP, c);
+    }
+  } else if (c === "!") {
+    if (this.expression.charAt(this.pos + 1) === "=") {
+      this.current = this.newToken(TOP, "!=");
+      this.pos++;
+    } else {
+      this.current = this.newToken(TOP, c);
+    }
+  } else {
+    return false;
+  }
+  this.pos++;
+  if (this.isOperatorEnabled(this.current.value)) {
+    return true;
+  } else {
+    this.pos = startPos;
+    return false;
+  }
+};
+TokenStream.prototype.isOperatorEnabled = function(op) {
+  return this.parser.isOperatorEnabled(op);
+};
+TokenStream.prototype.getCoordinates = function() {
+  var line = 0;
+  var column;
+  var newline = -1;
+  do {
+    line++;
+    column = this.pos - newline;
+    newline = this.expression.indexOf("\n", newline + 1);
+  } while (newline >= 0 && newline < this.pos);
+  return {
+    line,
+    column
+  };
+};
+TokenStream.prototype.parseError = function(msg) {
+  var coords = this.getCoordinates();
+  throw new Error("parse error [" + coords.line + ":" + coords.column + "]: " + msg);
+};
+function ParserState(parser2, tokenStream, options) {
+  this.parser = parser2;
+  this.tokens = tokenStream;
+  this.current = null;
+  this.nextToken = null;
+  this.next();
+  this.savedCurrent = null;
+  this.savedNextToken = null;
+  this.allowMemberAccess = options.allowMemberAccess !== false;
+}
+ParserState.prototype.next = function() {
+  this.current = this.nextToken;
+  return this.nextToken = this.tokens.next();
+};
+ParserState.prototype.tokenMatches = function(token, value) {
+  if (typeof value === "undefined") {
+    return true;
+  } else if (Array.isArray(value)) {
+    return contains(value, token.value);
+  } else if (typeof value === "function") {
+    return value(token);
+  } else {
+    return token.value === value;
+  }
+};
+ParserState.prototype.save = function() {
+  this.savedCurrent = this.current;
+  this.savedNextToken = this.nextToken;
+  this.tokens.save();
+};
+ParserState.prototype.restore = function() {
+  this.tokens.restore();
+  this.current = this.savedCurrent;
+  this.nextToken = this.savedNextToken;
+};
+ParserState.prototype.accept = function(type, value) {
+  if (this.nextToken.type === type && this.tokenMatches(this.nextToken, value)) {
+    this.next();
+    return true;
+  }
+  return false;
+};
+ParserState.prototype.expect = function(type, value) {
+  if (!this.accept(type, value)) {
+    var coords = this.tokens.getCoordinates();
+    throw new Error("parse error [" + coords.line + ":" + coords.column + "]: Expected " + (value || type));
+  }
+};
+ParserState.prototype.parseAtom = function(instr) {
+  var unaryOps = this.tokens.unaryOps;
+  function isPrefixOperator(token) {
+    return token.value in unaryOps;
+  }
+  if (this.accept(TNAME) || this.accept(TOP, isPrefixOperator)) {
+    instr.push(new Instruction(IVAR, this.current.value));
+  } else if (this.accept(TNUMBER)) {
+    instr.push(new Instruction(INUMBER, this.current.value));
+  } else if (this.accept(TSTRING)) {
+    instr.push(new Instruction(INUMBER, this.current.value));
+  } else if (this.accept(TPAREN, "(")) {
+    this.parseExpression(instr);
+    this.expect(TPAREN, ")");
+  } else if (this.accept(TBRACKET, "[")) {
+    if (this.accept(TBRACKET, "]")) {
+      instr.push(new Instruction(IARRAY, 0));
+    } else {
+      var argCount = this.parseArrayList(instr);
+      instr.push(new Instruction(IARRAY, argCount));
+    }
+  } else {
+    throw new Error("unexpected " + this.nextToken);
+  }
+};
+ParserState.prototype.parseExpression = function(instr) {
+  var exprInstr = [];
+  if (this.parseUntilEndStatement(instr, exprInstr)) {
+    return;
+  }
+  this.parseVariableAssignmentExpression(exprInstr);
+  if (this.parseUntilEndStatement(instr, exprInstr)) {
+    return;
+  }
+  this.pushExpression(instr, exprInstr);
+};
+ParserState.prototype.pushExpression = function(instr, exprInstr) {
+  for (var i = 0, len = exprInstr.length; i < len; i++) {
+    instr.push(exprInstr[i]);
+  }
+};
+ParserState.prototype.parseUntilEndStatement = function(instr, exprInstr) {
+  if (!this.accept(TSEMICOLON))
+    return false;
+  if (this.nextToken && this.nextToken.type !== TEOF && !(this.nextToken.type === TPAREN && this.nextToken.value === ")")) {
+    exprInstr.push(new Instruction(IENDSTATEMENT));
+  }
+  if (this.nextToken.type !== TEOF) {
+    this.parseExpression(exprInstr);
+  }
+  instr.push(new Instruction(IEXPR, exprInstr));
+  return true;
+};
+ParserState.prototype.parseArrayList = function(instr) {
+  var argCount = 0;
+  while (!this.accept(TBRACKET, "]")) {
+    this.parseExpression(instr);
+    ++argCount;
+    while (this.accept(TCOMMA)) {
+      this.parseExpression(instr);
+      ++argCount;
+    }
+  }
+  return argCount;
+};
+ParserState.prototype.parseVariableAssignmentExpression = function(instr) {
+  this.parseConditionalExpression(instr);
+  while (this.accept(TOP, "=")) {
+    var varName = instr.pop();
+    var varValue = [];
+    var lastInstrIndex = instr.length - 1;
+    if (varName.type === IFUNCALL) {
+      if (!this.tokens.isOperatorEnabled("()=")) {
+        throw new Error("function definition is not permitted");
+      }
+      for (var i = 0, len = varName.value + 1; i < len; i++) {
+        var index = lastInstrIndex - i;
+        if (instr[index].type === IVAR) {
+          instr[index] = new Instruction(IVARNAME, instr[index].value);
+        }
+      }
+      this.parseVariableAssignmentExpression(varValue);
+      instr.push(new Instruction(IEXPR, varValue));
+      instr.push(new Instruction(IFUNDEF, varName.value));
+      continue;
+    }
+    if (varName.type !== IVAR && varName.type !== IMEMBER) {
+      throw new Error("expected variable for assignment");
+    }
+    this.parseVariableAssignmentExpression(varValue);
+    instr.push(new Instruction(IVARNAME, varName.value));
+    instr.push(new Instruction(IEXPR, varValue));
+    instr.push(binaryInstruction("="));
+  }
+};
+ParserState.prototype.parseConditionalExpression = function(instr) {
+  this.parseOrExpression(instr);
+  while (this.accept(TOP, "?")) {
+    var trueBranch = [];
+    var falseBranch = [];
+    this.parseConditionalExpression(trueBranch);
+    this.expect(TOP, ":");
+    this.parseConditionalExpression(falseBranch);
+    instr.push(new Instruction(IEXPR, trueBranch));
+    instr.push(new Instruction(IEXPR, falseBranch));
+    instr.push(ternaryInstruction("?"));
+  }
+};
+ParserState.prototype.parseOrExpression = function(instr) {
+  this.parseAndExpression(instr);
+  while (this.accept(TOP, "or")) {
+    var falseBranch = [];
+    this.parseAndExpression(falseBranch);
+    instr.push(new Instruction(IEXPR, falseBranch));
+    instr.push(binaryInstruction("or"));
+  }
+};
+ParserState.prototype.parseAndExpression = function(instr) {
+  this.parseComparison(instr);
+  while (this.accept(TOP, "and")) {
+    var trueBranch = [];
+    this.parseComparison(trueBranch);
+    instr.push(new Instruction(IEXPR, trueBranch));
+    instr.push(binaryInstruction("and"));
+  }
+};
+var COMPARISON_OPERATORS = ["==", "!=", "<", "<=", ">=", ">", "in"];
+ParserState.prototype.parseComparison = function(instr) {
+  this.parseAddSub(instr);
+  while (this.accept(TOP, COMPARISON_OPERATORS)) {
+    var op = this.current;
+    this.parseAddSub(instr);
+    instr.push(binaryInstruction(op.value));
+  }
+};
+var ADD_SUB_OPERATORS = ["+", "-", "||"];
+ParserState.prototype.parseAddSub = function(instr) {
+  this.parseTerm(instr);
+  while (this.accept(TOP, ADD_SUB_OPERATORS)) {
+    var op = this.current;
+    this.parseTerm(instr);
+    instr.push(binaryInstruction(op.value));
+  }
+};
+var TERM_OPERATORS = ["*", "/", "%"];
+ParserState.prototype.parseTerm = function(instr) {
+  this.parseFactor(instr);
+  while (this.accept(TOP, TERM_OPERATORS)) {
+    var op = this.current;
+    this.parseFactor(instr);
+    instr.push(binaryInstruction(op.value));
+  }
+};
+ParserState.prototype.parseFactor = function(instr) {
+  var unaryOps = this.tokens.unaryOps;
+  function isPrefixOperator(token) {
+    return token.value in unaryOps;
+  }
+  this.save();
+  if (this.accept(TOP, isPrefixOperator)) {
+    if (this.current.value !== "-" && this.current.value !== "+") {
+      if (this.nextToken.type === TPAREN && this.nextToken.value === "(") {
+        this.restore();
+        this.parseExponential(instr);
+        return;
+      } else if (this.nextToken.type === TSEMICOLON || this.nextToken.type === TCOMMA || this.nextToken.type === TEOF || this.nextToken.type === TPAREN && this.nextToken.value === ")") {
+        this.restore();
+        this.parseAtom(instr);
+        return;
+      }
+    }
+    var op = this.current;
+    this.parseFactor(instr);
+    instr.push(unaryInstruction(op.value));
+  } else {
+    this.parseExponential(instr);
+  }
+};
+ParserState.prototype.parseExponential = function(instr) {
+  this.parsePostfixExpression(instr);
+  while (this.accept(TOP, "^")) {
+    this.parseFactor(instr);
+    instr.push(binaryInstruction("^"));
+  }
+};
+ParserState.prototype.parsePostfixExpression = function(instr) {
+  this.parseFunctionCall(instr);
+  while (this.accept(TOP, "!")) {
+    instr.push(unaryInstruction("!"));
+  }
+};
+ParserState.prototype.parseFunctionCall = function(instr) {
+  var unaryOps = this.tokens.unaryOps;
+  function isPrefixOperator(token) {
+    return token.value in unaryOps;
+  }
+  if (this.accept(TOP, isPrefixOperator)) {
+    var op = this.current;
+    this.parseAtom(instr);
+    instr.push(unaryInstruction(op.value));
+  } else {
+    this.parseMemberExpression(instr);
+    while (this.accept(TPAREN, "(")) {
+      if (this.accept(TPAREN, ")")) {
+        instr.push(new Instruction(IFUNCALL, 0));
+      } else {
+        var argCount = this.parseArgumentList(instr);
+        instr.push(new Instruction(IFUNCALL, argCount));
+      }
+    }
+  }
+};
+ParserState.prototype.parseArgumentList = function(instr) {
+  var argCount = 0;
+  while (!this.accept(TPAREN, ")")) {
+    this.parseExpression(instr);
+    ++argCount;
+    while (this.accept(TCOMMA)) {
+      this.parseExpression(instr);
+      ++argCount;
+    }
+  }
+  return argCount;
+};
+ParserState.prototype.parseMemberExpression = function(instr) {
+  this.parseAtom(instr);
+  while (this.accept(TOP, ".") || this.accept(TBRACKET, "[")) {
+    var op = this.current;
+    if (op.value === ".") {
+      if (!this.allowMemberAccess) {
+        throw new Error('unexpected ".", member access is not permitted');
+      }
+      this.expect(TNAME);
+      instr.push(new Instruction(IMEMBER, this.current.value));
+    } else if (op.value === "[") {
+      if (!this.tokens.isOperatorEnabled("[")) {
+        throw new Error('unexpected "[]", arrays are disabled');
+      }
+      this.parseExpression(instr);
+      this.expect(TBRACKET, "]");
+      instr.push(binaryInstruction("["));
+    } else {
+      throw new Error("unexpected symbol: " + op.value);
+    }
+  }
+};
+function add(a, b) {
+  return Number(a) + Number(b);
+}
+function sub(a, b) {
+  return a - b;
+}
+function mul(a, b) {
+  return a * b;
+}
+function div(a, b) {
+  return a / b;
+}
+function mod(a, b) {
+  return a % b;
+}
+function concat(a, b) {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.concat(b);
+  }
+  return "" + a + b;
+}
+function equal(a, b) {
+  return a === b;
+}
+function notEqual(a, b) {
+  return a !== b;
+}
+function greaterThan(a, b) {
+  return a > b;
+}
+function lessThan(a, b) {
+  return a < b;
+}
+function greaterThanEqual(a, b) {
+  return a >= b;
+}
+function lessThanEqual(a, b) {
+  return a <= b;
+}
+function andOperator(a, b) {
+  return Boolean(a && b);
+}
+function orOperator(a, b) {
+  return Boolean(a || b);
+}
+function inOperator(a, b) {
+  return contains(b, a);
+}
+function sinh(a) {
+  return (Math.exp(a) - Math.exp(-a)) / 2;
+}
+function cosh(a) {
+  return (Math.exp(a) + Math.exp(-a)) / 2;
+}
+function tanh(a) {
+  if (a === Infinity)
+    return 1;
+  if (a === -Infinity)
+    return -1;
+  return (Math.exp(a) - Math.exp(-a)) / (Math.exp(a) + Math.exp(-a));
+}
+function asinh(a) {
+  if (a === -Infinity)
+    return a;
+  return Math.log(a + Math.sqrt(a * a + 1));
+}
+function acosh(a) {
+  return Math.log(a + Math.sqrt(a * a - 1));
+}
+function atanh(a) {
+  return Math.log((1 + a) / (1 - a)) / 2;
+}
+function log10(a) {
+  return Math.log(a) * Math.LOG10E;
+}
+function neg(a) {
+  return -a;
+}
+function not(a) {
+  return !a;
+}
+function trunc(a) {
+  return a < 0 ? Math.ceil(a) : Math.floor(a);
+}
+function random(a) {
+  return Math.random() * (a || 1);
+}
+function factorial(a) {
+  return gamma(a + 1);
+}
+function isInteger(value) {
+  return isFinite(value) && value === Math.round(value);
+}
+var GAMMA_G = 4.7421875;
+var GAMMA_P = [
+  0.9999999999999971,
+  57.15623566586292,
+  -59.59796035547549,
+  14.136097974741746,
+  -0.4919138160976202,
+  3399464998481189e-20,
+  4652362892704858e-20,
+  -9837447530487956e-20,
+  1580887032249125e-19,
+  -21026444172410488e-20,
+  21743961811521265e-20,
+  -1643181065367639e-19,
+  8441822398385275e-20,
+  -26190838401581408e-21,
+  36899182659531625e-22
+];
+function gamma(n) {
+  var t, x;
+  if (isInteger(n)) {
+    if (n <= 0) {
+      return isFinite(n) ? Infinity : NaN;
+    }
+    if (n > 171) {
+      return Infinity;
+    }
+    var value = n - 2;
+    var res = n - 1;
+    while (value > 1) {
+      res *= value;
+      value--;
+    }
+    if (res === 0) {
+      res = 1;
+    }
+    return res;
+  }
+  if (n < 0.5) {
+    return Math.PI / (Math.sin(Math.PI * n) * gamma(1 - n));
+  }
+  if (n >= 171.35) {
+    return Infinity;
+  }
+  if (n > 85) {
+    var twoN = n * n;
+    var threeN = twoN * n;
+    var fourN = threeN * n;
+    var fiveN = fourN * n;
+    return Math.sqrt(2 * Math.PI / n) * Math.pow(n / Math.E, n) * (1 + 1 / (12 * n) + 1 / (288 * twoN) - 139 / (51840 * threeN) - 571 / (2488320 * fourN) + 163879 / (209018880 * fiveN) + 5246819 / (75246796800 * fiveN * n));
+  }
+  --n;
+  x = GAMMA_P[0];
+  for (var i = 1; i < GAMMA_P.length; ++i) {
+    x += GAMMA_P[i] / (n + i);
+  }
+  t = n + GAMMA_G + 0.5;
+  return Math.sqrt(2 * Math.PI) * Math.pow(t, n + 0.5) * Math.exp(-t) * x;
+}
+function stringOrArrayLength(s) {
+  if (Array.isArray(s)) {
+    return s.length;
+  }
+  return String(s).length;
+}
+function hypot() {
+  var sum = 0;
+  var larg = 0;
+  for (var i = 0; i < arguments.length; i++) {
+    var arg = Math.abs(arguments[i]);
+    var div2;
+    if (larg < arg) {
+      div2 = larg / arg;
+      sum = sum * div2 * div2 + 1;
+      larg = arg;
+    } else if (arg > 0) {
+      div2 = arg / larg;
+      sum += div2 * div2;
+    } else {
+      sum += arg;
+    }
+  }
+  return larg === Infinity ? Infinity : larg * Math.sqrt(sum);
+}
+function condition(cond, yep, nope) {
+  return cond ? yep : nope;
+}
+function roundTo(value, exp) {
+  if (typeof exp === "undefined" || +exp === 0) {
+    return Math.round(value);
+  }
+  value = +value;
+  exp = -+exp;
+  if (isNaN(value) || !(typeof exp === "number" && exp % 1 === 0)) {
+    return NaN;
+  }
+  value = value.toString().split("e");
+  value = Math.round(+(value[0] + "e" + (value[1] ? +value[1] - exp : -exp)));
+  value = value.toString().split("e");
+  return +(value[0] + "e" + (value[1] ? +value[1] + exp : exp));
+}
+function setVar(name, value, variables) {
+  if (variables)
+    variables[name] = value;
+  return value;
+}
+function arrayIndex(array, index) {
+  return array[index | 0];
+}
+function max(array) {
+  if (arguments.length === 1 && Array.isArray(array)) {
+    return Math.max.apply(Math, array);
+  } else {
+    return Math.max.apply(Math, arguments);
+  }
+}
+function min(array) {
+  if (arguments.length === 1 && Array.isArray(array)) {
+    return Math.min.apply(Math, array);
+  } else {
+    return Math.min.apply(Math, arguments);
+  }
+}
+function arrayMap(f, a) {
+  if (typeof f !== "function") {
+    throw new Error("First argument to map is not a function");
+  }
+  if (!Array.isArray(a)) {
+    throw new Error("Second argument to map is not an array");
+  }
+  return a.map(function(x, i) {
+    return f(x, i);
+  });
+}
+function arrayFold(f, init, a) {
+  if (typeof f !== "function") {
+    throw new Error("First argument to fold is not a function");
+  }
+  if (!Array.isArray(a)) {
+    throw new Error("Second argument to fold is not an array");
+  }
+  return a.reduce(function(acc, x, i) {
+    return f(acc, x, i);
+  }, init);
+}
+function arrayFilter(f, a) {
+  if (typeof f !== "function") {
+    throw new Error("First argument to filter is not a function");
+  }
+  if (!Array.isArray(a)) {
+    throw new Error("Second argument to filter is not an array");
+  }
+  return a.filter(function(x, i) {
+    return f(x, i);
+  });
+}
+function stringOrArrayIndexOf(target, s) {
+  if (!(Array.isArray(s) || typeof s === "string")) {
+    throw new Error("Second argument to indexOf is not a string or array");
+  }
+  return s.indexOf(target);
+}
+function arrayJoin(sep, a) {
+  if (!Array.isArray(a)) {
+    throw new Error("Second argument to join is not an array");
+  }
+  return a.join(sep);
+}
+function sign(x) {
+  return (x > 0) - (x < 0) || +x;
+}
+var ONE_THIRD = 1 / 3;
+function cbrt(x) {
+  return x < 0 ? -Math.pow(-x, ONE_THIRD) : Math.pow(x, ONE_THIRD);
+}
+function expm1(x) {
+  return Math.exp(x) - 1;
+}
+function log1p(x) {
+  return Math.log(1 + x);
+}
+function log2(x) {
+  return Math.log(x) / Math.LN2;
+}
+function Parser(options) {
+  this.options = options || {};
+  this.unaryOps = {
+    sin: Math.sin,
+    cos: Math.cos,
+    tan: Math.tan,
+    asin: Math.asin,
+    acos: Math.acos,
+    atan: Math.atan,
+    sinh: Math.sinh || sinh,
+    cosh: Math.cosh || cosh,
+    tanh: Math.tanh || tanh,
+    asinh: Math.asinh || asinh,
+    acosh: Math.acosh || acosh,
+    atanh: Math.atanh || atanh,
+    sqrt: Math.sqrt,
+    cbrt: Math.cbrt || cbrt,
+    log: Math.log,
+    log2: Math.log2 || log2,
+    ln: Math.log,
+    lg: Math.log10 || log10,
+    log10: Math.log10 || log10,
+    expm1: Math.expm1 || expm1,
+    log1p: Math.log1p || log1p,
+    abs: Math.abs,
+    ceil: Math.ceil,
+    floor: Math.floor,
+    round: Math.round,
+    trunc: Math.trunc || trunc,
+    "-": neg,
+    "+": Number,
+    exp: Math.exp,
+    not,
+    length: stringOrArrayLength,
+    "!": factorial,
+    sign: Math.sign || sign
+  };
+  this.binaryOps = {
+    "+": add,
+    "-": sub,
+    "*": mul,
+    "/": div,
+    "%": mod,
+    "^": Math.pow,
+    "||": concat,
+    "==": equal,
+    "!=": notEqual,
+    ">": greaterThan,
+    "<": lessThan,
+    ">=": greaterThanEqual,
+    "<=": lessThanEqual,
+    and: andOperator,
+    or: orOperator,
+    "in": inOperator,
+    "=": setVar,
+    "[": arrayIndex
+  };
+  this.ternaryOps = {
+    "?": condition
+  };
+  this.functions = {
+    random,
+    fac: factorial,
+    min,
+    max,
+    hypot: Math.hypot || hypot,
+    pyt: Math.hypot || hypot,
+    pow: Math.pow,
+    atan2: Math.atan2,
+    "if": condition,
+    gamma,
+    roundTo,
+    map: arrayMap,
+    fold: arrayFold,
+    filter: arrayFilter,
+    indexOf: stringOrArrayIndexOf,
+    join: arrayJoin
+  };
+  this.consts = {
+    E: Math.E,
+    PI: Math.PI,
+    "true": true,
+    "false": false
+  };
+}
+Parser.prototype.parse = function(expr) {
+  var instr = [];
+  var parserState = new ParserState(this, new TokenStream(this, expr), { allowMemberAccess: this.options.allowMemberAccess });
+  parserState.parseExpression(instr);
+  parserState.expect(TEOF, "EOF");
+  return new Expression(instr, this);
+};
+Parser.prototype.evaluate = function(expr, variables) {
+  return this.parse(expr).evaluate(variables);
+};
+var sharedParser = new Parser();
+Parser.parse = function(expr) {
+  return sharedParser.parse(expr);
+};
+Parser.evaluate = function(expr, variables) {
+  return sharedParser.parse(expr).evaluate(variables);
+};
+var optionNameMap = {
+  "+": "add",
+  "-": "subtract",
+  "*": "multiply",
+  "/": "divide",
+  "%": "remainder",
+  "^": "power",
+  "!": "factorial",
+  "<": "comparison",
+  ">": "comparison",
+  "<=": "comparison",
+  ">=": "comparison",
+  "==": "comparison",
+  "!=": "comparison",
+  "||": "concatenate",
+  "and": "logical",
+  "or": "logical",
+  "not": "logical",
+  "?": "conditional",
+  ":": "conditional",
+  "=": "assignment",
+  "[": "array",
+  "()=": "fndef"
+};
+function getOptionName(op) {
+  return optionNameMap.hasOwnProperty(op) ? optionNameMap[op] : op;
+}
+Parser.prototype.isOperatorEnabled = function(op) {
+  var optionName = getOptionName(op);
+  var operators = this.options.operators || {};
+  return !(optionName in operators) || !!operators[optionName];
+};
 
 // graphSyntax.ts
 var INVALID_SYNTAX_MESSAGE = "Invalid function syntax. Use simple syntax such as sin^2(x), x^2, exp(-x), or sqrt(x^2+y^2).";
@@ -989,8 +2196,8 @@ function compileExpression(input, context, target) {
     ...parameterNames
   ]);
   try {
-    const parser = new ExpressionParser(tokenize(prepared), variableSet, target);
-    return parser.parse();
+    const parser2 = new ExpressionParser(tokenize(prepared), variableSet, target);
+    return parser2.parse();
   } catch (err) {
     if (err instanceof GraphExpressionSyntaxError) {
       throw err;
@@ -1018,6 +2225,235 @@ function sanitizeUserExpressionForStorage(input) {
   return input.replace(/\.\^/g, "^").replace(/\.\*/g, "*").replace(/\.\//g, "/").trim();
 }
 
+// src/graphGridStyle.ts
+function graphSupportsGridToggle(spec) {
+  var _a;
+  switch (spec.type) {
+    case "function2d":
+    case "parametric2d":
+    case "data":
+      return true;
+    case "ode":
+      return ((_a = spec.view) != null ? _a : "2d") === "2d";
+    case "pde":
+      return spec.view === "2d";
+    case "surface3d":
+    case "parametric3d":
+      return false;
+    default:
+      return false;
+  }
+}
+function gridEnabledForGraph(spec) {
+  var _a;
+  if (!graphSupportsGridToggle(spec)) {
+    return true;
+  }
+  return ((_a = spec.style) == null ? void 0 : _a.grid) !== false;
+}
+function gridAxisOption(spec) {
+  if (!graphSupportsGridToggle(spec)) {
+    return "grid=none";
+  }
+  return gridEnabledForGraph(spec) ? "grid=both" : "grid=none";
+}
+function applyGridStyleToTikz(tikz, spec) {
+  if (!graphSupportsGridToggle(spec)) {
+    return tikz;
+  }
+  const desired = gridAxisOption(spec);
+  if (/\bgrid=(?:both|major|none)\b/.test(tikz)) {
+    return tikz.replace(/\bgrid=(?:both|major|none)\b/g, desired);
+  }
+  return tikz.replace(/\\begin\{axis\}\[([^\]]*)\]/g, (_match, inner) => `\\begin{axis}[${desired},${inner}]`);
+}
+
+// src/graphAspectLayout.ts
+var ASPECT_MODE_LABELS = {
+  auto: "Auto",
+  fixed: "Fixed"
+};
+var ASPECT_MIN = 0.45;
+var ASPECT_MAX = 3;
+var PX_BASE_HEIGHT = 420;
+var PX_MIN_WIDTH = 420;
+var PX_MAX_WIDTH = 900;
+var PX_MIN_HEIGHT = 260;
+var PX_MAX_HEIGHT = 600;
+var CM_MIN_WIDTH = 7;
+var CM_MAX_WIDTH = 16;
+var CM_MIN_HEIGHT = 5;
+var CM_MAX_HEIGHT = 11;
+var CM_TO_PX = 38;
+var PRESET_2D_WIDTH_CM = {
+  small: 8,
+  medium: 11,
+  large: 15,
+  fullWidth: 17
+};
+var PRESET_2D_HEIGHT_CM = {
+  small: 5,
+  medium: 7,
+  large: 9,
+  fullWidth: 10
+};
+function graphUses2dAspectRatio(spec) {
+  var _a;
+  if (spec.type === "surface3d" || spec.type === "parametric3d") {
+    return false;
+  }
+  if (spec.type === "pde") {
+    return spec.view === "2d";
+  }
+  if (spec.type === "ode") {
+    return ((_a = spec.view) != null ? _a : "2d") === "2d";
+  }
+  switch (spec.type) {
+    case "function2d":
+    case "parametric2d":
+    case "data":
+      return true;
+    default:
+      return false;
+  }
+}
+function resolveAspectMode(size) {
+  return (size == null ? void 0 : size.aspectMode) === "fixed" ? "fixed" : "auto";
+}
+function clamp(value, min2, max2) {
+  return Math.max(min2, Math.min(max2, value));
+}
+function rangeSpan(range, fallbackSpan = 10) {
+  var _a, _b;
+  const a = parseBoundToNumber((_a = range == null ? void 0 : range[0]) != null ? _a : "");
+  const b = parseBoundToNumber((_b = range == null ? void 0 : range[1]) != null ? _b : "");
+  if (a === null || b === null) {
+    return fallbackSpan;
+  }
+  return Math.abs(b - a) || 1;
+}
+function resolveRangeAspectRatio(spec) {
+  var _a, _b;
+  const xSpan = rangeSpan((_a = spec.ranges) == null ? void 0 : _a.x);
+  const ySpan = rangeSpan((_b = spec.ranges) == null ? void 0 : _b.y);
+  return clamp(xSpan / ySpan, ASPECT_MIN, ASPECT_MAX);
+}
+function parseCmValue(value) {
+  const match = value.trim().match(/^([\d.]+)\s*cm$/i);
+  if (!match) {
+    return null;
+  }
+  const parsed = Number.parseFloat(match[1]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+function formatCm(value) {
+  const rounded = Math.round(value * 100) / 100;
+  return `${rounded}cm`;
+}
+function presetBaseHeightCm(preset, size) {
+  var _a, _b;
+  if (preset === "custom") {
+    return (_b = parseCmValue((_a = size.height) != null ? _a : "")) != null ? _b : PRESET_2D_HEIGHT_CM.large;
+  }
+  return PRESET_2D_HEIGHT_CM[preset];
+}
+function presetScaleFactor(preset) {
+  switch (preset) {
+    case "small":
+      return 0.78;
+    case "medium":
+      return 0.9;
+    case "large":
+      return 1;
+    case "fullWidth":
+      return 1.05;
+    default:
+      return 1;
+  }
+}
+function computeAutoPlotSizeCm(baseHeightCm, aspect) {
+  let heightCm = baseHeightCm;
+  let widthCm = heightCm * aspect;
+  const fitScale = Math.min(1, CM_MAX_WIDTH / widthCm, CM_MAX_HEIGHT / heightCm);
+  heightCm *= fitScale;
+  widthCm *= fitScale;
+  if (heightCm < CM_MIN_HEIGHT) {
+    const grow = CM_MIN_HEIGHT / heightCm;
+    heightCm = CM_MIN_HEIGHT;
+    widthCm = Math.min(CM_MAX_WIDTH, widthCm * grow);
+  }
+  if (aspect >= 1 && widthCm < CM_MIN_WIDTH) {
+    widthCm = CM_MIN_WIDTH;
+    heightCm = Math.min(CM_MAX_HEIGHT, widthCm / aspect);
+  }
+  return { widthCm, heightCm };
+}
+function resolveAutoLatex2dDimensions(spec, size) {
+  const aspect = resolveRangeAspectRatio(spec);
+  const baseHeightCm = presetBaseHeightCm(size.preset, size);
+  const { widthCm, heightCm } = computeAutoPlotSizeCm(baseHeightCm, aspect);
+  return { width: formatCm(widthCm), height: formatCm(heightCm) };
+}
+function resolveFixedPlotDimensionsCm(spec, size) {
+  var _a, _b, _c, _d, _e;
+  if (size.preset === "custom") {
+    return {
+      widthCm: (_b = parseCmValue((_a = size.width) != null ? _a : "")) != null ? _b : 15,
+      heightCm: (_d = parseCmValue((_c = size.height) != null ? _c : "")) != null ? _d : 9
+    };
+  }
+  if (spec.type === "surface3d" || spec.type === "parametric3d" || spec.type === "pde" && ((_e = spec.view) != null ? _e : "3d") === "3d") {
+    return { widthCm: 17, heightCm: 11 };
+  }
+  return {
+    widthCm: PRESET_2D_WIDTH_CM[size.preset],
+    heightCm: PRESET_2D_HEIGHT_CM[size.preset]
+  };
+}
+function resolveFastSvgPlotDimensions(spec, size) {
+  if (!graphUses2dAspectRatio(spec) || resolveAspectMode(size) === "fixed") {
+    const fixed = resolveFixedPlotDimensionsCm(spec, size);
+    return {
+      plotWidth: Math.round(fixed.widthCm * CM_TO_PX),
+      plotHeight: Math.round(fixed.heightCm * CM_TO_PX)
+    };
+  }
+  const aspect = resolveRangeAspectRatio(spec);
+  const scale = presetScaleFactor(size.preset);
+  const maxW = PX_MAX_WIDTH * scale;
+  const maxH = PX_MAX_HEIGHT * scale;
+  const minH = PX_MIN_HEIGHT * scale;
+  const minW = PX_MIN_WIDTH * scale;
+  const baseH = PX_BASE_HEIGHT * scale;
+  let height = baseH;
+  let width = height * aspect;
+  const fitScale = Math.min(1, maxW / width, maxH / height);
+  height *= fitScale;
+  width *= fitScale;
+  if (height < minH) {
+    const grow = minH / height;
+    height = minH;
+    width = Math.min(maxW, width * grow);
+  }
+  if (aspect >= 1 && width < minW) {
+    width = minW;
+    height = Math.min(maxH, width / aspect);
+  }
+  return {
+    plotWidth: Math.round(width),
+    plotHeight: Math.round(height)
+  };
+}
+function tickTargetForSpan(span) {
+  if (span >= 100) {
+    return 4;
+  }
+  if (span >= 40) {
+    return 5;
+  }
+  return 6;
+}
+
 // src/graphSize.ts
 var GRAPH_SIZE_PRESET_LABELS = {
   small: "Small",
@@ -1031,22 +2467,23 @@ var INLINE_SIZE_PRESET_LABELS = {
   large: "Large",
   fullWidth: "Full width"
 };
-var PRESET_2D = {
+var GRAPH_PRESET_2D = {
   small: { width: "8cm", height: "5cm" },
   medium: { width: "11cm", height: "7cm" },
   large: { width: "15cm", height: "9cm" },
   fullWidth: { width: "17cm", height: "10cm" }
 };
+var PRESET_2D = GRAPH_PRESET_2D;
 var PRESET_3D_HEIGHT = {
   small: "8cm",
   medium: "9cm",
-  large: "10cm",
-  fullWidth: "10cm"
+  large: "11cm",
+  fullWidth: "11cm"
 };
 var PRESET_3D_WIDTH = {
   small: "12cm",
-  medium: "13cm",
-  large: "15cm",
+  medium: "14cm",
+  large: "17cm",
   fullWidth: "17cm"
 };
 var DIMENSION_PATTERN = /^(\d+(?:\.\d+)?(?:cm|mm|in|pt|em|ex)|(?:\d+(?:\.\d+)?)?\\linewidth)$/i;
@@ -1067,19 +2504,22 @@ function isGraph3dView(spec) {
   }
   return false;
 }
-function defaultGraphSize(settings) {
-  var _a, _b, _c, _d;
-  const preset = (_a = settings == null ? void 0 : settings.defaultSizePreset) != null ? _a : "large";
+var DEFAULT_SIZE_PRESET = "large";
+var DEFAULT_2D_WIDTH = "15cm";
+var DEFAULT_2D_HEIGHT = "9cm";
+var DEFAULT_3D_WIDTH = "17cm";
+var DEFAULT_3D_HEIGHT = "11cm";
+function defaultGraphSize() {
   return {
-    preset,
-    width: (_b = settings == null ? void 0 : settings.default2dWidth) != null ? _b : "15cm",
-    height: (_c = settings == null ? void 0 : settings.default2dHeight) != null ? _c : "9cm",
-    displayScale: clampDisplayScale((_d = settings == null ? void 0 : settings.defaultDisplayScale) != null ? _d : 1)
+    preset: DEFAULT_SIZE_PRESET,
+    width: DEFAULT_2D_WIDTH,
+    height: DEFAULT_2D_HEIGHT,
+    displayScale: 1,
+    aspectMode: "auto"
   };
 }
-function defaultGraphSizeForSpec(spec, settings) {
-  var _a, _b;
-  const base = defaultGraphSize(settings);
+function defaultGraphSizeForSpec(spec) {
+  const base = defaultGraphSize();
   if (!isGraph3dView(spec)) {
     return base;
   }
@@ -1091,41 +2531,43 @@ function defaultGraphSizeForSpec(spec, settings) {
     });
   }
   return __spreadProps(__spreadValues({}, base), {
-    width: (_a = settings == null ? void 0 : settings.default3dWidth) != null ? _a : "15cm",
-    height: (_b = settings == null ? void 0 : settings.default3dHeight) != null ? _b : "10cm"
+    width: DEFAULT_3D_WIDTH,
+    height: DEFAULT_3D_HEIGHT
   });
 }
-function ensureGraphSize(spec, settings) {
-  var _a, _b, _c, _d, _e, _f, _g, _h;
+function ensureGraphSize(spec) {
+  var _a, _b, _c, _d, _e, _f;
   if ((_a = spec.size) == null ? void 0 : _a.preset) {
     return {
       preset: spec.size.preset,
       width: spec.size.width,
       height: spec.size.height,
-      displayScale: clampDisplayScale((_b = spec.size.displayScale) != null ? _b : 1)
+      displayScale: clampDisplayScale((_b = spec.size.displayScale) != null ? _b : 1),
+      aspectMode: spec.size.aspectMode === "fixed" ? "fixed" : "auto"
     };
   }
   if (((_c = spec.export) == null ? void 0 : _c.width) || ((_d = spec.export) == null ? void 0 : _d.height)) {
     return {
       preset: "custom",
-      width: (_f = (_e = spec.export.width) != null ? _e : settings == null ? void 0 : settings.default2dWidth) != null ? _f : "15cm",
-      height: (_h = (_g = spec.export.height) != null ? _g : settings == null ? void 0 : settings.default2dHeight) != null ? _h : "9cm",
-      displayScale: 1
+      width: (_e = spec.export.width) != null ? _e : DEFAULT_2D_WIDTH,
+      height: (_f = spec.export.height) != null ? _f : DEFAULT_2D_HEIGHT,
+      displayScale: 1,
+      aspectMode: "auto"
     };
   }
-  return defaultGraphSizeForSpec(spec, settings);
+  return defaultGraphSizeForSpec(spec);
 }
-function hydrateGraphSize(spec, settings) {
-  spec.size = ensureGraphSize(spec, settings);
+function hydrateGraphSize(spec) {
+  spec.size = ensureGraphSize(spec);
   return spec;
 }
-function resolveLatexGraphDimensions(spec, settings) {
+function resolveFixedLatexGraphDimensions(spec) {
   var _a, _b;
-  const size = ensureGraphSize(spec, settings);
+  const size = ensureGraphSize(spec);
   const is3d = isGraph3dView(spec);
   if (size.preset === "custom") {
-    const width = ((_a = size.width) == null ? void 0 : _a.trim()) || (is3d ? settings == null ? void 0 : settings.default3dWidth : settings == null ? void 0 : settings.default2dWidth) || "15cm";
-    const height = ((_b = size.height) == null ? void 0 : _b.trim()) || (is3d ? settings == null ? void 0 : settings.default3dHeight : settings == null ? void 0 : settings.default2dHeight) || (is3d ? "10cm" : "9cm");
+    const width = ((_a = size.width) == null ? void 0 : _a.trim()) || (is3d ? DEFAULT_3D_WIDTH : DEFAULT_2D_WIDTH);
+    const height = ((_b = size.height) == null ? void 0 : _b.trim()) || (is3d ? DEFAULT_3D_HEIGHT : DEFAULT_2D_HEIGHT);
     return { width, height };
   }
   const presetDims = PRESET_2D[size.preset];
@@ -1134,38 +2576,39 @@ function resolveLatexGraphDimensions(spec, settings) {
     height: is3d ? PRESET_3D_HEIGHT[size.preset] : presetDims.height
   };
 }
-function resolveGraphDimensions(spec, settings) {
-  return resolveLatexGraphDimensions(spec, settings);
-}
-function resolveDisplayScale(spec, settings) {
-  var _a;
-  return clampDisplayScale((_a = ensureGraphSize(spec, settings).displayScale) != null ? _a : 1);
-}
-function graphDisplayCssClasses(spec, settings) {
-  const size = ensureGraphSize(spec, settings);
-  const classes = ["mathgraph-display-scaled"];
-  if (size.preset === "fullWidth") {
-    classes.push("mathgraph-display-full-width");
+function resolveLatexGraphDimensions(spec) {
+  const size = ensureGraphSize(spec);
+  if (graphUses2dAspectRatio(spec) && resolveAspectMode(size) === "auto") {
+    return resolveAutoLatex2dDimensions(spec, size);
   }
-  return classes.join(" ");
+  return resolveFixedLatexGraphDimensions(spec);
 }
-function applyPresetToGraphSize(preset, current, settings, spec) {
+function resolveGraphDimensions(spec) {
+  return resolveLatexGraphDimensions(spec);
+}
+function resolveDisplayScale(spec) {
+  var _a;
+  return clampDisplayScale((_a = ensureGraphSize(spec).displayScale) != null ? _a : 1);
+}
+function applyPresetToGraphSize(preset, current, spec) {
   var _a, _b, _c, _d, _e, _f;
   const is3d = spec ? isGraph3dView(spec) : false;
   if (preset === "custom") {
-    const base = current != null ? current : defaultGraphSize(settings);
+    const base = current != null ? current : defaultGraphSize();
     return {
       preset: "custom",
-      width: (_b = (_a = base.width) != null ? _a : is3d ? settings == null ? void 0 : settings.default3dWidth : settings == null ? void 0 : settings.default2dWidth) != null ? _b : "15cm",
-      height: (_d = (_c = base.height) != null ? _c : is3d ? settings == null ? void 0 : settings.default3dHeight : settings == null ? void 0 : settings.default2dHeight) != null ? _d : is3d ? "10cm" : "9cm",
-      displayScale: clampDisplayScale((_e = base.displayScale) != null ? _e : 1)
+      width: (_a = base.width) != null ? _a : is3d ? DEFAULT_3D_WIDTH : DEFAULT_2D_WIDTH,
+      height: (_b = base.height) != null ? _b : is3d ? DEFAULT_3D_HEIGHT : DEFAULT_2D_HEIGHT,
+      displayScale: clampDisplayScale((_c = base.displayScale) != null ? _c : 1),
+      aspectMode: (_d = base.aspectMode) != null ? _d : "auto"
     };
   }
   return {
     preset,
     width: is3d ? PRESET_3D_WIDTH[preset] : PRESET_2D[preset].width,
     height: is3d ? PRESET_3D_HEIGHT[preset] : PRESET_2D[preset].height,
-    displayScale: clampDisplayScale((_f = current == null ? void 0 : current.displayScale) != null ? _f : 1)
+    displayScale: clampDisplayScale((_e = current == null ? void 0 : current.displayScale) != null ? _e : 1),
+    aspectMode: (_f = current == null ? void 0 : current.aspectMode) != null ? _f : "auto"
   };
 }
 function inlinePresetToGraphSize(preset) {
@@ -1201,6 +2644,144 @@ function validateGraphSize(size) {
 }
 function formatDisplayScaleLabel(scale) {
   return `${Math.round(clampDisplayScale(scale) * 100)}%`;
+}
+
+// src/graphPlotStyle.ts
+var DEFAULT_2D_LINE_COLOR = "auto";
+function isAutoGraphColor(color) {
+  if (!(color == null ? void 0 : color.trim())) {
+    return true;
+  }
+  const lower = color.trim().toLowerCase();
+  return lower === "auto" || lower === "black";
+}
+function graphUsesColoredSurfaceDefault(spec) {
+  var _a;
+  if (spec.type === "surface3d") {
+    return true;
+  }
+  return spec.type === "pde" && ((_a = spec.view) != null ? _a : "3d") === "3d";
+}
+function graphSupportsSurfaceStyleControl(spec) {
+  return graphUsesColoredSurfaceDefault(spec);
+}
+function joinOptions(options) {
+  return options.filter(Boolean).join(", ");
+}
+function resolveSurfaceStyle(spec) {
+  var _a, _b;
+  hydrateGraphStyle(spec);
+  return (_b = (_a = spec.style) == null ? void 0 : _a.surfaceStyle) != null ? _b : graphUsesColoredSurfaceDefault(spec) ? "colored" : "wireframe";
+}
+function resolveColormap(spec) {
+  var _a, _b;
+  hydrateGraphStyle(spec);
+  const map = (_b = (_a = spec.style) == null ? void 0 : _a.colormap) == null ? void 0 : _b.trim().toLowerCase();
+  if (map === "viridis" || map === "hot" || map === "heat") {
+    return map;
+  }
+  return "heat";
+}
+function hydrateGraphStyle(spec) {
+  var _a, _b;
+  spec.style = (_a = spec.style) != null ? _a : {};
+  const style = spec.style;
+  const colored3d = graphUsesColoredSurfaceDefault(spec);
+  if (colored3d) {
+    if (!style.surfaceStyle) {
+      style.surfaceStyle = "colored";
+    }
+    if (!style.colormap) {
+      style.colormap = "heat";
+    }
+  } else if (!isGraph3dView(spec)) {
+    if (!((_b = style.color) == null ? void 0 : _b.trim())) {
+      style.color = DEFAULT_2D_LINE_COLOR;
+    }
+    if (!style.surfaceStyle) {
+      style.surfaceStyle = "wireframe";
+    }
+  }
+  if (graphSupportsGridToggle(spec) && style.grid === void 0) {
+    style.grid = true;
+  }
+}
+function resolvePlotStrokeColor(spec) {
+  var _a, _b;
+  hydrateGraphStyle(spec);
+  const color = (_b = (_a = spec.style) == null ? void 0 : _a.color) == null ? void 0 : _b.trim();
+  if (isAutoGraphColor(color)) {
+    return "mathgraphLine";
+  }
+  return color;
+}
+function buildSampled2dPlotOptions(spec) {
+  var _a, _b;
+  hydrateGraphStyle(spec);
+  const style = (_a = spec.style) != null ? _a : {};
+  return joinOptions([
+    resolvePlotStrokeColor(spec),
+    (_b = style.width) != null ? _b : "thick"
+  ]);
+}
+function buildSampled3dPlotOptions(spec) {
+  var _a, _b, _c, _d;
+  hydrateGraphStyle(spec);
+  const surfaceStyle = resolveSurfaceStyle(spec);
+  const colormap = resolveColormap(spec);
+  const style = (_a = spec.style) != null ? _a : {};
+  if (surfaceStyle === "wireframe") {
+    const color = resolvePlotStrokeColor(spec);
+    return joinOptions([
+      "mesh",
+      color,
+      "thick",
+      `draw=${color}`,
+      (_b = style.width) == null ? void 0 : _b.trim()
+    ]);
+  }
+  if (surfaceStyle === "solid") {
+    return joinOptions([
+      "surf",
+      "shader=interp",
+      `colormap/${colormap}`,
+      "point meta=z",
+      (_c = style.width) == null ? void 0 : _c.trim()
+    ]);
+  }
+  return joinOptions([
+    "mesh",
+    "thick",
+    "point meta=z",
+    `colormap/${colormap}`,
+    (_d = style.width) == null ? void 0 : _d.trim()
+  ]);
+}
+function resolveFastSvgStrokeColor(spec, themeDefaultLine) {
+  var _a, _b;
+  const color = (_b = (_a = spec.style) == null ? void 0 : _a.color) == null ? void 0 : _b.trim();
+  if (isAutoGraphColor(color)) {
+    return themeDefaultLine;
+  }
+  return color;
+}
+function heatColorFromUnit(t) {
+  const clamped = Math.max(0, Math.min(1, t));
+  if (clamped < 0.5) {
+    const u2 = clamped * 2;
+    const r2 = Math.round(40 + u2 * 215);
+    const g2 = Math.round(90 + u2 * 110);
+    const b = Math.round(255 - u2 * 255);
+    return `rgb(${r2},${g2},${b})`;
+  }
+  const u = (clamped - 0.5) * 2;
+  const r = Math.round(255 - u * 20);
+  const g = Math.round(200 - u * 200);
+  return `rgb(${r},${g},0)`;
+}
+function heatColorFromZ(z, zMin, zMax) {
+  const span = zMax - zMin || 1;
+  return heatColorFromUnit((z - zMin) / span);
 }
 
 // src/functionPlaceholders.ts
@@ -1253,7 +2834,8 @@ function hydrateGraphSpec(spec, settings) {
   if (fn) {
     setUserFunction(spec, fn);
   }
-  hydrateGraphSize(spec, settings);
+  hydrateGraphSize(spec);
+  hydrateGraphStyle(spec);
   return spec;
 }
 var GRAPH_TYPE_LABELS = {
@@ -1266,6 +2848,15 @@ var GRAPH_TYPE_LABELS = {
   data: "Data Plot"
 };
 function defaultGraphSpec(type = "function2d", settings) {
+  const baseStyle = () => {
+    if (type === "surface3d") {
+      return { surfaceStyle: "colored", colormap: "heat", grid: false };
+    }
+    if (type === "pde") {
+      return { color: "auto", surfaceStyle: "colored", colormap: "heat", grid: false };
+    }
+    return { color: "auto", surfaceStyle: "wireframe", grid: true };
+  };
   const base = {
     version: 1,
     type,
@@ -1278,8 +2869,8 @@ function defaultGraphSpec(type = "function2d", settings) {
     samples: 100,
     samplesY: 35,
     points: [],
-    style: {},
-    size: defaultGraphSize(settings)
+    style: baseStyle(),
+    size: defaultGraphSize()
   };
   switch (type) {
     case "function2d":
@@ -1313,6 +2904,7 @@ function defaultGraphSpec(type = "function2d", settings) {
       }), FUNCTION_PLACEHOLDER_ODE);
     case "pde":
       return setUserFunctionOnSpec(__spreadProps(__spreadValues({}, base), {
+        style: { color: "auto", surfaceStyle: "colored", colormap: "heat", grid: false },
         title: "2D Heat Equation",
         equation: "u_t = u_xx + u_yy",
         view: "3d",
@@ -1356,10 +2948,2357 @@ function serializeGraphSpec(spec) {
   delete stored.compiledExpression;
   delete stored.octaveExpression;
   delete stored.export;
+  delete stored.renderEngine;
   return JSON.stringify(stored, null, 2);
 }
 
+// src/graphRangeValidation.ts
+var SURFACE_Z_CLIP_WARNING = "Most of the surface may be clipped by the selected z range.";
+var SAMPLE_GRID = 11;
+var IN_RANGE_FRACTION_THRESHOLD = 0.5;
+function parseBoundToNumber(raw) {
+  const trimmed = raw.trim().replace(/π/g, "pi");
+  if (!trimmed) {
+    return null;
+  }
+  if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+    return Number.parseFloat(trimmed);
+  }
+  const jsExpr = trimmed.replace(/\bpi\b/gi, "Math.PI").replace(/\^/g, "**");
+  if (!/^[\d\s+\-*/().MathPI]+$/.test(jsExpr.replace(/Math\.PI/g, ""))) {
+    return null;
+  }
+  try {
+    const value = Function(`"use strict"; return (${jsExpr});`)();
+    return Number.isFinite(value) ? value : null;
+  } catch (e) {
+    return null;
+  }
+}
+function evaluateSurfaceZ(expr, x, y, parameters) {
+  try {
+    const body = expr.replace(/^y\s*=\s*/i, "").trim();
+    return evaluateExpression(body, { x, y }, parameters, {
+      variables: ["x", "y", "z", "t", "r"],
+      parameters
+    });
+  } catch (e) {
+    return null;
+  }
+}
+function isSurface3dSpec(spec) {
+  var _a;
+  if (spec.type === "surface3d") {
+    return true;
+  }
+  return spec.type === "pde" && ((_a = spec.view) != null ? _a : "3d") === "3d";
+}
+function surfaceZRangeClipWarning(spec) {
+  var _a, _b, _c, _d;
+  if (!isSurface3dSpec(spec)) {
+    return null;
+  }
+  const fn = getUserFunction(spec);
+  const xRange = (_a = spec.ranges) == null ? void 0 : _a.x;
+  const yRange = (_b = spec.ranges) == null ? void 0 : _b.y;
+  const zRange = (_c = spec.ranges) == null ? void 0 : _c.z;
+  if (!fn || !(xRange == null ? void 0 : xRange[0]) || !(xRange == null ? void 0 : xRange[1]) || !(yRange == null ? void 0 : yRange[0]) || !(yRange == null ? void 0 : yRange[1]) || !(zRange == null ? void 0 : zRange[0]) || !(zRange == null ? void 0 : zRange[1])) {
+    return null;
+  }
+  const xMin = parseBoundToNumber(xRange[0]);
+  const xMax = parseBoundToNumber(xRange[1]);
+  const yMin = parseBoundToNumber(yRange[0]);
+  const yMax = parseBoundToNumber(yRange[1]);
+  const zMin = parseBoundToNumber(zRange[0]);
+  const zMax = parseBoundToNumber(zRange[1]);
+  if (xMin === null || xMax === null || yMin === null || yMax === null || zMin === null || zMax === null) {
+    return null;
+  }
+  const parameters = (_d = spec.parameters) != null ? _d : {};
+  let inRangeCount = 0;
+  let validCount = 0;
+  let sampledMin = Number.POSITIVE_INFINITY;
+  let sampledMax = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < SAMPLE_GRID; i++) {
+    const x = xMin + (xMax - xMin) * (i / (SAMPLE_GRID - 1));
+    for (let j = 0; j < SAMPLE_GRID; j++) {
+      const y = yMin + (yMax - yMin) * (j / (SAMPLE_GRID - 1));
+      const z = evaluateSurfaceZ(fn, x, y, parameters);
+      if (z === null) {
+        continue;
+      }
+      validCount++;
+      sampledMin = Math.min(sampledMin, z);
+      sampledMax = Math.max(sampledMax, z);
+      if (z >= zMin && z <= zMax) {
+        inRangeCount++;
+      }
+    }
+  }
+  if (validCount === 0) {
+    return null;
+  }
+  const inRangeFraction = inRangeCount / validCount;
+  if (inRangeFraction >= IN_RANGE_FRACTION_THRESHOLD) {
+    return null;
+  }
+  const estimatedSpan = sampledMax - sampledMin;
+  const selectedSpan = zMax - zMin;
+  if (estimatedSpan <= 0 || selectedSpan <= 0) {
+    return inRangeFraction < IN_RANGE_FRACTION_THRESHOLD ? SURFACE_Z_CLIP_WARNING : null;
+  }
+  const overlapMin = Math.max(sampledMin, zMin);
+  const overlapMax = Math.min(sampledMax, zMax);
+  const overlap = Math.max(0, overlapMax - overlapMin);
+  if (overlap / estimatedSpan < IN_RANGE_FRACTION_THRESHOLD) {
+    return SURFACE_Z_CLIP_WARNING;
+  }
+  return inRangeFraction < IN_RANGE_FRACTION_THRESHOLD ? SURFACE_Z_CLIP_WARNING : null;
+}
+
+// src/ExpressionEngine.ts
+var ExpressionEvaluationError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ExpressionEvaluationError";
+  }
+};
+var parser = new Parser();
+function stripExplicitYPrefix(expression) {
+  return expression.replace(/^y\s*=\s*/i, "").trim();
+}
+function compiledOctaveToExprEval(compiled) {
+  return compiled.replace(/\.\^/g, "^").replace(/\.\*/g, "*").replace(/\.\//g, "/");
+}
+function buildEvaluationScope(variables, parameters = {}) {
+  const scope = __spreadProps(__spreadValues({}, variables), {
+    PI: Math.PI,
+    pi: Math.PI,
+    e: Math.E
+  });
+  for (const [name, raw] of Object.entries(parameters)) {
+    if (name in variables) {
+      continue;
+    }
+    const numeric = parseBoundToNumber(raw);
+    if (numeric !== null) {
+      scope[name] = numeric;
+    }
+  }
+  return scope;
+}
+function parseCompiledExpression(compiled) {
+  const normalized = compiledOctaveToExprEval(compiled);
+  try {
+    return parser.parse(normalized);
+  } catch (e) {
+    throw new ExpressionEvaluationError(`Could not parse expression: ${normalized}`);
+  }
+}
+function compileUserExpression(expression, context = {}) {
+  try {
+    return compileExpressionForOctave(expression, context);
+  } catch (err) {
+    if (err instanceof GraphExpressionSyntaxError) {
+      throw new ExpressionEvaluationError(err.message);
+    }
+    throw err;
+  }
+}
+function evaluateExpression(expression, variables, parameters = {}, context) {
+  const compiled = compileUserExpression(expression, context);
+  const parsed = parseCompiledExpression(compiled);
+  const scope = buildEvaluationScope(variables, parameters);
+  const result = parsed.evaluate(scope);
+  if (typeof result !== "number" || !Number.isFinite(result)) {
+    throw new ExpressionEvaluationError("Expression did not evaluate to a finite number.");
+  }
+  return result;
+}
+function linspace(min2, max2, count) {
+  if (count <= 1) {
+    return [min2];
+  }
+  const values = [];
+  for (let i = 0; i < count; i++) {
+    values.push(min2 + (max2 - min2) * (i / (count - 1)));
+  }
+  return values;
+}
+function defaultContext() {
+  return {
+    variables: ["x", "y", "z", "t", "r"],
+    parameters: {}
+  };
+}
+function sampleFunction2D(expression, xMin, xMax, samples, parameters = {}) {
+  const body = stripExplicitYPrefix(expression);
+  const context = __spreadProps(__spreadValues({}, defaultContext()), {
+    parameters
+  });
+  const compiled = compileUserExpression(body, context);
+  const parsed = parseCompiledExpression(compiled);
+  const xs = linspace(xMin, xMax, samples);
+  const points = [];
+  for (const x of xs) {
+    const scope = buildEvaluationScope({ x }, parameters);
+    const y = parsed.evaluate(scope);
+    if (typeof y !== "number" || !Number.isFinite(y)) {
+      continue;
+    }
+    points.push({ x, y });
+  }
+  if (points.length === 0) {
+    throw new ExpressionEvaluationError("Could not sample 2D function.");
+  }
+  return points;
+}
+function sampleSurface3D(expression, xMin, xMax, yMin, yMax, samplesX, samplesY, parameters = {}) {
+  const body = stripExplicitYPrefix(expression);
+  const context = __spreadProps(__spreadValues({}, defaultContext()), {
+    parameters
+  });
+  const compiled = compileUserExpression(body, context);
+  const parsed = parseCompiledExpression(compiled);
+  const xs = linspace(xMin, xMax, samplesX);
+  const ys = linspace(yMin, yMax, samplesY);
+  const points = [];
+  for (const y of ys) {
+    for (const x of xs) {
+      const scope = buildEvaluationScope({ x, y }, parameters);
+      const z = parsed.evaluate(scope);
+      if (typeof z !== "number" || !Number.isFinite(z)) {
+        continue;
+      }
+      points.push({ x, y, z });
+    }
+  }
+  if (points.length === 0) {
+    throw new ExpressionEvaluationError("Could not sample 3D surface.");
+  }
+  return points;
+}
+function samplePde2D(expression, xMin, xMax, yMin, yMax, samples, parameters = {}) {
+  const yMid = (yMin + yMax) / 2;
+  const body = stripExplicitYPrefix(expression);
+  const context = __spreadProps(__spreadValues({}, defaultContext()), {
+    parameters
+  });
+  const compiled = compileUserExpression(body, context);
+  const parsed = parseCompiledExpression(compiled);
+  const xs = linspace(xMin, xMax, samples);
+  const points = [];
+  for (const x of xs) {
+    const scope = buildEvaluationScope({ x, y: yMid }, parameters);
+    const u = parsed.evaluate(scope);
+    if (typeof u !== "number" || !Number.isFinite(u)) {
+      continue;
+    }
+    points.push({ x, u });
+  }
+  if (points.length === 0) {
+    throw new ExpressionEvaluationError("Could not sample PDE slice.");
+  }
+  return points;
+}
+function formatSampleCsv(columns, rows) {
+  const lines = [columns.join(",")];
+  for (const row of rows) {
+    lines.push(columns.map((column) => String(row[column])).join(","));
+  }
+  return `${lines.join("\n")}
+`;
+}
+
+// src/graphPointResolution.ts
+var POINT_ON_GRAPH_TOLERANCE = 1e-6;
+function expressionContext(spec) {
+  var _a;
+  return {
+    variables: ["x", "y", "z", "t"],
+    parameters: (_a = spec.parameters) != null ? _a : {}
+  };
+}
+function graphUses3dPoints(spec) {
+  var _a;
+  if (spec.type === "surface3d" || spec.type === "parametric3d") {
+    return true;
+  }
+  if (spec.type === "pde" && ((_a = spec.view) != null ? _a : "3d") === "3d") {
+    return true;
+  }
+  return false;
+}
+function graphSupportsAutoComputeY(spec) {
+  var _a;
+  return spec.type === "function2d" || spec.type === "ode" && ((_a = spec.view) != null ? _a : "2d") === "2d";
+}
+function graphSupportsAutoComputeZ(spec) {
+  var _a;
+  return spec.type === "surface3d" || spec.type === "pde" && ((_a = spec.view) != null ? _a : "3d") === "3d";
+}
+function substituteVariableLiterals(expression, name, value) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(?<![A-Za-z])${escaped}(?![A-Za-z])`, "g");
+  const wrapped = value.includes(" ") ? `{${value}}` : value;
+  return expression.replace(pattern, wrapped);
+}
+function formatNumericCoordinate(value) {
+  if (Number.isInteger(value) || Math.abs(value - Math.round(value)) < 1e-10) {
+    return String(Math.round(value));
+  }
+  return String(Number.parseFloat(value.toPrecision(12)));
+}
+function expressionBody(spec) {
+  const fn = getUserFunction(spec).trim();
+  return fn.replace(/^y\s*=\s*/i, "").trim();
+}
+function evaluateUserExpressionAtPoint(spec, variables) {
+  var _a;
+  const body = expressionBody(spec);
+  if (!body) {
+    return null;
+  }
+  try {
+    const scope = {};
+    if (variables.x !== void 0) {
+      scope.x = variables.x;
+    }
+    if (variables.y !== void 0) {
+      scope.y = variables.y;
+    }
+    return evaluateExpression(body, scope, (_a = spec.parameters) != null ? _a : {}, expressionContext(spec));
+  } catch (e) {
+    return null;
+  }
+}
+function computeCoordinateExpressionSymbolic(spec, coords) {
+  var _a;
+  const body = expressionBody(spec);
+  if (!body) {
+    return null;
+  }
+  try {
+    let expr = compileExpressionForPgfplots(body, expressionContext(spec));
+    expr = substituteVariableLiterals(expr, "x", coords.x.trim());
+    if (coords.y !== void 0) {
+      expr = substituteVariableLiterals(expr, "y", coords.y.trim());
+    }
+    const params = (_a = spec.parameters) != null ? _a : {};
+    for (const [name, raw] of Object.entries(params)) {
+      if (name === "x" || name === "y" || name === "z") {
+        continue;
+      }
+      expr = substituteVariableLiterals(expr, name, raw.trim());
+    }
+    return expr;
+  } catch (e) {
+    return null;
+  }
+}
+function pointLabel(point) {
+  var _a;
+  return ((_a = point.label) == null ? void 0 : _a.trim()) || "Point";
+}
+function analyzeGraphPoint(spec, point) {
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
+  const x = (_b = (_a = point.x) == null ? void 0 : _a.trim()) != null ? _b : "";
+  if (!x) {
+    return null;
+  }
+  const label = pointLabel(point);
+  if (graphSupportsAutoComputeY(spec)) {
+    const yProvided = (_d = (_c = point.y) == null ? void 0 : _c.trim()) != null ? _d : "";
+    const xNum = parseBoundToNumber(x);
+    if (xNum === null) {
+      return {
+        status: "could-not-evaluate",
+        statusText: `${label} could not be evaluated.`
+      };
+    }
+    const computedYNum = evaluateUserExpressionAtPoint(spec, { x: xNum });
+    if (computedYNum === null) {
+      return {
+        status: "could-not-evaluate",
+        statusText: `${label} could not be evaluated.`
+      };
+    }
+    const computedY = formatNumericCoordinate(computedYNum);
+    if (!yProvided) {
+      return {
+        status: "computed-y",
+        statusText: `Computed y = ${computedY}`,
+        computed: { y: computedY }
+      };
+    }
+    const yNum = parseBoundToNumber(yProvided);
+    if (yNum === null) {
+      return {
+        status: "could-not-evaluate",
+        statusText: `${label} could not be evaluated.`
+      };
+    }
+    if (Math.abs(yNum - computedYNum) > POINT_ON_GRAPH_TOLERANCE) {
+      return {
+        status: "not-on-graph",
+        statusText: "Not on graph"
+      };
+    }
+    return { status: "ok", statusText: "" };
+  }
+  if (graphSupportsAutoComputeZ(spec)) {
+    const y2 = (_f = (_e = point.y) == null ? void 0 : _e.trim()) != null ? _f : "";
+    if (!y2) {
+      return { status: "incomplete", statusText: "" };
+    }
+    const xNum = parseBoundToNumber(x);
+    const yNum = parseBoundToNumber(y2);
+    if (xNum === null || yNum === null) {
+      return {
+        status: "could-not-evaluate",
+        statusText: `${label} could not be evaluated.`
+      };
+    }
+    const computedZNum = evaluateUserExpressionAtPoint(spec, { x: xNum, y: yNum });
+    if (computedZNum === null) {
+      return {
+        status: "could-not-evaluate",
+        statusText: `${label} could not be evaluated.`
+      };
+    }
+    const computedZ = formatNumericCoordinate(computedZNum);
+    const zProvided = (_h = (_g = point.z) == null ? void 0 : _g.trim()) != null ? _h : "";
+    if (!zProvided) {
+      return {
+        status: "computed-z",
+        statusText: `Computed z = ${computedZ}`,
+        computed: { z: computedZ }
+      };
+    }
+    const zNum = parseBoundToNumber(zProvided);
+    if (zNum === null) {
+      return {
+        status: "could-not-evaluate",
+        statusText: `${label} could not be evaluated.`
+      };
+    }
+    if (Math.abs(zNum - computedZNum) > POINT_ON_GRAPH_TOLERANCE) {
+      return {
+        status: "not-on-graph",
+        statusText: "Not on graph"
+      };
+    }
+    return { status: "ok", statusText: "" };
+  }
+  const y = (_j = (_i = point.y) == null ? void 0 : _i.trim()) != null ? _j : "";
+  if (!y) {
+    return { status: "incomplete", statusText: "" };
+  }
+  if (graphUses3dPoints(spec)) {
+    const z = (_l = (_k = point.z) == null ? void 0 : _k.trim()) != null ? _l : "";
+    if (!z) {
+      return { status: "incomplete", statusText: "" };
+    }
+  }
+  return { status: "ok", statusText: "" };
+}
+function summarizeGraphPointWarnings(spec, points = ((_a) => (_a = spec.points) != null ? _a : [])()) {
+  const offGraph = [];
+  const failed = [];
+  for (const point of points) {
+    const analysis = analyzeGraphPoint(spec, point);
+    if (!analysis) {
+      continue;
+    }
+    if (analysis.status === "not-on-graph") {
+      offGraph.push(point);
+    } else if (analysis.status === "could-not-evaluate") {
+      failed.push(point);
+    }
+  }
+  if (offGraph.length === 1) {
+    const label = pointLabel(offGraph[0]);
+    if (graphSupportsAutoComputeZ(spec)) {
+      return `${label} does not satisfy z = f(x,y). It will still be rendered.`;
+    }
+    return `${label} is not on the graph.`;
+  }
+  if (offGraph.length > 1) {
+    return "Some points are not on the graph.";
+  }
+  if (failed.length === 1) {
+    return `${pointLabel(failed[0])} could not be evaluated.`;
+  }
+  if (failed.length > 1) {
+    return "Some points could not be evaluated.";
+  }
+  return null;
+}
+function resolveGraphPointCoordinates(spec, point) {
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
+  const x = (_b = (_a = point.x) == null ? void 0 : _a.trim()) != null ? _b : "";
+  if (!x) {
+    return null;
+  }
+  if (graphSupportsAutoComputeY(spec)) {
+    const yProvided = (_d = (_c = point.y) == null ? void 0 : _c.trim()) != null ? _d : "";
+    if (yProvided) {
+      return { x, y: yProvided };
+    }
+    const xNum = parseBoundToNumber(x);
+    if (xNum !== null) {
+      const yNum = evaluateUserExpressionAtPoint(spec, { x: xNum });
+      if (yNum !== null) {
+        return { x, y: formatNumericCoordinate(yNum) };
+      }
+    }
+    const symbolic = computeCoordinateExpressionSymbolic(spec, { x });
+    if (symbolic) {
+      return { x, y: `{${symbolic}}` };
+    }
+    return null;
+  }
+  if (graphSupportsAutoComputeZ(spec)) {
+    const y2 = (_f = (_e = point.y) == null ? void 0 : _e.trim()) != null ? _f : "";
+    if (!y2) {
+      return null;
+    }
+    const zProvided = (_h = (_g = point.z) == null ? void 0 : _g.trim()) != null ? _h : "";
+    if (zProvided) {
+      return { x, y: y2, z: zProvided };
+    }
+    const xNum = parseBoundToNumber(x);
+    const yNum = parseBoundToNumber(y2);
+    if (xNum !== null && yNum !== null) {
+      const zNum = evaluateUserExpressionAtPoint(spec, { x: xNum, y: yNum });
+      if (zNum !== null) {
+        return { x, y: y2, z: formatNumericCoordinate(zNum) };
+      }
+    }
+    const symbolic = computeCoordinateExpressionSymbolic(spec, { x, y: y2 });
+    if (symbolic) {
+      return { x, y: y2, z: `{${symbolic}}` };
+    }
+    return null;
+  }
+  const y = (_j = (_i = point.y) == null ? void 0 : _i.trim()) != null ? _j : "";
+  if (!y) {
+    return null;
+  }
+  if (graphUses3dPoints(spec)) {
+    const z = (_l = (_k = point.z) == null ? void 0 : _k.trim()) != null ? _l : "";
+    if (!z) {
+      return null;
+    }
+    return { x, y, z };
+  }
+  return { x, y };
+}
+function attachComputedCoordinates(spec, points) {
+  return points.map((point) => {
+    const analysis = analyzeGraphPoint(spec, point);
+    if (!(analysis == null ? void 0 : analysis.computed)) {
+      const next = __spreadValues({}, point);
+      delete next.computed;
+      return next;
+    }
+    return __spreadProps(__spreadValues({}, point), {
+      computed: __spreadValues({}, analysis.computed)
+    });
+  });
+}
+
+// src/formatTickLabel.ts
+var TICK_LABEL_FONT = "var(--font-text), sans-serif";
+function formatTickLabel(value) {
+  if (Math.abs(value) < 1e-12) {
+    return "0";
+  }
+  const rounded = Number(value.toFixed(10));
+  return rounded < 0 ? `-${Math.abs(rounded)}` : `${rounded}`;
+}
+
+// src/graphThemeColors.ts
+var LIGHT_FALLBACKS = {
+  foreground: "#111111",
+  axis: "#111111",
+  text: "#111111",
+  grid: "#d0d0d0",
+  defaultLine: "#111111",
+  defaultWireframe: "#111111"
+};
+var DARK_FALLBACKS = {
+  foreground: "#f2f2f2",
+  axis: "#f2f2f2",
+  text: "#f2f2f2",
+  grid: "#3a3a3a",
+  defaultLine: "#f2f2f2",
+  defaultWireframe: "#f2f2f2"
+};
+function isObsidianDarkTheme(doc = typeof activeDocument !== "undefined" ? activeDocument : void 0) {
+  return doc.body.classList.contains("theme-dark");
+}
+function readCssColor(varName, fallback, doc) {
+  try {
+    const raw = getComputedStyle(doc.body).getPropertyValue(varName).trim();
+    return raw || fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+function resolveGraphThemeColors(app) {
+  let doc;
+  if (app && typeof app === "object" && "body" in app) {
+    doc = app;
+  } else if (typeof activeDocument !== "undefined") {
+    doc = activeDocument;
+  }
+  if (!doc) {
+    return __spreadValues({
+      isDark: false
+    }, LIGHT_FALLBACKS);
+  }
+  const isDark = isObsidianDarkTheme(doc);
+  const fallbacks = isDark ? DARK_FALLBACKS : LIGHT_FALLBACKS;
+  const foreground = readCssColor("--text-normal", fallbacks.foreground, doc);
+  const text = readCssColor("--text-muted", fallbacks.text, doc);
+  const grid = readCssColor("--background-modifier-border", fallbacks.grid, doc);
+  return {
+    isDark,
+    foreground,
+    axis: foreground,
+    grid,
+    text,
+    defaultLine: foreground,
+    defaultWireframe: foreground
+  };
+}
+function cssColorToTikzHtml(color) {
+  const trimmed = color.trim();
+  if (/^#[0-9a-f]{6}$/i.test(trimmed)) {
+    return trimmed.slice(1).toUpperCase();
+  }
+  if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
+    const [, r, g, b] = trimmed.match(/^#(.)(.)(.)$/i);
+    return `${r}${r}${g}${g}${b}${b}`.toUpperCase();
+  }
+  const rgbMatch = trimmed.match(/^rgba?\(\s*([\d.]+)(?:%|)\s*,\s*([\d.]+)(?:%|)\s*,\s*([\d.]+)(?:%|)/i);
+  if (rgbMatch) {
+    const toByte = (value, isPercent2) => {
+      const n = Number.parseFloat(value);
+      if (isPercent2 || trimmed.includes("%")) {
+        return Math.round(Math.min(100, Math.max(0, n)) * 2.55);
+      }
+      return Math.round(Math.min(255, Math.max(0, n)));
+    };
+    const isPercent = trimmed.includes("%");
+    const r = toByte(rgbMatch[1], isPercent).toString(16).padStart(2, "0");
+    const g = toByte(rgbMatch[2], isPercent).toString(16).padStart(2, "0");
+    const b = toByte(rgbMatch[3], isPercent).toString(16).padStart(2, "0");
+    return `${r}${g}${b}`.toUpperCase();
+  }
+  return (isObsidianDarkTheme() ? DARK_FALLBACKS.foreground : LIGHT_FALLBACKS.foreground).slice(1).toUpperCase();
+}
+function buildTikzThemeColorDefinitions(theme) {
+  const axis = cssColorToTikzHtml(theme.axis);
+  const grid = cssColorToTikzHtml(theme.grid);
+  const line = cssColorToTikzHtml(theme.defaultLine);
+  return [
+    "\\definecolor{mathgraphAxis}{HTML}{" + axis + "}",
+    "\\definecolor{mathgraphGrid}{HTML}{" + grid + "}",
+    "\\definecolor{mathgraphLine}{HTML}{" + line + "}"
+  ].join("\n");
+}
+function getCurrentTheme(doc) {
+  if (doc) {
+    return isObsidianDarkTheme(doc) ? "dark" : "light";
+  }
+  if (typeof activeDocument !== "undefined") {
+    return isObsidianDarkTheme(activeDocument) ? "dark" : "light";
+  }
+  return "light";
+}
+
+// render/renderSampleDefaults.ts
+var FAST_SAMPLES_2D = 300;
+var FAST_SAMPLES_3D = 35;
+var TIKZJAX_SAMPLES_2D = 120;
+var TIKZJAX_SAMPLES_3D = 25;
+function effectiveSamples2D(spec, mode) {
+  var _a;
+  const requested = (_a = spec.samples) != null ? _a : 0;
+  if (mode === "svgFast") {
+    return Math.min(Math.max(requested || FAST_SAMPLES_2D, FAST_SAMPLES_2D), 400);
+  }
+  return Math.min(Math.max(requested || TIKZJAX_SAMPLES_2D, 20), TIKZJAX_SAMPLES_2D);
+}
+function effectiveSamples3D(spec, mode) {
+  var _a, _b, _c, _d, _e, _f;
+  if (mode === "svgFast") {
+    const sx2 = Math.min(Math.max((_a = spec.samples) != null ? _a : FAST_SAMPLES_3D, FAST_SAMPLES_3D), 50);
+    const sy2 = Math.min(Math.max((_c = (_b = spec.samplesY) != null ? _b : spec.samples) != null ? _c : FAST_SAMPLES_3D, FAST_SAMPLES_3D), 50);
+    return { samplesX: sx2, samplesY: sy2 };
+  }
+  const sx = Math.min(Math.max((_d = spec.samples) != null ? _d : TIKZJAX_SAMPLES_3D, 8), TIKZJAX_SAMPLES_3D);
+  const sy = Math.min(Math.max((_f = (_e = spec.samplesY) != null ? _e : spec.samples) != null ? _f : TIKZJAX_SAMPLES_3D, 8), TIKZJAX_SAMPLES_3D);
+  return { samplesX: sx, samplesY: sy };
+}
+
+// render/FastSvgRenderer.ts
+var PLOT_WIDTH_3D = 620;
+var PLOT_HEIGHT_3D = 360;
+function build2DCanvasLayout(spec) {
+  var _a, _b, _c;
+  const hasTitle = Boolean((_a = spec.title) == null ? void 0 : _a.trim());
+  const hasXLabel = Boolean((_c = (_b = spec.labels) == null ? void 0 : _b.x) == null ? void 0 : _c.trim());
+  const topPad = hasTitle ? 24 : 8;
+  const titleBand = hasTitle ? 14 : 0;
+  const left = 36;
+  const right = 24;
+  const bottomPad = 20;
+  const xLabelBand = hasXLabel ? 14 : 0;
+  const plotTop = topPad + titleBand;
+  const { plotWidth, plotHeight } = resolveFastSvgPlotDimensions(spec, ensureGraphSize(spec));
+  const width = left + plotWidth + right;
+  const height = plotTop + plotHeight + bottomPad + xLabelBand;
+  return {
+    width,
+    height,
+    plotLeft: left,
+    plotTop,
+    plotWidth,
+    plotHeight,
+    centerX: width / 2,
+    titleY: hasTitle ? topPad + 10 : null
+  };
+}
+function build3DCanvasLayout(spec) {
+  var _a;
+  const hasTitle = Boolean((_a = spec.title) == null ? void 0 : _a.trim());
+  const top = 12;
+  const left = 20;
+  const right = 20;
+  const bottom = 12;
+  const titleBand = hasTitle ? 14 : 0;
+  const plotTop = top + titleBand;
+  const width = left + PLOT_WIDTH_3D + right;
+  const height = plotTop + PLOT_HEIGHT_3D + bottom;
+  return {
+    width,
+    height,
+    plotLeft: left,
+    plotTop,
+    plotWidth: PLOT_WIDTH_3D,
+    plotHeight: PLOT_HEIGHT_3D,
+    centerX: width / 2,
+    titleY: hasTitle ? top + 10 : null
+  };
+}
+function escapeXml(value) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function boundPair(range, fallback = [-5, 5]) {
+  var _a, _b, _c, _d;
+  const a = (_b = parseBoundToNumber((_a = range == null ? void 0 : range[0]) != null ? _a : "")) != null ? _b : fallback[0];
+  const b = (_d = parseBoundToNumber((_c = range == null ? void 0 : range[1]) != null ? _c : "")) != null ? _d : fallback[1];
+  return a <= b ? [a, b] : [b, a];
+}
+function plotBoundsFromSpec(spec) {
+  var _a, _b, _c;
+  const x = boundPair((_a = spec.ranges) == null ? void 0 : _a.x);
+  const y = boundPair((_b = spec.ranges) == null ? void 0 : _b.y);
+  const z = boundPair((_c = spec.ranges) == null ? void 0 : _c.z, [-1, 1]);
+  return { xmin: x[0], xmax: x[1], ymin: y[0], ymax: y[1], zmin: z[0], zmax: z[1] };
+}
+function svgPalette(theme) {
+  return {
+    stroke: theme.axis,
+    muted: theme.text,
+    grid: theme.grid,
+    point: theme.isDark ? "#fbbf24" : "#dc2626"
+  };
+}
+function niceTicks(min2, max2, target = 6) {
+  if (!Number.isFinite(min2) || !Number.isFinite(max2) || min2 === max2) {
+    return [min2];
+  }
+  const span = max2 - min2;
+  const raw = span / target;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = Math.ceil(raw / mag) * mag;
+  const start = Math.ceil(min2 / step) * step;
+  const ticks = [];
+  for (let v = start; v <= max2 + step * 0.01; v += step) {
+    ticks.push(Number.parseFloat(v.toPrecision(10)));
+  }
+  return ticks.length > 0 ? ticks : [min2, max2];
+}
+function compute2DDataBounds(spec, points) {
+  let bounds = plotBoundsFromSpec(spec);
+  let ymin = bounds.ymin;
+  let ymax = bounds.ymax;
+  for (const p of points) {
+    if (Number.isFinite(p.y)) {
+      ymin = Math.min(ymin, p.y);
+      ymax = Math.max(ymax, p.y);
+    }
+  }
+  if (spec.type === "data") {
+    const ys = points.map((p) => p.y);
+    if (ys.length > 0) {
+      ymin = Math.min(...ys);
+      ymax = Math.max(...ys);
+    }
+  }
+  const yPad = (ymax - ymin) * 0.08 || 1;
+  return __spreadProps(__spreadValues({}, bounds), {
+    ymin: ymin - yPad,
+    ymax: ymax + yPad
+  });
+}
+function makeScales(bounds, width, height, left, top) {
+  const xScale = (x) => left + (x - bounds.xmin) / (bounds.xmax - bounds.xmin) * width;
+  const yScale = (y) => top + height - (y - bounds.ymin) / (bounds.ymax - bounds.ymin) * height;
+  return { xScale, yScale };
+}
+function renderTitle(title, colors, centerX, titleY) {
+  if (!(title == null ? void 0 : title.trim()) || titleY === null) {
+    return "";
+  }
+  return `<text x="${centerX}" y="${titleY}" text-anchor="middle" font-size="14" font-family="${TICK_LABEL_FONT}" fill="${colors.stroke}">${escapeXml(title.trim())}</text>`;
+}
+function renderGrid2D(bounds, xScale, yScale, colors) {
+  const parts = [];
+  const xSpan = bounds.xmax - bounds.xmin;
+  const ySpan = bounds.ymax - bounds.ymin;
+  for (const x of niceTicks(bounds.xmin, bounds.xmax, tickTargetForSpan(xSpan))) {
+    const px = xScale(x);
+    parts.push(`<line x1="${px}" y1="${yScale(bounds.ymin)}" x2="${px}" y2="${yScale(bounds.ymax)}" stroke="${colors.grid}" stroke-width="1"/>`);
+  }
+  for (const y of niceTicks(bounds.ymin, bounds.ymax, tickTargetForSpan(ySpan))) {
+    const py = yScale(y);
+    parts.push(`<line x1="${xScale(bounds.xmin)}" y1="${py}" x2="${xScale(bounds.xmax)}" y2="${py}" stroke="${colors.grid}" stroke-width="1"/>`);
+  }
+  return parts.join("");
+}
+function renderAxes2D(spec, bounds, xScale, yScale, left, top, width, height, colors) {
+  var _a, _b, _c;
+  const parts = [];
+  const labels = (_a = spec.labels) != null ? _a : {};
+  const axisY = bounds.ymin <= 0 && bounds.ymax >= 0 ? yScale(0) : yScale(bounds.ymin);
+  const axisX = bounds.xmin <= 0 && bounds.xmax >= 0 ? xScale(0) : xScale(bounds.xmin);
+  const xSpan = bounds.xmax - bounds.xmin;
+  const ySpan = bounds.ymax - bounds.ymin;
+  parts.push(`<line x1="${left}" y1="${axisY}" x2="${left + width}" y2="${axisY}" stroke="${colors.stroke}" stroke-width="1.2"/>`);
+  parts.push(`<line x1="${axisX}" y1="${top}" x2="${axisX}" y2="${top + height}" stroke="${colors.stroke}" stroke-width="1.2"/>`);
+  for (const x of niceTicks(bounds.xmin, bounds.xmax, tickTargetForSpan(xSpan))) {
+    const px = xScale(x);
+    parts.push(`<line x1="${px}" y1="${axisY - 4}" x2="${px}" y2="${axisY + 4}" stroke="${colors.stroke}" stroke-width="1"/>`);
+    parts.push(`<text x="${px}" y="${axisY + 14}" text-anchor="middle" font-size="11" fill="${colors.muted}" font-family="${TICK_LABEL_FONT}">${formatTickLabel(x)}</text>`);
+  }
+  for (const y of niceTicks(bounds.ymin, bounds.ymax, tickTargetForSpan(ySpan))) {
+    const py = yScale(y);
+    parts.push(`<line x1="${axisX - 4}" y1="${py}" x2="${axisX + 4}" y2="${py}" stroke="${colors.stroke}" stroke-width="1"/>`);
+    parts.push(`<text x="${axisX - 10}" y="${py + 4}" text-anchor="end" font-size="11" fill="${colors.muted}" font-family="${TICK_LABEL_FONT}">${formatTickLabel(y)}</text>`);
+  }
+  if ((_b = labels.x) == null ? void 0 : _b.trim()) {
+    parts.push(`<text x="${left + width / 2}" y="${top + height + 14}" text-anchor="middle" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(labels.x.trim())}</text>`);
+  }
+  if ((_c = labels.y) == null ? void 0 : _c.trim()) {
+    parts.push(`<text x="${left - 14}" y="${top + height / 2}" text-anchor="middle" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}" transform="rotate(-90 ${left - 14} ${top + height / 2})">${escapeXml(labels.y.trim())}</text>`);
+  }
+  return parts.join("");
+}
+function pathFrom2DPoints(points, xScale, yScale) {
+  if (points.length === 0) {
+    return "";
+  }
+  const segments = points.map((p, i) => {
+    const cmd = i === 0 ? "M" : "L";
+    return `${cmd}${xScale(p.x)},${yScale(p.y)}`;
+  });
+  return `<path d="${segments.join(" ")}" fill="none" stroke-width="2"/>`;
+}
+function sampleParametric2D(spec, samples) {
+  var _a, _b, _c, _d;
+  const tRange = boundPair((_a = spec.ranges) == null ? void 0 : _a.t, [0, 2 * Math.PI]);
+  const parameters = (_b = spec.parameters) != null ? _b : {};
+  const points = [];
+  const ts = Array.from({ length: samples }, (_, i) => tRange[0] + (tRange[1] - tRange[0]) * (i / (samples - 1 || 1)));
+  for (const t of ts) {
+    const x = evaluateExpression((_c = spec.xExpression) != null ? _c : "0", { t }, parameters, { variables: ["x", "y", "z", "t"], parameters });
+    const y = evaluateExpression((_d = spec.yExpression) != null ? _d : "0", { t }, parameters, { variables: ["x", "y", "z", "t"], parameters });
+    points.push({ x, y });
+  }
+  return points;
+}
+function sampleParametric3D(spec, samples) {
+  var _a, _b, _c, _d, _e;
+  const tRange = boundPair((_a = spec.ranges) == null ? void 0 : _a.t, [0, 2 * Math.PI]);
+  const parameters = (_b = spec.parameters) != null ? _b : {};
+  const pts = [];
+  const ts = Array.from({ length: samples }, (_, i) => tRange[0] + (tRange[1] - tRange[0]) * (i / (samples - 1 || 1)));
+  for (const t of ts) {
+    const x = evaluateExpression((_c = spec.xExpression) != null ? _c : "0", { t }, parameters, { variables: ["x", "y", "z", "t"], parameters });
+    const y = evaluateExpression((_d = spec.yExpression) != null ? _d : "0", { t }, parameters, { variables: ["x", "y", "z", "t"], parameters });
+    const z = evaluateExpression((_e = spec.zExpression) != null ? _e : "0", { t }, parameters, { variables: ["x", "y", "z", "t"], parameters });
+    pts.push({ x, y, z });
+  }
+  return pts;
+}
+function sampleData2D(spec) {
+  var _a, _b, _c;
+  const rows = (_c = (_b = spec.data) != null ? _b : (_a = spec.points) == null ? void 0 : _a.map((p) => {
+    var _a2;
+    return { x: p.x, y: (_a2 = p.y) != null ? _a2 : "0" };
+  })) != null ? _c : [];
+  return rows.map((row) => {
+    var _a2, _b2;
+    return {
+      x: (_a2 = parseBoundToNumber(row.x)) != null ? _a2 : 0,
+      y: (_b2 = parseBoundToNumber(row.y)) != null ? _b2 : 0
+    };
+  }).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+}
+function projectIsometric(x, y, z) {
+  const cos = Math.cos(Math.PI / 6);
+  const sin = Math.sin(Math.PI / 6);
+  return {
+    px: (x - y) * cos,
+    py: -z + (x + y) * sin * 0.45
+  };
+}
+function fitProjectedPoints(points, left, top, width, height) {
+  if (points.length === 0) {
+    return points;
+  }
+  let minX = points[0].px;
+  let maxX = points[0].px;
+  let minY = points[0].py;
+  let maxY = points[0].py;
+  for (const p of points) {
+    minX = Math.min(minX, p.px);
+    maxX = Math.max(maxX, p.px);
+    minY = Math.min(minY, p.py);
+    maxY = Math.max(maxY, p.py);
+  }
+  const spanX = maxX - minX || 1;
+  const spanY = maxY - minY || 1;
+  const pad = 0.08;
+  return points.map((p) => ({
+    px: left + pad * width + (p.px - minX) / spanX * width * (1 - 2 * pad),
+    py: top + pad * height + (p.py - minY) / spanY * height * (1 - 2 * pad)
+  }));
+}
+function createProjectionLayout(worldPoints, left, top, width, height) {
+  var _a, _b, _c, _d, _e, _f, _g, _h;
+  const raw = worldPoints.map((p) => projectIsometric(p.x, p.y, p.z));
+  let minX = (_b = (_a = raw[0]) == null ? void 0 : _a.px) != null ? _b : 0;
+  let maxX = (_d = (_c = raw[0]) == null ? void 0 : _c.px) != null ? _d : 0;
+  let minY = (_f = (_e = raw[0]) == null ? void 0 : _e.py) != null ? _f : 0;
+  let maxY = (_h = (_g = raw[0]) == null ? void 0 : _g.py) != null ? _h : 0;
+  for (const p of raw) {
+    minX = Math.min(minX, p.px);
+    maxX = Math.max(maxX, p.px);
+    minY = Math.min(minY, p.py);
+    maxY = Math.max(maxY, p.py);
+  }
+  const spanX = maxX - minX || 1;
+  const spanY = maxY - minY || 1;
+  const pad = 0.08;
+  const toScreen = (px, py) => ({
+    px: left + pad * width + (px - minX) / spanX * width * (1 - 2 * pad),
+    py: top + pad * height + (py - minY) / spanY * height * (1 - 2 * pad)
+  });
+  return {
+    projectWorld: (x, y, z) => toScreen(...Object.values(projectIsometric(x, y, z)))
+  };
+}
+function renderSurfaceMeshWithLayout(grid, samplesX, samplesY, projectWorld, stroke, surfaceStyle, zMin, zMax) {
+  const paths = [];
+  const useHeat = surfaceStyle === "colored" || surfaceStyle === "solid";
+  const lineWidth = surfaceStyle === "solid" ? "1.2" : "1";
+  const addSegment = (a, b) => {
+    const p1 = projectWorld(a.x, a.y, a.z);
+    const p2 = projectWorld(b.x, b.y, b.z);
+    const segmentStroke = useHeat ? heatColorFromZ((a.z + b.z) / 2, zMin, zMax) : stroke;
+    paths.push(`<path d="M${p1.px},${p1.py} L${p2.px},${p2.py}" fill="none" stroke="${segmentStroke}" stroke-width="${lineWidth}"/>`);
+  };
+  for (let row = 0; row < samplesY; row++) {
+    for (let col = 1; col < samplesX; col++) {
+      const a = grid[row * samplesX + col - 1];
+      const b = grid[row * samplesX + col];
+      if (a && b) {
+        addSegment(a, b);
+      }
+    }
+  }
+  for (let col = 0; col < samplesX; col++) {
+    for (let row = 1; row < samplesY; row++) {
+      const a = grid[(row - 1) * samplesX + col];
+      const b = grid[row * samplesX + col];
+      if (a && b) {
+        addSegment(a, b);
+      }
+    }
+  }
+  if (surfaceStyle === "solid") {
+    for (let row = 0; row < samplesY - 1; row++) {
+      for (let col = 0; col < samplesX - 1; col++) {
+        const p00 = grid[row * samplesX + col];
+        const p10 = grid[row * samplesX + col + 1];
+        const p01 = grid[(row + 1) * samplesX + col];
+        const p11 = grid[(row + 1) * samplesX + col + 1];
+        if (!p00 || !p10 || !p01 || !p11) {
+          continue;
+        }
+        const avgZ = (p00.z + p10.z + p01.z + p11.z) / 4;
+        const fill = heatColorFromZ(avgZ, zMin, zMax);
+        const a = projectWorld(p00.x, p00.y, p00.z);
+        const b = projectWorld(p10.x, p10.y, p10.z);
+        const c = projectWorld(p11.x, p11.y, p11.z);
+        const d = projectWorld(p01.x, p01.y, p01.z);
+        paths.unshift(`<path d="M${a.px},${a.py} L${b.px},${b.py} L${c.px},${c.py} L${d.px},${d.py} Z" fill="${fill}" fill-opacity="0.72" stroke="none"/>`);
+      }
+    }
+  }
+  return paths.join("");
+}
+function axisArrowMarker(stroke) {
+  return `<defs><marker id="mathgraph-axis-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="${stroke}"/></marker></defs>`;
+}
+function axisScreenDirection(from, to) {
+  return { x: to.px - from.px, y: to.py - from.py };
+}
+function placeAxisLabel(endpoint, direction, distance, extra = { x: 0, y: 0 }) {
+  const len = Math.hypot(direction.x, direction.y) || 1;
+  return {
+    x: endpoint.px + direction.x / len * distance + extra.x,
+    y: endpoint.py + direction.y / len * distance + extra.y
+  };
+}
+function perpendicularOffset(direction, amount) {
+  const len = Math.hypot(direction.x, direction.y) || 1;
+  return { x: -direction.y / len * amount, y: direction.x / len * amount };
+}
+function textAnchorForDirection(direction) {
+  if (Math.abs(direction.x) >= Math.abs(direction.y) * 0.6) {
+    return direction.x >= 0 ? "start" : "end";
+  }
+  return "middle";
+}
+function render3DAxisLabelText(text, position, anchor, fill, className) {
+  return `<text class="${className}" x="${position.x.toFixed(2)}" y="${position.y.toFixed(2)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="12" fill="${fill}" font-family="${TICK_LABEL_FONT}" pointer-events="none">${escapeXml(text)}</text>`;
+}
+function renderAxisLine(from, to, stroke) {
+  return `<line x1="${from.px}" y1="${from.py}" x2="${to.px}" y2="${to.py}" stroke="${stroke}" stroke-width="2.2" marker-end="url(#mathgraph-axis-arrow)"/>`;
+}
+function render3DAxisLines(xMin, xMax, yMin, yMax, zMin, zMax, projectWorld, stroke) {
+  const origin = projectWorld(xMin, yMin, zMin);
+  const xEnd = projectWorld(xMax, yMin, zMin);
+  const yEnd = projectWorld(xMin, yMax, zMin);
+  const zEnd = projectWorld(xMin, yMin, zMax);
+  return [
+    axisArrowMarker(stroke),
+    renderAxisLine(origin, xEnd, stroke),
+    renderAxisLine(origin, yEnd, stroke),
+    renderAxisLine(origin, zEnd, stroke)
+  ].join("");
+}
+function render3DAxisLabels(xMin, xMax, yMin, yMax, zMin, zMax, projectWorld, labels, labelColor) {
+  var _a, _b, _c;
+  const origin = projectWorld(xMin, yMin, zMin);
+  const xEnd = projectWorld(xMax, yMin, zMin);
+  const yEnd = projectWorld(xMin, yMax, zMin);
+  const zEnd = projectWorld(xMin, yMin, zMax);
+  const xDir = axisScreenDirection(origin, xEnd);
+  const yDir = axisScreenDirection(origin, yEnd);
+  const zDir = axisScreenDirection(origin, zEnd);
+  const yPerp = perpendicularOffset(yDir, 5);
+  const parts = [];
+  if ((_a = labels.x) == null ? void 0 : _a.trim()) {
+    const pos = placeAxisLabel(xEnd, xDir, 22);
+    parts.push(render3DAxisLabelText(labels.x.trim(), pos, textAnchorForDirection(xDir), labelColor, "mathgraph-axis-label mathgraph-axis-label-x"));
+  }
+  if ((_b = labels.y) == null ? void 0 : _b.trim()) {
+    const pos = placeAxisLabel(yEnd, yDir, 28, {
+      x: yPerp.x + 2,
+      y: yPerp.y + 8
+    });
+    parts.push(render3DAxisLabelText(labels.y.trim(), pos, textAnchorForDirection(yDir), labelColor, "mathgraph-axis-label mathgraph-axis-label-y"));
+  }
+  if ((_c = labels.z) == null ? void 0 : _c.trim()) {
+    const pos = placeAxisLabel(zEnd, zDir, 18, { x: 8, y: -14 });
+    parts.push(render3DAxisLabelText(labels.z.trim(), pos, textAnchorForDirection(zDir), labelColor, "mathgraph-axis-label mathgraph-axis-label-z"));
+  }
+  return parts.join("");
+}
+function renderPoints2D(spec, xScale, yScale, colors) {
+  var _a, _b;
+  const points = (_a = spec.points) != null ? _a : [];
+  if (points.length === 0) {
+    return "";
+  }
+  const parts = [];
+  for (const point of points) {
+    const resolved = resolveGraphPointCoordinates(spec, point);
+    if (!resolved) {
+      continue;
+    }
+    const x = parseBoundToNumber(resolved.x);
+    const y = parseBoundToNumber(resolved.y);
+    if (x === null || y === null) {
+      continue;
+    }
+    const px = xScale(x);
+    const py = yScale(y);
+    parts.push(`<circle cx="${px}" cy="${py}" r="4.5" fill="${colors.point}" stroke="${colors.stroke}" stroke-width="1"/>`);
+    if ((_b = point.label) == null ? void 0 : _b.trim()) {
+      parts.push(`<text x="${px + 8}" y="${py - 8}" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(point.label.trim())}</text>`);
+    }
+  }
+  return parts.join("");
+}
+function renderPoints3D(spec, left, top, width, height, colors) {
+  var _a;
+  const points = (_a = spec.points) != null ? _a : [];
+  if (points.length === 0) {
+    return "";
+  }
+  const projected = points.map((point) => {
+    var _a2;
+    const resolved = resolveGraphPointCoordinates(spec, point);
+    if (!resolved) {
+      return null;
+    }
+    const x = parseBoundToNumber(resolved.x);
+    const y = parseBoundToNumber(resolved.y);
+    const z = parseBoundToNumber((_a2 = resolved.z) != null ? _a2 : "0");
+    if (x === null || y === null || z === null) {
+      return null;
+    }
+    return __spreadValues({ point }, projectIsometric(x, y, z));
+  }).filter((p) => p !== null);
+  const fitted = fitProjectedPoints(projected, left, top, width, height);
+  return fitted.map((p, i) => {
+    var _a2, _b;
+    const label = (_b = (_a2 = projected[i]) == null ? void 0 : _a2.point.label) == null ? void 0 : _b.trim();
+    const labelSvg = label ? `<text x="${p.px + 8}" y="${p.py - 8}" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(label)}</text>` : "";
+    return `<circle cx="${p.px}" cy="${p.py}" r="4.5" fill="${colors.point}" stroke="${colors.stroke}" stroke-width="1"/>${labelSvg}`;
+  }).join("");
+}
+function collect2DSamples(spec) {
+  var _a, _b, _c, _d;
+  const samples = effectiveSamples2D(spec, "svgFast");
+  const parameters = (_a = spec.parameters) != null ? _a : {};
+  const expression = getUserFunction(spec);
+  switch (spec.type) {
+    case "function2d":
+    case "ode": {
+      const [xMin, xMax] = boundPair((_b = spec.ranges) == null ? void 0 : _b.x);
+      return sampleFunction2D(expression, xMin, xMax, samples, parameters);
+    }
+    case "pde": {
+      const [xMin, xMax] = boundPair((_c = spec.ranges) == null ? void 0 : _c.x);
+      const [yMin, yMax] = boundPair((_d = spec.ranges) == null ? void 0 : _d.y);
+      return samplePde2D(expression, xMin, xMax, yMin, yMax, samples, parameters).map((p) => ({ x: p.x, y: p.u }));
+    }
+    case "data":
+      return sampleData2D(spec);
+    case "parametric2d":
+      return sampleParametric2D(spec, samples);
+    default:
+      return [];
+  }
+}
+function render2DGraph(spec, theme) {
+  const colors = svgPalette(theme);
+  const curveColor = resolveFastSvgStrokeColor(spec, theme.defaultLine);
+  const points = collect2DSamples(spec);
+  const bounds = compute2DDataBounds(spec, points);
+  const layout = build2DCanvasLayout(spec);
+  const { xScale, yScale } = makeScales(bounds, layout.plotWidth, layout.plotHeight, layout.plotLeft, layout.plotTop);
+  const grid = gridEnabledForGraph(spec) ? renderGrid2D(bounds, xScale, yScale, colors) : "";
+  const axes = renderAxes2D(spec, bounds, xScale, yScale, layout.plotLeft, layout.plotTop, layout.plotWidth, layout.plotHeight, colors);
+  const curve = pathFrom2DPoints(points, xScale, yScale).replace('stroke-width="2"', `stroke="${curveColor}" stroke-width="2"`);
+  const markers = renderPoints2D(spec, xScale, yScale, colors);
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}">`,
+    renderTitle(spec.title, colors, layout.centerX, layout.titleY),
+    grid,
+    axes,
+    curve,
+    markers,
+    "</svg>"
+  ].join("");
+}
+function render3DGraph(spec, theme) {
+  var _a, _b, _c, _d, _e;
+  const colors = svgPalette(theme);
+  const axisStroke = theme.axis;
+  const curveColor = resolveFastSvgStrokeColor(spec, theme.defaultWireframe);
+  const layout = build3DCanvasLayout(spec);
+  let { samplesX, samplesY } = effectiveSamples3D(spec, "svgFast");
+  const parameters = (_a = spec.parameters) != null ? _a : {};
+  const expression = getUserFunction(spec);
+  const [xMin, xMax] = boundPair((_b = spec.ranges) == null ? void 0 : _b.x, [-Math.PI, Math.PI]);
+  const [yMin, yMax] = boundPair((_c = spec.ranges) == null ? void 0 : _c.y, [-Math.PI, Math.PI]);
+  let grid;
+  if (spec.type === "parametric3d") {
+    grid = sampleParametric3D(spec, Math.max(samplesX, 80));
+    samplesX = grid.length;
+    samplesY = 1;
+  } else {
+    grid = sampleSurface3D(expression, xMin, xMax, yMin, yMax, samplesX, samplesY, parameters);
+  }
+  let zMin = Number.POSITIVE_INFINITY;
+  let zMax = Number.NEGATIVE_INFINITY;
+  for (const p of grid) {
+    if (Number.isFinite(p.z)) {
+      zMin = Math.min(zMin, p.z);
+      zMax = Math.max(zMax, p.z);
+    }
+  }
+  if (!Number.isFinite(zMin) || !Number.isFinite(zMax)) {
+    const zRange = boundPair((_d = spec.ranges) == null ? void 0 : _d.z, [-1, 1]);
+    zMin = zRange[0];
+    zMax = zRange[1];
+  }
+  const axisCorners = [
+    { x: xMin, y: yMin, z: zMin },
+    { x: xMax, y: yMin, z: zMin },
+    { x: xMin, y: yMax, z: zMin },
+    { x: xMin, y: yMin, z: zMax },
+    ...grid
+  ];
+  const projection = createProjectionLayout(axisCorners, layout.plotLeft, layout.plotTop, layout.plotWidth, layout.plotHeight);
+  const labels = (_e = spec.labels) != null ? _e : { x: "x", y: "y", z: "z" };
+  const surfaceStyle = resolveSurfaceStyle(spec);
+  const mesh = spec.type === "parametric3d" ? (() => {
+    const d = grid.map((p, i) => {
+      const pt = projection.projectWorld(p.x, p.y, p.z);
+      return `${i === 0 ? "M" : "L"}${pt.px},${pt.py}`;
+    }).join(" ");
+    return `<path d="${d}" fill="none" stroke="${curveColor}" stroke-width="2"/>`;
+  })() : renderSurfaceMeshWithLayout(grid, samplesX, samplesY, projection.projectWorld, curveColor, surfaceStyle, zMin, zMax);
+  const axisLines = render3DAxisLines(xMin, xMax, yMin, yMax, zMin, zMax, projection.projectWorld, axisStroke);
+  const axisLabels = render3DAxisLabels(xMin, xMax, yMin, yMax, zMin, zMax, projection.projectWorld, labels, theme.text);
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}">`,
+    renderTitle(spec.title, colors, layout.centerX, layout.titleY),
+    mesh,
+    axisLines,
+    renderPoints3D(spec, layout.plotLeft, layout.plotTop, layout.plotWidth, layout.plotHeight, colors),
+    axisLabels,
+    "</svg>"
+  ].join("");
+}
+function renderFastSvg(spec, theme) {
+  const resolved = theme != null ? theme : resolveGraphThemeColors();
+  if (isFastSvg3dGraph(spec)) {
+    return render3DGraph(spec, resolved);
+  }
+  return render2DGraph(spec, resolved);
+}
+var FastSvgRenderer = class {
+  render(spec, theme) {
+    return renderFastSvg(spec, theme);
+  }
+};
+
+// render/latexErrorMapping.ts
+var LATEX_LINE_PATTERN = /(?:^|\n)\s*l\.(\d+)/;
+function getUserSourceLineOffset(wrapperPrefix) {
+  if (!wrapperPrefix) {
+    return 0;
+  }
+  return wrapperPrefix.split("\n").length;
+}
+function parseLatexErrorLine(raw) {
+  const match = raw.match(LATEX_LINE_PATTERN);
+  if (!match) {
+    return null;
+  }
+  const line = parseInt(match[1], 10);
+  return Number.isFinite(line) ? line : null;
+}
+function extractUsefulLatexError(raw) {
+  const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const bangLine = lines.find((line) => line.startsWith("! "));
+  if (bangLine) {
+    return bangLine.replace(/^!\s*/, "").trim();
+  }
+  const usefulLine = lines.find((line) => line.includes("Undefined control sequence") || line.includes("Missing") || line.includes("Runaway argument") || line.includes("Fatal error"));
+  if (usefulLine) {
+    return usefulLine.trim();
+  }
+  return "Syntax error";
+}
+function mapTidiedLineToNoteLine(blockStartLine, blockEndLine, getLineText, tidiedLine) {
+  let nonEmptyIndex = 0;
+  for (let line = blockStartLine + 1; line < blockEndLine; line++) {
+    const text = getLineText(line).trim();
+    if (!text) {
+      continue;
+    }
+    nonEmptyIndex++;
+    if (nonEmptyIndex === tidiedLine) {
+      return line + 1;
+    }
+  }
+  return null;
+}
+function formatLatexErrorWithLineMapping(raw, tidiedSource, sourceLineOffset, noteLineMapper) {
+  var _a, _b;
+  const usefulError = extractUsefulLatexError(raw);
+  const latexLine = parseLatexErrorLine(raw);
+  if (latexLine === null || latexLine <= sourceLineOffset) {
+    return { message: usefulError };
+  }
+  const userLine = latexLine - sourceLineOffset;
+  const sourceLines = tidiedSource.split("\n");
+  const lineContent = (_a = sourceLines[userLine - 1]) == null ? void 0 : _a.trim();
+  const noteLine = (_b = noteLineMapper == null ? void 0 : noteLineMapper(userLine)) != null ? _b : void 0;
+  const snippet = lineContent ? lineContent.length > 80 ? `${lineContent.slice(0, 77)}...` : lineContent : usefulError;
+  if (noteLine !== void 0) {
+    return {
+      message: `Line ${noteLine}: ${snippet}`,
+      userLine,
+      lineContent,
+      noteLine
+    };
+  }
+  return {
+    message: `Line ${userLine}: ${snippet}`,
+    userLine,
+    lineContent
+  };
+}
+
+// render/renderMode.ts
+var DEFAULT_RENDER_MODE = "svgFast";
+
+// render/svgTickLabelFix.ts
+var TEX_MINUS_GLYPHS = new Set(["-", "\u2212", "\u2212", "\xA1", "\xA1"]);
+function readTextAttr(attrs, name) {
+  const match = attrs.match(new RegExp(`\\b${name}="([^"]+)"`));
+  return match == null ? void 0 : match[1];
+}
+function isTexMinusGlyph(text) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (TEX_MINUS_GLYPHS.has(trimmed)) {
+    return true;
+  }
+  return trimmed.length === 1 && !/[0-9a-zA-Z.]/.test(trimmed);
+}
+function parseTextNodes(inner) {
+  var _a, _b;
+  const nodes = [];
+  const re = /<text\b([^>]*)>([^<]*)<\/text>/g;
+  for (const match of inner.matchAll(re)) {
+    const attrs = match[1];
+    const family = (_b = (_a = attrs.match(/font-family="([^"]+)"/)) == null ? void 0 : _a[1]) != null ? _b : "";
+    nodes.push({ family, content: match[2], attrs });
+  }
+  return nodes;
+}
+function mergeMinusTickLabel(nodes) {
+  var _a, _b;
+  if (nodes.length < 2 || nodes[0].family !== "cmsy10" || !isTexMinusGlyph(nodes[0].content)) {
+    return null;
+  }
+  const digitNodes = nodes.slice(1).filter((node) => node.family === "cmr10");
+  if (digitNodes.length === 0) {
+    return null;
+  }
+  const digits = digitNodes.map((node) => node.content).join("");
+  if (!/^[\d.]+$/.test(digits)) {
+    return null;
+  }
+  const ref = digitNodes[0];
+  const x = (_a = readTextAttr(ref.attrs, "x")) != null ? _a : "0";
+  const y = (_b = readTextAttr(ref.attrs, "y")) != null ? _b : "0";
+  const transform = readTextAttr(ref.attrs, "transform");
+  const transformAttr = transform ? ` transform="${transform}"` : "";
+  return `<text x="${x}" y="${y}" stroke="none" font-family="sans-serif" font-size="10"${transformAttr}>-${digits}</text>`;
+}
+function fixTickLabelGroup(inner) {
+  return mergeMinusTickLabel(parseTextNodes(inner));
+}
+function fixAdjacentMinusTexts(svg) {
+  return svg.replace(/<text([^>]*)font-family="cmsy10"([^>]*)>([^<]*)<\/text>\s*<text([^>]*)font-family="cmr10"([^>]*)>([^<]*)<\/text>/g, (full, a1, b1, minusText, a2, b2, digitText) => {
+    var _a, _b;
+    if (!isTexMinusGlyph(minusText)) {
+      return full;
+    }
+    if (!/^[\d.]+$/.test(digitText)) {
+      return full;
+    }
+    const attrs = a2 + b2;
+    const x = (_a = readTextAttr(attrs, "x")) != null ? _a : "0";
+    const y = (_b = readTextAttr(attrs, "y")) != null ? _b : "0";
+    const transform = readTextAttr(attrs, "transform");
+    const transformAttr = transform ? ` transform="${transform}"` : "";
+    return `<text x="${x}" y="${y}" stroke="none" font-family="sans-serif" font-size="10"${transformAttr}>-${digitText}</text>`;
+  });
+}
+function normalizeUnicodeMinusInText(svg) {
+  return svg.replace(/(<text\b[^>]*>)([^<]*)(<\/text>)/g, (full, open, content, close) => {
+    if (!content.includes("\u2212") && !content.includes("\u2212")) {
+      return full;
+    }
+    return `${open}${content.replace(/\u2212/g, "-").replace(/−/g, "-")}${close}`;
+  });
+}
+function fixTikzJaxSvgTickLabels(svg) {
+  let result = svg.replace(/<g\b([^>]*\bstroke="none"[^>]*)>([\s\S]*?)<\/g>/g, (full, _gAttrs, inner) => {
+    if (!inner.includes('font-family="cmsy10"')) {
+      return full;
+    }
+    const fixed = fixTickLabelGroup(inner);
+    return fixed != null ? fixed : full;
+  });
+  result = fixAdjacentMinusTexts(result);
+  result = normalizeUnicodeMinusInText(result);
+  return result;
+}
+
+// render/svgPostProcess.ts
+function svgDataUrl(svgText) {
+  return `data:image/svg+xml;base64,${Buffer.from(svgText, "utf8").toString("base64")}`;
+}
+function stripSvgPageBackground(svg) {
+  let result = svg;
+  result = result.replace(/<rect[^>]*\bwidth="[^"]+"[^>]*\bheight="[^"]+"[^>]*\bfill="(?:#fff(?:fff)?|white|rgb\(100%,100%,100%\))"[^>]*\/?>/gi, "");
+  result = result.replace(/<rect[^>]*\bfill="(?:#fff(?:fff)?|white|rgb\(100%,100%,100%\))"[^>]*\bwidth="[^"]+"[^>]*\bheight="[^"]+"[^>]*\/?>/gi, "");
+  result = result.replace(/<rect[^>]*style="[^"]*fill:rgb\(100%,100%,100%\)[^"]*"[^>]*\/?>/gi, "");
+  return result;
+}
+function finalizeSvg(svgText) {
+  let result = stripSvgPageBackground(svgText);
+  result = fixTikzJaxSvgTickLabels(result);
+  return result;
+}
+
+// src/tikzJaxPaths.ts
+var fs2 = __toModule(require("fs"));
+var path = __toModule(require("path"));
+var TIKZJAX_MODULE_REL_PATHS = [
+  "node_modules/node-tikzjax/dist/index.js",
+  "assets/tikzjax/node/dist/index.js"
+];
+function resolveTikzJaxModulePath(pluginBaseDir) {
+  const searchRoots = [pluginBaseDir];
+  let dir = pluginBaseDir;
+  for (let depth = 0; depth < 6; depth++) {
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    searchRoots.push(parent);
+    dir = parent;
+  }
+  for (const root of searchRoots) {
+    for (const rel of TIKZJAX_MODULE_REL_PATHS) {
+      const candidate = path.join(root, rel);
+      if (fs2.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    try {
+      return require.resolve("node-tikzjax", { paths: [root] });
+    } catch (e) {
+    }
+  }
+  return null;
+}
+function describeTikzJaxSearchPaths(pluginBaseDir) {
+  return TIKZJAX_MODULE_REL_PATHS.map((rel) => path.join(pluginBaseDir, rel)).join("\n");
+}
+
+// render/inlinePlotAssets.ts
+function inlinePlotTableAssets(tikz, assets) {
+  let result = tikz;
+  for (const [filename, csvContent] of Object.entries(assets)) {
+    const escaped = filename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(\\\\addplot3?(?:\\[[^\\]]*\\])?\\s*table\\[[^\\]]*\\]\\s*\\{)${escaped}(\\})`, "g");
+    result = result.replace(pattern, (_match, prefix) => {
+      return `${prefix}
+${csvContent.trim()}
+}`;
+    });
+  }
+  return result;
+}
+
+// render/tikzJaxSource.ts
+var UNSUPPORTED_TIKZJAX_DIRECTIVES = [
+  /\\usepackage(?:\[[^\]]*\])?\{[^}]+\}\n?/g,
+  /\\usepgfplotslibrary\{fillbetween\}\n?/g,
+  /\\usetikzlibrary\{intersections\}\n?/g,
+  /\\pgfplotsset\{[^}]*compat\s*=\s*1\.18[^}]*\}\n?/g,
+  /\\documentclass(?:\[[^\]]*\])?\{[^}]+\}\n?/g,
+  /\\begin\{document\}\n?/g,
+  /\\end\{document\}\n?/g,
+  /\\setmainlanguage\{[^}]+\}\n?/g,
+  /\\setmainfont(?:\[[^\]]*\])?\{[^}]+\}\n?/g
+];
+function sanitizeTikzForTikzJax(source) {
+  let cleaned = source;
+  for (const pattern of UNSUPPORTED_TIKZJAX_DIRECTIVES) {
+    cleaned = cleaned.replace(pattern, "");
+  }
+  return cleaned.trim();
+}
+function prepareTikzJaxInput(source, assets) {
+  const withInlineTables = assets ? inlinePlotTableAssets(source, assets) : source;
+  const body = sanitizeTikzForTikzJax(withInlineTables);
+  return [
+    "\\begin{document}",
+    "\\pgfplotsset{compat=1.16}",
+    body,
+    "\\end{document}"
+  ].join("\n");
+}
+var TIKZJAX_TEX_PACKAGES = {
+  pgfplots: "",
+  amsmath: ""
+};
+var TIKZJAX_TIKZ_LIBRARIES = "arrows.meta,calc,decorations.pathmorphing,decorations.pathreplacing";
+
+// render/TikzJaxRenderer.ts
+var tex2svgModule = null;
+var loadedModulePath = null;
+var loadPromise = null;
+var renderQueue = Promise.resolve();
+function runExclusive(task) {
+  const next = renderQueue.then(task, task);
+  renderQueue = next.then(() => void 0, () => void 0);
+  return next;
+}
+function missingAssetsMessage(pluginBaseDir) {
+  return [
+    "TikZJax assets not found.",
+    "Run `npm install && npm run build` in the plugin folder, then reload Obsidian.",
+    "The plugin folder must include `assets/tikzjax/node/` or `node_modules/node-tikzjax/`.",
+    "",
+    "Checked paths:",
+    describeTikzJaxSearchPaths(pluginBaseDir)
+  ].join("\n");
+}
+function loadTex2Svg(pluginBaseDir) {
+  return __async(this, null, function* () {
+    if (tex2svgModule) {
+      return tex2svgModule;
+    }
+    if (!loadPromise) {
+      loadPromise = (() => __async(this, null, function* () {
+        var _a;
+        const modulePath = resolveTikzJaxModulePath(pluginBaseDir);
+        if (!modulePath) {
+          throw new Error(missingAssetsMessage(pluginBaseDir));
+        }
+        const mod2 = require(modulePath);
+        if (typeof mod2.load === "function") {
+          yield mod2.load();
+        }
+        const tex2svg = (_a = mod2.default) != null ? _a : mod2;
+        if (typeof tex2svg !== "function") {
+          throw new Error("Bundled TikZJax module did not export tex2svg.");
+        }
+        tex2svgModule = tex2svg;
+        loadedModulePath = modulePath;
+      }))().catch((err) => {
+        loadPromise = null;
+        throw err;
+      });
+    }
+    yield loadPromise;
+    if (!tex2svgModule) {
+      throw new Error("TikZJax failed to initialize.");
+    }
+    return tex2svgModule;
+  });
+}
+var TikzJaxRenderer = class {
+  constructor(pluginBaseDir) {
+    this.pluginBaseDir = pluginBaseDir;
+  }
+  static loadOnce(pluginBaseDir) {
+    return __async(this, null, function* () {
+      yield loadTex2Svg(pluginBaseDir);
+    });
+  }
+  static bundledAssetsPresent(pluginBaseDir) {
+    return resolveTikzJaxModulePath(pluginBaseDir) !== null;
+  }
+  static loadedFrom() {
+    return loadedModulePath;
+  }
+  renderToSvg(source, theme, assets) {
+    return __async(this, null, function* () {
+      return runExclusive(() => __async(this, null, function* () {
+        try {
+          const tex2svg = yield loadTex2Svg(this.pluginBaseDir);
+          const input = prepareTikzJaxInput(source, assets);
+          const svgText = finalizeSvg(yield tex2svg(input, {
+            texPackages: TIKZJAX_TEX_PACKAGES,
+            tikzLibraries: TIKZJAX_TIKZ_LIBRARIES,
+            addToPreamble: buildTikzThemeColorDefinitions(theme)
+          }));
+          return { ok: true, svgText };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return {
+            ok: false,
+            error: message.includes("TeX engine render failed") ? "TikZJax could not compile this graph. Some PGFPlots features need the optional LuaLaTeX fallback." : message,
+            rawLog: message
+          };
+        }
+      }));
+    });
+  }
+};
+
+// render/simpleShapes.ts
+var SIMPLE_TIKZ_HELPERS = String.raw`
+% logic gate scaling
+\tikzset{
+  every and gate US/.append style={transform shape},
+  every or gate US/.append style={transform shape},
+  every not gate US/.append style={transform shape},
+  every nand gate US/.append style={transform shape},
+  every nor gate US/.append style={transform shape},
+  every xor gate US/.append style={transform shape},
+  every xnor gate US/.append style={transform shape},
+  every buffer gate US/.append style={transform shape},
+}
+
+% shapes
+\def\Circle(#1,#2,#3){\draw (#1,#2) circle (#3);}
+\def\FilledCircle(#1,#2,#3){\fill (#1,#2) circle (#3);}
+\def\Point(#1,#2){\fill (#1,#2) circle (1.7pt);}
+\def\Line(#1,#2,#3,#4){\draw (#1,#2) -- (#3,#4);}
+\def\Arrow(#1,#2,#3,#4){\draw[->] (#1,#2) -- (#3,#4);}
+\def\DArrow(#1,#2,#3,#4){\draw[<->] (#1,#2) -- (#3,#4);}
+\def\DashedLine(#1,#2,#3,#4){\draw[dashed] (#1,#2) -- (#3,#4);}
+\def\DottedLine(#1,#2,#3,#4){\draw[dotted] (#1,#2) -- (#3,#4);}
+\def\HLine(#1,#2,#3){\draw (#1,#3) -- (#2,#3);}
+\def\VLine(#1,#2,#3){\draw (#3,#1) -- (#3,#2);}
+\def\Rect(#1,#2,#3,#4){\draw (#1,#2) rectangle (#3,#4);}
+\def\FilledRect(#1,#2,#3,#4){\fill (#1,#2) rectangle (#3,#4);}
+\def\RoundedRect(#1,#2,#3,#4){\draw[rounded corners] (#1,#2) rectangle (#3,#4);}
+\def\FilledRoundedRect(#1,#2,#3,#4){\fill[rounded corners] (#1,#2) rectangle (#3,#4);}
+\def\Ellipse(#1,#2,#3,#4){\draw (#1,#2) ellipse (#3 and #4);}
+\def\FilledEllipse(#1,#2,#3,#4){\fill (#1,#2) ellipse (#3 and #4);}
+\def\Cross(#1,#2,#3){
+\draw (#1-#3,#2) -- (#1+#3,#2);
+\draw (#1,#2-#3) -- (#1,#2+#3);
+}
+\def\Diamond(#1,#2,#3,#4){
+\draw (#1,#2+#4) -- (#1+#3,#2) -- (#1,#2-#4) -- (#1-#3,#2) -- cycle;
+}
+\def\FilledDiamond(#1,#2,#3,#4){
+\fill (#1,#2+#4) -- (#1+#3,#2) -- (#1,#2-#4) -- (#1-#3,#2) -- cycle;
+}
+\def\Arc(#1,#2,#3,#4,#5){\draw (#1,#2) arc (#4:#5:#3);}
+\def\RightAngle(#1,#2,#3){
+\draw (#1,#2+#3) -- (#1,#2) -- (#1+#3,#2);
+}
+\def\Grid(#1,#2,#3,#4,#5){
+\draw[step=#5] (#1,#2) grid (#3,#4);
+}
+\def\Axis(#1,#2,#3,#4){
+\draw[->] (#1,0) -- (#2,0) node[right] {$x$};
+\draw[->] (0,#3) -- (0,#4) node[above] {$y$};
+}
+\def\AxisNamed(#1,#2,#3,#4,#5,#6){
+\draw[->] (#1,0) -- (#2,0) node[right] {#5};
+\draw[->] (0,#3) -- (0,#4) node[above] {#6};
+}
+
+% text
+\def\Text(#1,#2,#3){\node[transform shape] at (#1,#2) {#3};}
+\def\SmallText(#1,#2,#3){\node[font=\small, transform shape] at (#1,#2) {#3};}
+\def\TinyText(#1,#2,#3){\node[font=\tiny, transform shape] at (#1,#2) {#3};}
+\def\TextAbove(#1,#2,#3){\node[above, transform shape] at (#1,#2) {#3};}
+\def\TextBelow(#1,#2,#3){\node[below, transform shape] at (#1,#2) {#3};}
+\def\TextLeft(#1,#2,#3){\node[left, transform shape] at (#1,#2) {#3};}
+\def\TextRight(#1,#2,#3){\node[right, transform shape] at (#1,#2) {#3};}
+
+% gates
+\def\ANDgate(#1,#2,#3){
+\node[and gate US, draw, logic gate inputs=nn, anchor=input 1, transform shape] (#3) at (#1,#2) {};
+}
+
+\def\ORgate(#1,#2,#3){
+\node[or gate US, draw, logic gate inputs=nn, anchor=input 1, transform shape] (#3) at (#1,#2) {};
+}
+
+\def\NOTgate(#1,#2,#3){
+\node[not gate US, draw, anchor=input, transform shape] (#3) at (#1,#2) {};
+}
+
+\def\BUFFERgate(#1,#2,#3){
+\node[buffer gate US, draw, anchor=input, transform shape] (#3) at (#1,#2) {};
+}
+
+\def\NANDgate(#1,#2,#3){
+\node[nand gate US, draw, logic gate inputs=nn, anchor=input 1, transform shape] (#3) at (#1,#2) {};
+}
+
+\def\NORgate(#1,#2,#3){
+\node[nor gate US, draw, logic gate inputs=nn, anchor=input 1, transform shape] (#3) at (#1,#2) {};
+}
+
+\def\XORgate(#1,#2,#3){
+\node[xor gate US, draw, logic gate inputs=nn, anchor=input 1, transform shape] (#3) at (#1,#2) {};
+}
+
+\def\XNORgate(#1,#2,#3){
+\node[xnor gate US, draw, logic gate inputs=nn, anchor=input 1, transform shape] (#3) at (#1,#2) {};
+}
+
+% wires
+\def\LogicWire(#1,#2){
+\draw (#1) -- ++(0.35,0) |- (#2);
+}
+
+\def\LogicWireArrow(#1,#2){
+\draw[->] (#1) -- ++(0.35,0) |- (#2);
+}
+
+\def\LogicWireDirect(#1,#2){
+\draw (#1) -- (#2);
+}
+
+\def\LogicWireFrom(#1,#2,#3){
+\draw (#1,#2) -- ++(0.35,0) |- (#3);
+}
+
+\def\LogicWireFromArrow(#1,#2,#3){
+\draw[->] (#1,#2) -- ++(0.35,0) |- (#3);
+}
+
+\def\LogicWireTo(#1,#2,#3){
+\draw (#1) -- ++(0.35,0) |- (#2,#3);
+}
+
+\def\LogicWireToArrow(#1,#2,#3){
+\draw[->] (#1) -- ++(0.35,0) |- (#2,#3);
+}
+
+\def\Triangle(#1,#2,#3,#4,#5,#6){
+\draw (#1,#2) -- (#3,#4) -- (#5,#6) -- cycle;
+}
+
+\def\FilledTriangle(#1,#2,#3,#4,#5,#6){
+\fill (#1,#2) -- (#3,#4) -- (#5,#6) -- cycle;
+}
+
+% circuit symbols
+\def\Resistor(#1,#2,#3,#4){
+\draw (#1,#2) -- ++(0.15,0);
+\draw (#1+0.15,#2-#4/2) rectangle ++(#3-0.3,#4);
+\draw (#1+#3-0.15,#2) -- ++(0.15,0);
+}
+
+\def\Capacitor(#1,#2,#3,#4){
+\draw (#1,#2) -- ++(0.15,0);
+\draw (#1+0.15,#2-#4) -- (#1+0.15,#2+#4);
+\draw (#1+0.15+#3,#2-#4) -- (#1+0.15+#3,#2+#4);
+\draw (#1+0.15+#3,#2) -- ++(0.15,0);
+}
+
+\def\Ground(#1,#2,#3){
+\draw (#1,#2) -- (#1,#2-#3);
+\draw (#1-0.25,#2-#3) -- (#1+0.25,#2-#3);
+\draw (#1-0.15,#2-#3-0.12) -- (#1+0.15,#2-#3-0.12);
+\draw (#1-0.08,#2-#3-0.24) -- (#1+0.08,#2-#3-0.24);
+}
+
+\def\VSource(#1,#2,#3,#4){
+\draw (#1,#2) circle (#3);
+\node[transform shape] at (#1,#2) {$#4$};
+}
+`;
+
+// render/tikzSource.ts
+var DOCUMENTCLASS_LINE = "\\documentclass[tikz,border=0pt]{standalone}\n";
+var LATEX_WRAPPER_PREFIX = `${DOCUMENTCLASS_LINE}\\usepackage{fontspec}
+\\usepackage{polyglossia}
+
+\\setmainlanguage{english}
+
+\\usepackage{tikz}
+\\usetikzlibrary{arrows.meta,positioning,calc,shapes,decorations.pathmorphing}
+\\usepackage{amsmath}
+\\usepackage{amssymb}
+\\usepackage{pgfplots}
+\\usepgfplotslibrary{fillbetween}
+\\usetikzlibrary{intersections}
+\\pgfplotsset{
+	compat=1.18,
+	every axis/.append style={
+		axis background/.style={fill=none},
+	},
+}
+
+${SIMPLE_TIKZ_HELPERS}
+\\begin{document}
+`;
+var LATEX_WRAPPER_SUFFIX = `
+\\end{document}
+`;
+var USER_SOURCE_LINE_OFFSET = getUserSourceLineOffset(LATEX_WRAPPER_PREFIX);
+function wrapLatexSource(source, theme) {
+  let cleanedSource = source;
+  cleanedSource = cleanedSource.replace(/\\documentclass(?:\[[^\]]*\])?\{[^}]+\}/g, "");
+  cleanedSource = cleanedSource.replace(/\\usepackage(?:\[[^\]]*\])?\{[^}]+\}/g, "");
+  cleanedSource = cleanedSource.replace(/\\pgfplotsset\{[^}]*\}/g, "");
+  cleanedSource = cleanedSource.replace(/\\begin\{document\}/g, "");
+  cleanedSource = cleanedSource.replace(/\\end\{document\}/g, "");
+  cleanedSource = cleanedSource.replace(/\\setmainlanguage\{[^}]+\}/g, "");
+  cleanedSource = cleanedSource.replace(/\\setotherlanguage\{[^}]+\}/g, "");
+  cleanedSource = cleanedSource.replace(/\\setmainfont(?:\[[^\]]*\])?\{[^}]+\}/g, "");
+  cleanedSource = cleanedSource.replace(/\\setsansfont(?:\[[^\]]*\])?\{[^}]+\}/g, "");
+  cleanedSource = cleanedSource.replace(/\\newfontfamily\\\w+(?:\[[^\]]*\])?\{[^}]+\}/g, "");
+  const themeDefs = theme ? `${buildTikzThemeColorDefinitions(theme)}
+` : "";
+  return LATEX_WRAPPER_PREFIX + themeDefs + cleanedSource.trim() + LATEX_WRAPPER_SUFFIX;
+}
+
+// render/renderer.ts
+var CACHE_MAX = 64;
+var CACHE_TTL_MS = 30 * 60 * 1e3;
+var DEFAULT_RENDER_TIMEOUT_SECONDS = 15;
+var RENDER_CACHE_ENABLED = true;
+function cacheKey(rendererMode, source, invertDark, assets, specFingerprint) {
+  const assetPart = assets ? (0, import_crypto.createHash)("sha256").update(JSON.stringify(Object.entries(assets).sort())).digest("hex") : "";
+  return (0, import_crypto.createHash)("sha256").update(rendererMode).update(specFingerprint != null ? specFingerprint : source).update(assetPart).update(invertDark ? ":dark" : ":light").digest("hex");
+}
+var GraphRenderer = class {
+  constructor(isDarkTheme, renderSettings, pluginBaseDir, ensureTikzJaxFonts) {
+    this.isDarkTheme = isDarkTheme;
+    this.renderSettings = renderSettings;
+    this.ensureTikzJaxFonts = ensureTikzJaxFonts;
+    this.cache = new Map();
+    this.inFlight = new Map();
+    this.fastSvg = new FastSvgRenderer();
+    this.pluginBaseDir = pluginBaseDir;
+    this.tikzJax = new TikzJaxRenderer(pluginBaseDir);
+  }
+  static tikzJaxAssetsPresent(pluginBaseDir) {
+    return TikzJaxRenderer.bundledAssetsPresent(pluginBaseDir);
+  }
+  canRenderFast(spec) {
+    return shouldUseFastSvg(spec);
+  }
+  renderGraph(_0) {
+    return __async(this, arguments, function* (spec, options = {}) {
+      var _a;
+      const mode = (_a = options.mode) != null ? _a : DEFAULT_RENDER_MODE;
+      const invertDark = this.isDarkTheme();
+      if (mode === "svgFast" && this.canRenderFast(spec)) {
+        return this.renderFastSpec(spec, invertDark, options.specFingerprint);
+      }
+      if (!options.tikz) {
+        return {
+          ok: false,
+          error: "High-quality render requires generated TikZ source."
+        };
+      }
+      return this.renderTikzSource(options.tikz, {
+        mode: mode === "lualatex" ? "lualatex" : "tikzjax",
+        invertDark,
+        assets: options.assets,
+        errorContext: options.errorContext,
+        specFingerprint: options.specFingerprint
+      });
+    });
+  }
+  renderFastSpec(_0) {
+    return __async(this, arguments, function* (spec, invertDark = this.isDarkTheme(), specFingerprint) {
+      const fingerprint = specFingerprint != null ? specFingerprint : JSON.stringify(spec);
+      const key = cacheKey("svgFast", fingerprint, invertDark, void 0, fingerprint);
+      const cached = this.readCache(key);
+      if (cached) {
+        return cached;
+      }
+      const pending = this.inFlight.get(key);
+      if (pending) {
+        return pending;
+      }
+      const renderPromise = Promise.resolve().then(() => {
+        try {
+          const theme = resolveGraphThemeColors();
+          const svgText = this.fastSvg.render(spec, theme);
+          this.remember(key, svgText);
+          return { ok: true, svgText, dataUrl: svgDataUrl(svgText) };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "Fast SVG render failed.",
+            rawLog: err instanceof Error ? err.stack : String(err)
+          };
+        }
+      }).finally(() => this.inFlight.delete(key));
+      this.inFlight.set(key, renderPromise);
+      return renderPromise;
+    });
+  }
+  renderTikzSource(_0) {
+    return __async(this, arguments, function* (source, options = {}) {
+      var _a, _b;
+      const mode = (_a = options.mode) != null ? _a : "tikzjax";
+      const invertDark = (_b = options.invertDark) != null ? _b : this.isDarkTheme();
+      const key = cacheKey(mode, source, invertDark, options.assets, options.specFingerprint);
+      const cached = this.readCache(key);
+      if (cached) {
+        return cached;
+      }
+      const pending = this.inFlight.get(key);
+      if (pending) {
+        return pending;
+      }
+      const renderPromise = this.renderTikzWithFallback(source, options.errorContext, invertDark, key, options.assets, mode).finally(() => this.inFlight.delete(key));
+      this.inFlight.set(key, renderPromise);
+      return renderPromise;
+    });
+  }
+  renderToSvg(source, errorContext, assets) {
+    return __async(this, null, function* () {
+      return this.renderTikzSource(source, { errorContext, assets, mode: "tikzjax" });
+    });
+  }
+  clearCache() {
+    this.cache.clear();
+    this.inFlight.clear();
+  }
+  readCache(key) {
+    if (!RENDER_CACHE_ENABLED) {
+      return null;
+    }
+    const hit = this.cache.get(key);
+    if (hit && Date.now() - hit.createdAt <= CACHE_TTL_MS) {
+      this.cache.delete(key);
+      this.cache.set(key, hit);
+      return { ok: true, svgText: hit.svgText, dataUrl: svgDataUrl(hit.svgText) };
+    }
+    if (hit) {
+      this.cache.delete(key);
+    }
+    return null;
+  }
+  remember(key, svgText) {
+    if (!RENDER_CACHE_ENABLED) {
+      return;
+    }
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    }
+    this.cache.set(key, { svgText, createdAt: Date.now() });
+    while (this.cache.size > CACHE_MAX) {
+      const nextKey = this.cache.keys().next();
+      if (nextKey.done || nextKey.value === void 0) {
+        break;
+      }
+      this.cache.delete(nextKey.value);
+    }
+  }
+  renderTikzWithFallback(source, errorContext, invertDark, key, assets, mode = "tikzjax") {
+    return __async(this, null, function* () {
+      var _a;
+      if (mode === "lualatex") {
+        const luaResult2 = yield this.compileWithLuaLatex(source, errorContext, invertDark, assets);
+        if (luaResult2.ok && luaResult2.svgText) {
+          this.remember(key, luaResult2.svgText);
+        }
+        return luaResult2;
+      }
+      (_a = this.ensureTikzJaxFonts) == null ? void 0 : _a.call(this);
+      yield TikzJaxRenderer.loadOnce(this.pluginBaseDir);
+      const theme = resolveGraphThemeColors();
+      const tikzJaxResult = yield this.tikzJax.renderToSvg(source, theme, assets);
+      if (tikzJaxResult.ok) {
+        this.remember(key, tikzJaxResult.svgText);
+        return {
+          ok: true,
+          svgText: tikzJaxResult.svgText,
+          dataUrl: svgDataUrl(tikzJaxResult.svgText)
+        };
+      }
+      const settings = this.renderSettings();
+      if (!settings.useLocalLuaLatexFallback) {
+        const failure = tikzJaxResult;
+        return {
+          ok: false,
+          error: failure.error,
+          rawLog: failure.rawLog
+        };
+      }
+      const luaKey = cacheKey("lualatex", source, invertDark, assets);
+      const luaResult = yield this.compileWithLuaLatex(source, errorContext, invertDark, assets);
+      if (luaResult.ok && luaResult.svgText) {
+        this.remember(luaKey, luaResult.svgText);
+      }
+      return luaResult;
+    });
+  }
+  latexError(rawError, source, errorContext, timedOut = false) {
+    const block = errorContext == null ? void 0 : errorContext.block;
+    const editor = errorContext == null ? void 0 : errorContext.editor;
+    const noteLineMapper = block && editor ? (userLine) => mapTidiedLineToNoteLine(block.startLine, block.endLine, (line) => editor.getLine(line), userLine) : void 0;
+    const mapped = formatLatexErrorWithLineMapping(rawError, source, USER_SOURCE_LINE_OFFSET, noteLineMapper);
+    return {
+      ok: false,
+      error: timedOut ? "Timed out." : mapped.message,
+      rawLog: rawError,
+      userLine: mapped.userLine,
+      noteLine: mapped.noteLine,
+      lineContent: mapped.lineContent,
+      timedOut
+    };
+  }
+  compileWithLuaLatex(source, errorContext, invertDark, assets) {
+    return __async(this, null, function* () {
+      const tmpDir = fs3.mkdtempSync(path2.join(os.tmpdir(), "obsidian-tikz-"));
+      const texPath = path2.join(tmpDir, "diagram.tex");
+      const pdfPath = path2.join(tmpDir, "diagram.pdf");
+      const logPath = path2.join(tmpDir, "diagram.log");
+      const svgPath = path2.join(tmpDir, "diagram.svg");
+      try {
+        if (assets) {
+          for (const [name, content] of Object.entries(assets)) {
+            fs3.writeFileSync(path2.join(tmpDir, name), content, "utf8");
+          }
+        }
+        fs3.writeFileSync(texPath, wrapLatexSource(source, resolveGraphThemeColors()), "utf8");
+        const settings = this.renderSettings();
+        const renderTimeoutMs = DEFAULT_RENDER_TIMEOUT_SECONDS * 1e3;
+        const lualatex = yield resolveLuaLatex(settings.lualatexPath);
+        if (!lualatex) {
+          return {
+            ok: false,
+            error: "LuaLaTeX not found. Install a TeX distribution or disable the LuaLaTeX fallback.",
+            rawLog: "Expected at /Library/TeX/texbin/lualatex\nCheck: which lualatex"
+          };
+        }
+        try {
+          yield execFileWithTimeout(lualatex, [
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            `-output-directory=${tmpDir}`,
+            texPath
+          ], { cwd: tmpDir, maxBuffer: 10 * 1024 * 1024 }, renderTimeoutMs);
+        } catch (err) {
+          const logTail = readLogTail(logPath);
+          const raw = [formatExecError(err), logTail && `
+--- log ---
+${logTail}`].filter(Boolean).join("\n");
+          return this.latexError(raw, source, errorContext, err instanceof RenderTimeoutError);
+        }
+        if (!fs3.existsSync(pdfPath)) {
+          const logTail = readLogTail(logPath);
+          if (logTail) {
+            return this.latexError(`No PDF produced.
+--- log ---
+${logTail}`, source, errorContext);
+          }
+          return { ok: false, error: "No PDF produced.", rawLog: "LuaLaTeX exited without diagram.pdf." };
+        }
+        const pdftocairo = yield resolvePdfToCairo();
+        if (!pdftocairo) {
+          return {
+            ok: false,
+            error: "pdftocairo not found.",
+            rawLog: "Install: brew install poppler"
+          };
+        }
+        const renderTimeoutMs2 = DEFAULT_RENDER_TIMEOUT_SECONDS * 1e3;
+        try {
+          yield execFileWithTimeout(pdftocairo, ["-svg", pdfPath, svgPath], {
+            cwd: tmpDir,
+            maxBuffer: 30 * 1024 * 1024
+          }, renderTimeoutMs2);
+        } catch (err) {
+          return this.latexError(formatExecError(err), source, errorContext, err instanceof RenderTimeoutError);
+        }
+        if (!fs3.existsSync(svgPath)) {
+          return { ok: false, error: "No SVG produced.", rawLog: `PDF: ${pdfPath}` };
+        }
+        const svgText = finalizeSvg(fs3.readFileSync(svgPath, "utf8"));
+        return { ok: true, svgText, dataUrl: svgDataUrl(svgText) };
+      } finally {
+        try {
+          fs3.rmSync(tmpDir, { recursive: true, force: true });
+        } catch (e) {
+        }
+      }
+    });
+  }
+};
+
+// src/pluginPaths.ts
+var import_obsidian = __toModule(require("obsidian"));
+var fs4 = __toModule(require("fs"));
+var path3 = __toModule(require("path"));
+function resolvePluginBaseDir(plugin) {
+  var _a;
+  const manifestDir = (_a = plugin.manifest.dir) == null ? void 0 : _a.trim();
+  if (manifestDir) {
+    const adapter = plugin.app.vault.adapter;
+    if (adapter instanceof import_obsidian.FileSystemAdapter) {
+      const candidate = path3.join(adapter.getBasePath(), manifestDir);
+      if (fs4.existsSync(path3.join(candidate, "main.js"))) {
+        return candidate;
+      }
+    }
+  }
+  if (fs4.existsSync(path3.join(__dirname, "main.js"))) {
+    return __dirname;
+  }
+  return __dirname;
+}
+
+// src/displayScaleLayout.ts
+var BASE_WIDTH_DATA_ATTR = "data-mathgraph-base-width";
+var FALLBACK_BASE_WIDTH_2D = 540;
+var FALLBACK_BASE_WIDTH_3D = 660;
+var MAX_NORMAL_BASE_WIDTH_2D = 575;
+var MAX_NORMAL_BASE_WIDTH_3D = 700;
+var MIN_RELIABLE_IMAGE_WIDTH = 200;
+var MAX_RELIABLE_MEASURED_WIDTH = 1200;
+var MIN_VALID_MEASURED_WIDTH = 250;
+function getGraphBaseWidthPx(spec, measuredNaturalWidth) {
+  const is3D = isGraph3dView(spec);
+  const fallback = is3D ? FALLBACK_BASE_WIDTH_3D : FALLBACK_BASE_WIDTH_2D;
+  const maxNormal = is3D ? MAX_NORMAL_BASE_WIDTH_3D : MAX_NORMAL_BASE_WIDTH_2D;
+  if (!measuredNaturalWidth || measuredNaturalWidth < MIN_VALID_MEASURED_WIDTH || measuredNaturalWidth > MAX_RELIABLE_MEASURED_WIDTH) {
+    return fallback;
+  }
+  return Math.min(measuredNaturalWidth, maxNormal);
+}
+function readStoredBaseWidth(inner) {
+  const stored = inner.getAttribute(BASE_WIDTH_DATA_ATTR);
+  if (!stored) {
+    return null;
+  }
+  const parsed = Number.parseFloat(stored);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+function storeBaseWidth(inner, baseWidth) {
+  inner.setAttribute(BASE_WIDTH_DATA_ATTR, String(baseWidth));
+}
+function parseSvgLength(raw) {
+  var _a;
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^([\d.]+)\s*(pt|px|cm|mm|in)?$/i);
+  if (!match) {
+    return null;
+  }
+  const value = Number.parseFloat(match[1]);
+  if (!Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  const unit = ((_a = match[2]) != null ? _a : "px").toLowerCase();
+  switch (unit) {
+    case "pt":
+      return value * (96 / 72);
+    case "cm":
+      return value * (96 / 2.54);
+    case "mm":
+      return value * (96 / 25.4);
+    case "in":
+      return value * 96;
+    default:
+      return value;
+  }
+}
+function parseSvgWidthFromText(svgText) {
+  const widthAttr = svgText.match(/\bwidth="([^"]+)"/);
+  if (widthAttr) {
+    const parsed = parseSvgLength(widthAttr[1]);
+    if (parsed && parsed > 0) {
+      return parsed;
+    }
+  }
+  const viewBox = svgText.match(/viewBox="([^"]+)"/);
+  if (viewBox) {
+    const parts = viewBox[1].trim().split(/\s+/);
+    if (parts.length >= 4) {
+      const width = Number.parseFloat(parts[2]);
+      if (Number.isFinite(width) && width > 0) {
+        return width;
+      }
+    }
+  }
+  return null;
+}
+function measureNaturalImageWidth(img, svgText) {
+  const parsedSvg = svgText ? parseSvgWidthFromText(svgText) : null;
+  if (parsedSvg && parsedSvg >= MIN_RELIABLE_IMAGE_WIDTH) {
+    return parsedSvg;
+  }
+  if (img.naturalWidth >= MIN_RELIABLE_IMAGE_WIDTH) {
+    return img.naturalWidth;
+  }
+  if (parsedSvg && parsedSvg > 0) {
+    return parsedSvg;
+  }
+  if (img.naturalWidth > 0) {
+    return img.naturalWidth;
+  }
+  return null;
+}
+function measureRenderedGraphBaseWidth(inner, spec, svgText) {
+  const stored = readStoredBaseWidth(inner);
+  if (stored !== null) {
+    return getGraphBaseWidthPx(spec, stored);
+  }
+  let measured = null;
+  const media = inner.querySelector("img, svg");
+  if (media instanceof HTMLImageElement) {
+    measured = measureNaturalImageWidth(media, svgText);
+  }
+  if (measured === null && media instanceof SVGSVGElement) {
+    const rendered = media.getBoundingClientRect().width;
+    if (rendered >= MIN_RELIABLE_IMAGE_WIDTH) {
+      measured = rendered;
+    }
+  }
+  if (measured === null && svgText) {
+    measured = parseSvgWidthFromText(svgText);
+  }
+  return getGraphBaseWidthPx(spec, measured);
+}
+function updateOverflowState(container, scaledWidth) {
+  const scroll = container.querySelector(".mathgraph-graph-scroll");
+  if (!(scroll instanceof HTMLElement)) {
+    return;
+  }
+  const containerWidth = scroll.clientWidth;
+  scroll.classList.toggle("mathgraph-overflowing", scaledWidth > containerWidth + 1);
+}
+function updateScaleLabel(container, scale) {
+  const label = container.querySelector(".mathgraph-scale-label");
+  if (label) {
+    label.setText(formatDisplayScaleLabel(scale));
+  }
+}
+function applyRenderedGraphLayoutScale(container, spec, options) {
+  const inner = container.querySelector(".mathgraph-rendered-inner");
+  if (!(inner instanceof HTMLElement)) {
+    return;
+  }
+  const scale = resolveDisplayScale(spec);
+  if (options == null ? void 0 : options.remeasure) {
+    inner.removeAttribute(BASE_WIDTH_DATA_ATTR);
+  }
+  const baseWidth = measureRenderedGraphBaseWidth(inner, spec, options == null ? void 0 : options.svgText);
+  if (baseWidth <= 0) {
+    inner.style.removeProperty("--mathgraph-rendered-width");
+    updateScaleLabel(container, scale);
+    updateOverflowState(container, 0);
+    return;
+  }
+  storeBaseWidth(inner, baseWidth);
+  const scaledWidth = baseWidth * scale;
+  inner.style.setProperty("--mathgraph-rendered-width", `${scaledWidth}px`);
+  updateScaleLabel(container, scale);
+  updateOverflowState(container, scaledWidth);
+}
+function bindRenderedGraphLayoutScale(container, spec, svgText) {
+  const inner = container.querySelector(".mathgraph-rendered-inner");
+  if (!(inner instanceof HTMLElement)) {
+    return;
+  }
+  const apply = () => {
+    applyRenderedGraphLayoutScale(container, spec, { remeasure: true, svgText });
+  };
+  const media = inner.querySelector("img, svg");
+  if (media instanceof HTMLImageElement) {
+    if (media.complete) {
+      apply();
+    } else {
+      media.addEventListener("load", apply, { once: true });
+      media.addEventListener("error", apply, { once: true });
+    }
+  } else {
+    apply();
+  }
+  const scroll = container.querySelector(".mathgraph-graph-scroll");
+  if (scroll instanceof HTMLElement && typeof ResizeObserver !== "undefined") {
+    const observer = new ResizeObserver(() => {
+      const stored = readStoredBaseWidth(inner);
+      if (stored === null) {
+        return;
+      }
+      const scale = resolveDisplayScale(spec);
+      updateOverflowState(container, stored * scale);
+    });
+    observer.observe(scroll);
+  }
+}
+
+// src/graphRenderCache.ts
+function specRenderFingerprint(spec) {
+  const copy = structuredClone(spec);
+  if (copy.size) {
+    delete copy.size.displayScale;
+  }
+  return JSON.stringify(copy);
+}
+function renderCacheKey(fingerprint, mode, isDark) {
+  return `${mode}:${isDark ? "dark" : "light"}:${fingerprint}`;
+}
+function applyDisplayScaleToRoot(root, spec, svgText) {
+  const container = root.querySelector(".mathgraph-rendered-container");
+  if (container instanceof HTMLElement) {
+    applyRenderedGraphLayoutScale(container, spec, { svgText });
+  }
+}
+var renderCache = new Map();
+function getCachedGraphRender(fingerprint, mode, isDark) {
+  return renderCache.get(renderCacheKey(fingerprint, mode, isDark));
+}
+function setCachedGraphRender(entry) {
+  renderCache.set(entry.cacheKey, entry);
+  if (renderCache.size > 64) {
+    const oldest = renderCache.keys().next().value;
+    if (oldest) {
+      renderCache.delete(oldest);
+    }
+  }
+}
+function clearGraphRenderCache() {
+  renderCache.clear();
+}
+
+// src/tikzJaxFonts.ts
+var STYLE_ID = "mathgraph-tikzjax-fonts";
+function ensureTikzJaxFontsLoaded(app, plugin, doc = activeDocument) {
+  var _a;
+  if (doc.getElementById(STYLE_ID)) {
+    return;
+  }
+  const manifestDir = (_a = plugin.manifest.dir) == null ? void 0 : _a.trim();
+  if (!manifestDir) {
+    return;
+  }
+  const href = app.vault.adapter.getResourcePath(`${manifestDir}/assets/tikzjax/fonts.css`);
+  const link = doc.createElement("link");
+  link.id = STYLE_ID;
+  link.rel = "stylesheet";
+  link.href = href;
+  doc.head.appendChild(link);
+}
+
 // src/GraphBlockUpdater.ts
+var import_obsidian2 = __toModule(require("obsidian"));
 function classifyGraphBlockSource(source, settings) {
   const trimmed = source.trim();
   if (!trimmed) {
@@ -1498,7 +5437,7 @@ function removeGraphBlock(app, location) {
 }
 function insertGraphBlockAtCursor(app, spec) {
   return __async(this, null, function* () {
-    const view = app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
+    const view = app.workspace.getActiveViewOfType(import_obsidian2.MarkdownView);
     if (!view) {
       throw new Error("Open a note to insert a graph.");
     }
@@ -1513,149 +5452,87 @@ function insertGraphBlockAtCursor(app, spec) {
 }
 
 // src/graphBuilderModal.ts
-var import_obsidian2 = __toModule(require("obsidian"));
+var import_obsidian3 = __toModule(require("obsidian"));
 
-// src/graphRangeValidation.ts
-var SURFACE_Z_CLIP_WARNING = "Most of the surface may be clipped by the selected z range.";
-var SAMPLE_GRID = 11;
-var IN_RANGE_FRACTION_THRESHOLD = 0.5;
-function parseBoundToNumber(raw) {
-  const trimmed = raw.trim().replace(/π/g, "pi");
-  if (!trimmed) {
-    return null;
-  }
-  if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) {
-    return Number.parseFloat(trimmed);
-  }
-  const jsExpr = trimmed.replace(/\bpi\b/gi, "Math.PI").replace(/\^/g, "**");
-  if (!/^[\d\s+\-*/().MathPI]+$/.test(jsExpr.replace(/Math\.PI/g, ""))) {
-    return null;
-  }
-  try {
-    const value = Function(`"use strict"; return (${jsExpr});`)();
-    return Number.isFinite(value) ? value : null;
-  } catch (e) {
-    return null;
-  }
+// src/graphPointsTikz.ts
+var MARK_OPTS = "only marks, mark=*, mark size=2pt";
+function escapeLatexText(text) {
+  return text.replace(/\\/g, "\\textbackslash{}").replace(/([#%&_{}])/g, "\\$1").replace(/\$/g, "\\$").replace(/\^/g, "\\textasciicircum{}").replace(/~/g, "\\textasciitilde{}");
 }
-function evaluateSurfaceZ(expr, x, y, parameters) {
-  try {
-    const compiled = compileExpressionForOctave(expr, {
-      variables: ["x", "y", "z", "t", "r"],
-      parameters
-    });
-    let jsExpr = compiled.replace(/\.\^/g, "**").replace(/\.\*/g, "*").replace(/\.\//g, "/").replace(/\bpi\b/g, "Math.PI").replace(/\bx\b/g, `(${x})`).replace(/\by\b/g, `(${y})`).replace(/\bexp\b/g, "Math.exp").replace(/\blog\b/g, "Math.log").replace(/\bln\b/g, "Math.log").replace(/\bsqrt\b/g, "Math.sqrt").replace(/\babs\b/g, "Math.abs").replace(/\bsin\b/g, "Math.sin").replace(/\bcos\b/g, "Math.cos").replace(/\btan\b/g, "Math.tan").replace(/\bsinh\b/g, "Math.sinh").replace(/\bcosh\b/g, "Math.cosh").replace(/\btanh\b/g, "Math.tanh");
-    for (const [name, value] of Object.entries(parameters)) {
-      const numeric = parseBoundToNumber(value);
-      if (numeric !== null) {
-        jsExpr = jsExpr.replace(new RegExp(`\\b${name}\\b`, "g"), `(${numeric})`);
-      }
+function buildPointLabelNode(coords, label, is3d) {
+  const escaped = escapeLatexText(label);
+  if (is3d && coords.z !== void 0) {
+    return `\\node[anchor=south west] at (axis cs:${coords.x},${coords.y},${coords.z}) {${escaped}};`;
+  }
+  return `\\node[anchor=south west] at (axis cs:${coords.x},${coords.y}) {${escaped}};`;
+}
+function buildGraphPointsTikz(spec) {
+  var _a, _b;
+  const points = (_a = spec.points) != null ? _a : [];
+  if (points.length === 0) {
+    return "";
+  }
+  const is3d = graphUses3dPoints(spec);
+  const lines = [];
+  for (const point of points) {
+    const coords = resolveGraphPointCoordinates(spec, point);
+    if (!coords) {
+      continue;
     }
-    const result = Function(`"use strict"; return (${jsExpr});`)();
-    return Number.isFinite(result) ? result : null;
-  } catch (e) {
-    return null;
-  }
-}
-function isSurface3dSpec(spec) {
-  var _a;
-  if (spec.type === "surface3d") {
-    return true;
-  }
-  return spec.type === "pde" && ((_a = spec.view) != null ? _a : "3d") === "3d";
-}
-function surfaceZRangeClipWarning(spec) {
-  var _a, _b, _c, _d;
-  if (!isSurface3dSpec(spec)) {
-    return null;
-  }
-  const fn = getUserFunction(spec);
-  const xRange = (_a = spec.ranges) == null ? void 0 : _a.x;
-  const yRange = (_b = spec.ranges) == null ? void 0 : _b.y;
-  const zRange = (_c = spec.ranges) == null ? void 0 : _c.z;
-  if (!fn || !(xRange == null ? void 0 : xRange[0]) || !(xRange == null ? void 0 : xRange[1]) || !(yRange == null ? void 0 : yRange[0]) || !(yRange == null ? void 0 : yRange[1]) || !(zRange == null ? void 0 : zRange[0]) || !(zRange == null ? void 0 : zRange[1])) {
-    return null;
-  }
-  const xMin = parseBoundToNumber(xRange[0]);
-  const xMax = parseBoundToNumber(xRange[1]);
-  const yMin = parseBoundToNumber(yRange[0]);
-  const yMax = parseBoundToNumber(yRange[1]);
-  const zMin = parseBoundToNumber(zRange[0]);
-  const zMax = parseBoundToNumber(zRange[1]);
-  if (xMin === null || xMax === null || yMin === null || yMax === null || zMin === null || zMax === null) {
-    return null;
-  }
-  const parameters = (_d = spec.parameters) != null ? _d : {};
-  let inRangeCount = 0;
-  let validCount = 0;
-  let sampledMin = Number.POSITIVE_INFINITY;
-  let sampledMax = Number.NEGATIVE_INFINITY;
-  for (let i = 0; i < SAMPLE_GRID; i++) {
-    const x = xMin + (xMax - xMin) * (i / (SAMPLE_GRID - 1));
-    for (let j = 0; j < SAMPLE_GRID; j++) {
-      const y = yMin + (yMax - yMin) * (j / (SAMPLE_GRID - 1));
-      const z = evaluateSurfaceZ(fn, x, y, parameters);
-      if (z === null) {
-        continue;
-      }
-      validCount++;
-      sampledMin = Math.min(sampledMin, z);
-      sampledMax = Math.max(sampledMax, z);
-      if (z >= zMin && z <= zMax) {
-        inRangeCount++;
-      }
+    if (is3d && coords.z !== void 0) {
+      lines.push(`\\addplot3[${MARK_OPTS}] coordinates {(${coords.x},${coords.y},${coords.z})};`);
+    } else if (!is3d) {
+      lines.push(`\\addplot[${MARK_OPTS}] coordinates {(${coords.x},${coords.y})};`);
+    }
+    if ((_b = point.label) == null ? void 0 : _b.trim()) {
+      lines.push(buildPointLabelNode(coords, point.label.trim(), is3d));
     }
   }
-  if (validCount === 0) {
-    return null;
+  return lines.join("\n");
+}
+function appendGraphPointsToTikz(tikz, spec) {
+  const pointsTikz = buildGraphPointsTikz(spec);
+  if (!pointsTikz) {
+    return tikz;
   }
-  const inRangeFraction = inRangeCount / validCount;
-  if (inRangeFraction >= IN_RANGE_FRACTION_THRESHOLD) {
-    return null;
+  const marker = "\\end{axis}";
+  const index = tikz.lastIndexOf(marker);
+  if (index === -1) {
+    return `${tikz}
+${pointsTikz}`;
   }
-  const estimatedSpan = sampledMax - sampledMin;
-  const selectedSpan = zMax - zMin;
-  if (estimatedSpan <= 0 || selectedSpan <= 0) {
-    return inRangeFraction < IN_RANGE_FRACTION_THRESHOLD ? SURFACE_Z_CLIP_WARNING : null;
-  }
-  const overlapMin = Math.max(sampledMin, zMin);
-  const overlapMax = Math.min(sampledMax, zMax);
-  const overlap = Math.max(0, overlapMax - overlapMin);
-  if (overlap / estimatedSpan < IN_RANGE_FRACTION_THRESHOLD) {
-    return SURFACE_Z_CLIP_WARNING;
-  }
-  return inRangeFraction < IN_RANGE_FRACTION_THRESHOLD ? SURFACE_Z_CLIP_WARNING : null;
+  return `${tikz.slice(0, index)}${pointsTikz}
+${tikz.slice(index)}`;
 }
 
 // src/uiStyle.ts
-var UI_STYLE_LABELS = {
-  glass: "Glass",
-  native: "Native Obsidian"
-};
-var RENDERED_GRAPH_FRAME_LABELS = {
-  none: "None",
-  subtle: "Subtle",
-  glass: "Glass card"
-};
-function uiStyleClassName(style) {
-  return style === "glass" ? "mathgraph-ui-glass" : "mathgraph-ui-native";
+function mathgraphUiClassName() {
+  return "mathgraph-ui-glass";
 }
-function graphFrameClassName(frame) {
-  return `mathgraph-frame-${frame}`;
-}
-function applyMathGraphUiStyle(doc, settings) {
+function applyMathGraphUiStyle(doc) {
   doc.body.classList.remove("mathgraph-ui-glass", "mathgraph-ui-native");
-  doc.body.classList.add(uiStyleClassName(settings.uiStyle));
+  doc.body.classList.add(mathgraphUiClassName());
 }
-function decorateMathGraphRoot(el, settings) {
-  el.addClass(uiStyleClassName(settings.uiStyle));
+function decorateMathGraphRoot(el) {
+  el.addClass(mathgraphUiClassName());
 }
 
 // src/graphBuilderModal.ts
-var GraphBuilderModal = class extends import_obsidian2.Modal {
+var BUILDER_TABS = [
+  { id: "equation", label: "Equation" },
+  { id: "ranges", label: "Ranges" },
+  { id: "style", label: "Style" },
+  { id: "size", label: "Size" },
+  { id: "points", label: "Points" }
+];
+var GraphBuilderModal = class extends import_obsidian3.Modal {
   constructor(app, plugin, options) {
     super(app);
     this.plugin = plugin;
+    this.activeTab = "equation";
+    this.navItems = new Map();
+    this.panels = new Map();
+    this.pointWarningsEl = null;
     this.options = options;
     this.spec = options.spec ? hydrateGraphSpec(structuredClone(options.spec), this.plugin.settings) : defaultGraphSpec("function2d", this.plugin.settings);
   }
@@ -1663,379 +5540,449 @@ var GraphBuilderModal = class extends import_obsidian2.Modal {
     const { contentEl, titleEl, modalEl } = this;
     contentEl.empty();
     modalEl.addClass("mathgraph-modal-container");
-    contentEl.addClass("mathgraph-modal", uiStyleClassName(this.plugin.settings.uiStyle));
     titleEl.hide();
-    const header = contentEl.createDiv({ cls: "mathgraph-modal-header" });
-    header.createDiv({
-      cls: "mathgraph-modal-title",
-      text: "MathGraph Studio"
+    this.shellEl = contentEl.createDiv({
+      cls: `mathgraph-modal-shell mathgraph-modal ${mathgraphUiClassName()}`
     });
-    header.createDiv({
-      cls: "mathgraph-modal-subtitle",
-      text: "Create a function, surface, ODE/PDE solution, or data graph."
-    });
-    this.bodyEl = contentEl.createDiv({ cls: "mathgraph-modal-body" });
-    this.renderTopRow();
-    this.renderSections();
-    const footer = contentEl.createDiv({ cls: "mathgraph-modal-footer mathgraph-modal-actions" });
-    footer.createEl("button", { text: "Cancel", cls: "mathgraph-button mathgraph-button-secondary" }).addEventListener("click", () => this.close());
+    this.renderHeader();
+    this.renderMain();
+    this.renderFooter();
+    this.renderForm();
+    this.switchTab(this.activeTab);
+  }
+  renderHeader() {
+    const header = this.shellEl.createDiv({ cls: "mathgraph-modal-header" });
+    const textWrap = header.createDiv({ cls: "mathgraph-modal-header-text" });
+    textWrap.createDiv({ cls: "mathgraph-modal-title", text: "Math Plotter" });
+  }
+  renderMain() {
+    const main = this.shellEl.createDiv({ cls: "mathgraph-modal-main" });
+    const nav = main.createDiv({ cls: "mathgraph-modal-nav" });
+    for (const tab of BUILDER_TABS) {
+      const item = nav.createDiv({
+        cls: "mathgraph-modal-nav-item",
+        text: tab.label
+      });
+      item.dataset.tab = tab.id;
+      item.addEventListener("click", () => this.switchTab(tab.id));
+      this.navItems.set(tab.id, item);
+    }
+    this.panelEl = main.createDiv({ cls: "mathgraph-modal-panel-scroll" });
+    for (const tab of BUILDER_TABS) {
+      const panel = this.panelEl.createDiv({ cls: "mathgraph-modal-panel" });
+      panel.dataset.tab = tab.id;
+      this.panels.set(tab.id, panel);
+    }
+  }
+  renderFooter() {
+    const footer = this.shellEl.createDiv({ cls: "mathgraph-modal-footer" });
+    footer.createEl("button", {
+      type: "button",
+      text: "Cancel",
+      cls: "mathgraph-button mathgraph-button-secondary"
+    }).addEventListener("click", () => this.close());
     const primaryLabel = this.options.mode === "edit" ? "Save Graph" : "Insert Graph";
-    footer.createEl("button", { text: primaryLabel, cls: "mathgraph-button mathgraph-button-primary" }).addEventListener("click", () => void this.submit());
+    footer.createEl("button", {
+      type: "button",
+      text: primaryLabel,
+      cls: "mathgraph-button mathgraph-button-primary"
+    }).addEventListener("click", () => void this.submit());
   }
-  createSection(title, description) {
-    const section = this.bodyEl.createDiv({ cls: "mathgraph-section" });
-    const header = section.createDiv({ cls: "mathgraph-section-header" });
-    header.createDiv({ cls: "mathgraph-section-title", text: title });
-    if (description) {
-      header.createDiv({ cls: "mathgraph-section-description", text: description });
+  switchTab(tab) {
+    this.activeTab = tab;
+    for (const [id, item] of this.navItems) {
+      item.toggleClass("mathgraph-modal-nav-item-active", id === tab);
     }
-    return section.createDiv({ cls: "mathgraph-section-body" });
+    for (const [id, panel] of this.panels) {
+      panel.toggleClass("mathgraph-modal-panel-active", id === tab);
+    }
   }
-  renderTopRow() {
-    var _a;
-    const row = this.bodyEl.createDiv({ cls: "mathgraph-modal-top-row" });
-    const typeField = row.createDiv({ cls: "mathgraph-field" });
-    typeField.createEl("label", { text: "Graph type", cls: "mathgraph-label" });
-    const typeSelect = typeField.createEl("select", { cls: "mathgraph-select" });
-    for (const [value, label] of Object.entries(GRAPH_TYPE_LABELS)) {
-      typeSelect.createEl("option", { text: label, value });
+  updateNavVisibility() {
+    const pointsNav = this.navItems.get("points");
+    pointsNav == null ? void 0 : pointsNav.toggleClass("mathgraph-modal-nav-item-hidden", this.spec.type === "data");
+    if (this.spec.type === "data" && this.activeTab === "points") {
+      this.switchTab("equation");
     }
-    typeSelect.value = this.spec.type;
-    typeSelect.addEventListener("change", () => {
+  }
+  renderForm() {
+    for (const panel of this.panels.values()) {
+      panel.empty();
+    }
+    this.renderEquationPanel(this.panels.get("equation"));
+    this.renderRangesPanel(this.panels.get("ranges"));
+    this.renderStylePanel(this.panels.get("style"));
+    this.renderSizePanel(this.panels.get("size"));
+    this.renderPointsPanel(this.panels.get("points"));
+    this.updateNavVisibility();
+  }
+  formGrid(parent) {
+    return parent.createDiv({ cls: "mathgraph-form-grid" });
+  }
+  formRow(parent, label, options) {
+    const row = parent.createDiv({
+      cls: `mathgraph-form-row${(options == null ? void 0 : options.wide) ? " mathgraph-form-row-wide" : ""}`
+    });
+    row.createEl("label", { cls: "mathgraph-field-label", text: label });
+    if (options == null ? void 0 : options.help) {
+      row.createEl("div", { cls: "mathgraph-field-help", text: options.help });
+    }
+    return row.createDiv({ cls: "mathgraph-field" });
+  }
+  formText(parent, label, value, onChange, options) {
+    const field = this.formRow(parent, label, options);
+    const input = field.createEl("input", {
+      type: "text",
+      cls: "mathgraph-input",
+      value
+    });
+    if (options == null ? void 0 : options.placeholder) {
+      input.placeholder = options.placeholder;
+    }
+    input.addEventListener("input", () => onChange(input.value));
+  }
+  formTextArea(parent, label, value, onChange, options) {
+    const field = this.formRow(parent, label, __spreadProps(__spreadValues({}, options), { wide: true }));
+    const input = field.createEl("textarea", {
+      cls: "mathgraph-input mathgraph-textarea",
+      text: value
+    });
+    if (options == null ? void 0 : options.placeholder) {
+      input.placeholder = options.placeholder;
+    }
+    input.rows = 4;
+    input.addEventListener("input", () => onChange(input.value));
+  }
+  formSelect(parent, label, value, choices, onChange, options) {
+    const field = this.formRow(parent, label, options);
+    const select = field.createEl("select", { cls: "mathgraph-select" });
+    for (const choice of choices) {
+      select.createEl("option", { text: choice.label, value: choice.value });
+    }
+    select.value = value;
+    select.addEventListener("change", () => onChange(select.value));
+  }
+  formRangeRow(parent, label, current, onChange) {
+    const row = parent.createDiv({ cls: "mathgraph-range-row" });
+    row.createEl("label", { cls: "mathgraph-range-label", text: `${label} range` });
+    const minInput = row.createEl("input", {
+      type: "text",
+      cls: "mathgraph-input",
+      value: current[0],
+      attr: { placeholder: "min" }
+    });
+    row.createSpan({ cls: "mathgraph-range-separator", text: "to" });
+    const maxInput = row.createEl("input", {
+      type: "text",
+      cls: "mathgraph-input",
+      value: current[1],
+      attr: { placeholder: "max" }
+    });
+    const sync = () => onChange(minInput.value, maxInput.value);
+    minInput.addEventListener("input", sync);
+    maxInput.addEventListener("input", sync);
+  }
+  formSampleField(parent, label, value, onChange) {
+    const field = parent.createDiv({ cls: "mathgraph-field mathgraph-sample-field" });
+    field.createEl("label", { cls: "mathgraph-field-label", text: label });
+    const input = field.createEl("input", {
+      type: "text",
+      cls: "mathgraph-input",
+      value
+    });
+    input.addEventListener("input", () => onChange(input.value));
+  }
+  renderEquationPanel(panel) {
+    var _a, _b, _c, _d, _e, _f, _g, _h;
+    const grid = this.formGrid(panel);
+    this.formSelect(grid, "Graph type", this.spec.type, Object.entries(GRAPH_TYPE_LABELS).map(([value, label]) => ({ value, label })), (value) => {
       const preservedSize = this.spec.size;
-      this.spec = defaultGraphSpec(typeSelect.value, this.plugin.settings);
+      this.spec = defaultGraphSpec(value, this.plugin.settings);
       if (preservedSize) {
         this.spec.size = preservedSize;
       }
       this.renderForm();
-    });
-    const renderField = row.createDiv({ cls: "mathgraph-field" });
-    renderField.createEl("label", { text: "Render mode", cls: "mathgraph-label" });
-    const renderSelect = renderField.createEl("select", { cls: "mathgraph-select" });
-    renderSelect.createEl("option", { text: "Auto", value: "auto" });
-    renderSelect.createEl("option", { text: "Symbolic (PGFPlots)", value: "symbolic" });
-    if (this.plugin.settings.enableOctaveEngine) {
-      renderSelect.createEl("option", { text: "Octave (numeric)", value: "octave" });
-    }
-    renderSelect.value = (_a = this.spec.renderEngine) != null ? _a : "auto";
-    renderSelect.addEventListener("change", () => {
-      this.spec.renderEngine = renderSelect.value;
-      this.updatePreview();
-    });
-  }
-  renderSections() {
-    this.bodyEl.querySelectorAll(".mathgraph-section").forEach((el) => el.remove());
-    this.equationSection = this.createSection("Function / Equation", "Enter math in simple syntax. Examples: sin^2(x), x^2+y^2, exp(-2*t)*sin(x)*sin(y).");
-    this.rangesSection = this.createSection("Ranges", "Domain limits and sample counts for the plot.");
-    this.parametersSection = this.createSection("Parameters", "Substitute named values into the solution before rendering.");
-    this.pointsSection = this.createSection("Labeled Points", "Optional overlay points drawn on top of the graph.");
-    this.sizeSection = this.createSection("Size", "Graph size (LaTeX) sets PGFPlots axis dimensions and affects render quality and export. Display scale only changes how the image appears in Obsidian.");
-    this.styleSection = this.createSection("Style", "Colors, line width, and axis labels.");
-    const previewWrap = this.bodyEl.createDiv({ cls: "mathgraph-section" });
-    const previewHeader = previewWrap.createDiv({ cls: "mathgraph-section-header" });
-    previewHeader.createDiv({ cls: "mathgraph-section-title", text: "Preview" });
-    previewHeader.createDiv({
-      cls: "mathgraph-section-description",
-      text: "Summary of the graph configuration before inserting."
-    });
-    this.previewSection = previewWrap.createDiv({ cls: "mathgraph-preview-card" });
-    this.renderForm();
-  }
-  renderForm() {
-    this.equationSection.empty();
-    this.rangesSection.empty();
-    this.parametersSection.empty();
-    this.pointsSection.empty();
-    this.sizeSection.empty();
-    this.styleSection.empty();
-    this.previewSection.empty();
-    this.renderTypeFields();
-    this.renderRanges();
-    this.renderParameters();
-    this.renderDataEditor();
-    this.renderSize();
-    this.renderStyle();
-    this.renderLabels();
-    this.updatePreview();
-    this.updateSectionVisibility();
-  }
-  updateSectionVisibility() {
-    var _a, _b;
-    const type = this.spec.type;
-    const showParameters = type === "ode" || type === "pde";
-    const showPoints = type !== "data";
-    (_a = this.parametersSection.parentElement) == null ? void 0 : _a.toggleVisibility(showParameters);
-    (_b = this.pointsSection.parentElement) == null ? void 0 : _b.toggleVisibility(showPoints);
-  }
-  renderTypeFields() {
-    new import_obsidian2.Setting(this.equationSection).setName("Title").addText((text) => {
-      var _a;
-      text.setPlaceholder("Optional graph title").setValue((_a = this.spec.title) != null ? _a : "").onChange((value) => {
-        this.spec.title = value;
-        this.updatePreview();
-      });
+      this.updateNavVisibility();
+    }, { wide: true });
+    this.formText(grid, "Title", (_a = this.spec.title) != null ? _a : "", (value) => {
+      this.spec.title = value;
+    }, {
+      placeholder: "Optional graph title",
+      wide: true
     });
     switch (this.spec.type) {
       case "function2d":
+        this.formText(grid, "Function", getUserFunction(this.spec), (value) => {
+          setUserFunction(this.spec, value);
+        }, {
+          placeholder: placeholderForGraphType("function2d"),
+          wide: true
+        });
+        break;
       case "surface3d":
-        new import_obsidian2.Setting(this.equationSection).setName("Function").addText((text) => {
-          text.inputEl.addClass("mathgraph-input");
-          text.setPlaceholder(placeholderForGraphType(this.spec.type)).setValue(getUserFunction(this.spec)).onChange((value) => {
-            setUserFunction(this.spec, value);
-            this.updatePreview();
-          });
+        this.formText(grid, "Surface function", getUserFunction(this.spec), (value) => {
+          setUserFunction(this.spec, value);
+        }, {
+          placeholder: placeholderForGraphType("surface3d"),
+          wide: true
         });
         break;
       case "parametric2d":
       case "parametric3d":
-        new import_obsidian2.Setting(this.equationSection).setName("Parameter").addText((text) => {
-          var _a;
-          text.inputEl.addClass("mathgraph-input");
-          text.setPlaceholder("t").setValue((_a = this.spec.parameter) != null ? _a : "t").onChange((value) => {
-            this.spec.parameter = value || "t";
-          });
-        });
-        new import_obsidian2.Setting(this.equationSection).setName("x(t)").addText((text) => {
-          var _a;
-          text.inputEl.addClass("mathgraph-input");
-          text.setValue((_a = this.spec.xExpression) != null ? _a : "").onChange((value) => {
-            this.spec.xExpression = value;
-            this.updatePreview();
-          });
-        });
-        new import_obsidian2.Setting(this.equationSection).setName("y(t)").addText((text) => {
-          var _a;
-          text.inputEl.addClass("mathgraph-input");
-          text.setValue((_a = this.spec.yExpression) != null ? _a : "").onChange((value) => {
-            this.spec.yExpression = value;
-            this.updatePreview();
-          });
-        });
+        this.formText(grid, "Parameter", (_b = this.spec.parameter) != null ? _b : "t", (value) => {
+          this.spec.parameter = value || "t";
+        }, { placeholder: "t" });
+        this.formText(grid, "x(t)", (_c = this.spec.xExpression) != null ? _c : "", (value) => {
+          this.spec.xExpression = value;
+        }, { wide: true });
+        this.formText(grid, "y(t)", (_d = this.spec.yExpression) != null ? _d : "", (value) => {
+          this.spec.yExpression = value;
+        }, { wide: true });
         if (this.spec.type === "parametric3d") {
-          new import_obsidian2.Setting(this.equationSection).setName("z(t)").addText((text) => {
-            var _a;
-            text.inputEl.addClass("mathgraph-input");
-            text.setValue((_a = this.spec.zExpression) != null ? _a : "").onChange((value) => {
-              this.spec.zExpression = value;
-              this.updatePreview();
-            });
-          });
+          this.formText(grid, "z(t)", (_e = this.spec.zExpression) != null ? _e : "", (value) => {
+            this.spec.zExpression = value;
+          }, { wide: true });
         }
         break;
       case "ode":
       case "pde":
-        new import_obsidian2.Setting(this.equationSection).setName("Equation label").setDesc("Displayed as the equation caption; not evaluated.").addText((text) => {
-          var _a;
-          text.inputEl.addClass("mathgraph-input");
-          text.setPlaceholder("u_t = u_xx + u_yy").setValue((_a = this.spec.equation) != null ? _a : "").onChange((value) => {
-            this.spec.equation = value;
-            this.updatePreview();
-          });
+        this.formText(grid, "Equation label", (_f = this.spec.equation) != null ? _f : "", (value) => {
+          this.spec.equation = value;
+        }, {
+          placeholder: this.spec.type === "pde" ? "u_t = u_xx + u_yy" : "y' = -2y",
+          wide: true
         });
-        new import_obsidian2.Setting(this.equationSection).setName("Solution").addText((text) => {
-          text.inputEl.addClass("mathgraph-input");
-          text.setPlaceholder(placeholderForGraphType(this.spec.type)).setValue(getUserFunction(this.spec)).onChange((value) => {
-            setUserFunction(this.spec, value);
-            this.updatePreview();
-          });
+        this.formText(grid, "Solution", getUserFunction(this.spec), (value) => {
+          setUserFunction(this.spec, value);
+        }, {
+          placeholder: placeholderForGraphType(this.spec.type),
+          wide: true
         });
-        new import_obsidian2.Setting(this.equationSection).setName("View").addDropdown((drop) => {
-          var _a;
-          drop.selectEl.addClass("mathgraph-select");
-          drop.addOption("2d", "2D curve / slice");
-          drop.addOption("3d", "3D surface");
-          drop.setValue((_a = this.spec.view) != null ? _a : this.spec.type === "pde" ? "3d" : "2d");
-          drop.onChange((value) => {
+        if (this.spec.type === "pde") {
+          this.formSelect(grid, "View", (_g = this.spec.view) != null ? _g : "3d", [
+            { value: "2d", label: "2D curve / slice" },
+            { value: "3d", label: "3D surface" }
+          ], (value) => {
             this.spec.view = value;
             this.renderForm();
           });
+        }
+        this.renderParametersBlock(grid);
+        panel.createEl("p", {
+          cls: "mathgraph-equation-tab-note",
+          text: "ODE/PDE modes plot explicit solutions."
         });
         break;
       case "data":
-        new import_obsidian2.Setting(this.equationSection).setName("Data points").setDesc("Enter x,y pairs below or paste comma-separated values.").addTextArea((text) => {
-          var _a;
-          text.inputEl.addClass("mathgraph-input");
-          const rows = ((_a = this.spec.data) != null ? _a : []).map((row) => `${row.x}, ${row.y}`).join("\n");
-          text.setValue(rows).onChange((raw) => {
-            this.spec.data = raw.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
-              const [x, y] = line.split(",").map((part) => part.trim());
-              return { x: x != null ? x : "0", y: y != null ? y : "0" };
-            });
-            this.updatePreview();
+        this.formTextArea(grid, "Data points", ((_h = this.spec.data) != null ? _h : []).map((row) => `${row.x}, ${row.y}`).join("\n"), (raw) => {
+          this.spec.data = raw.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+            const [x, y] = line.split(",").map((part) => part.trim());
+            return { x: x != null ? x : "0", y: y != null ? y : "0" };
           });
+        }, {
+          placeholder: "0, 0\n1, 1\n2, 4",
+          wide: true
         });
         break;
     }
   }
-  renderRanges() {
+  renderParametersBlock(parent) {
     var _a;
+    const block = parent.createDiv({ cls: "mathgraph-form-row-wide mathgraph-param-block" });
+    block.createEl("label", { cls: "mathgraph-field-label", text: "Parameters" });
+    const list = block.createDiv({ cls: "mathgraph-param-list" });
+    const params = (_a = this.spec.parameters) != null ? _a : {};
+    const entries = Object.entries(params);
+    if (entries.length === 0) {
+      this.addParameterRow(list, "t", "0");
+    } else {
+      for (const [name, value] of entries) {
+        this.addParameterRow(list, name, value);
+      }
+    }
+    block.createEl("button", {
+      type: "button",
+      cls: "mathgraph-button mathgraph-button-secondary mathgraph-inline-add-btn",
+      text: "Add parameter"
+    }).addEventListener("click", () => this.addParameterRow(list, "", ""));
+  }
+  addParameterRow(parent, name, value) {
+    const row = parent.createDiv({ cls: "mathgraph-inline-row" });
+    const nameInput = row.createEl("input", {
+      type: "text",
+      cls: "mathgraph-input",
+      value: name,
+      attr: { placeholder: "name" }
+    });
+    const valueInput = row.createEl("input", {
+      type: "text",
+      cls: "mathgraph-input",
+      value,
+      attr: { placeholder: "value" }
+    });
+    const removeBtn = row.createEl("button", {
+      type: "button",
+      cls: "mathgraph-button mathgraph-button-secondary mathgraph-row-remove",
+      text: "\xD7",
+      attr: { "aria-label": "Remove parameter" }
+    });
+    const sync = () => {
+      this.syncParametersFromDom(parent);
+    };
+    nameInput.addEventListener("input", sync);
+    valueInput.addEventListener("input", sync);
+    removeBtn.addEventListener("click", () => {
+      row.remove();
+      sync();
+    });
+  }
+  syncParametersFromDom(list) {
+    const rows = list.querySelectorAll(".mathgraph-inline-row");
+    const params = {};
+    rows.forEach((row) => {
+      var _a, _b, _c;
+      const inputs = row.querySelectorAll("input");
+      const paramName = (_a = inputs[0]) == null ? void 0 : _a.value.trim();
+      const paramValue = (_c = (_b = inputs[1]) == null ? void 0 : _b.value.trim()) != null ? _c : "";
+      if (paramName) {
+        params[paramName] = paramValue;
+      }
+    });
+    this.spec.parameters = params;
+  }
+  renderRangesPanel(panel) {
+    var _a, _b, _c;
+    const container = panel.createDiv({ cls: "mathgraph-ranges-panel" });
     const ranges = (_a = this.spec.ranges) != null ? _a : {};
+    const type = this.spec.type;
+    const is3dView = this.spec.view === "3d";
+    const showZRange = type === "surface3d" || type === "parametric3d" || type === "pde" && is3dView;
+    const showSamplesY = showZRange;
     const addRange = (key, label) => {
       var _a2;
       const current = (_a2 = ranges[key]) != null ? _a2 : ["", ""];
-      new import_obsidian2.Setting(this.rangesSection).setName(`${label} range`).addText((min) => {
-        min.inputEl.addClass("mathgraph-input");
-        min.setPlaceholder("min").setValue(current[0]).onChange((value) => {
-          var _a3, _b, _c;
-          this.spec.ranges = (_a3 = this.spec.ranges) != null ? _a3 : {};
-          this.spec.ranges[key] = [value, (_c = (_b = this.spec.ranges[key]) == null ? void 0 : _b[1]) != null ? _c : ""];
-          this.updatePreview();
-        });
-      }).addText((max) => {
-        max.inputEl.addClass("mathgraph-input");
-        max.setPlaceholder("max").setValue(current[1]).onChange((value) => {
-          var _a3, _b, _c;
-          this.spec.ranges = (_a3 = this.spec.ranges) != null ? _a3 : {};
-          const minVal = (_c = (_b = this.spec.ranges[key]) == null ? void 0 : _b[0]) != null ? _c : "";
-          this.spec.ranges[key] = [minVal, value];
-          this.updatePreview();
-        });
+      this.formRangeRow(container, label, current, (min2, max2) => {
+        var _a3;
+        this.spec.ranges = (_a3 = this.spec.ranges) != null ? _a3 : {};
+        this.spec.ranges[key] = [min2, max2];
       });
     };
-    const type = this.spec.type;
-    const is3dView = this.spec.view === "3d";
     if (type === "parametric2d" || type === "parametric3d") {
       addRange("t", "t");
-    }
-    if (type !== "parametric2d" && type !== "parametric3d") {
-      addRange("x", "x");
-    }
-    if (type === "function2d" || type === "ode" || type === "data") {
-      addRange("y", "y");
-    }
-    if (type === "surface3d" || type === "parametric3d" || type === "pde" && is3dView) {
-      addRange("y", "y");
-    }
-    if (type === "surface3d" || type === "parametric3d" || is3dView) {
-      addRange("z", "z");
-    }
-    if (type === "parametric2d" || type === "parametric3d") {
       addRange("x", "x");
       addRange("y", "y");
+      if (type === "parametric3d") {
+        addRange("z", "z");
+      }
+    } else {
+      addRange("x", "x");
+      addRange("y", "y");
+      if (showZRange) {
+        addRange("z", "z");
+      }
     }
-    new import_obsidian2.Setting(this.rangesSection).setName("Samples").addText((text) => {
-      var _a2;
-      text.inputEl.addClass("mathgraph-input");
-      text.setValue(String((_a2 = this.spec.samples) != null ? _a2 : 100)).onChange((value) => {
-        const parsed = Number.parseInt(value, 10);
-        this.spec.samples = Number.isFinite(parsed) ? parsed : 100;
-      });
+    const samplesRow = container.createDiv({
+      cls: `mathgraph-samples-row${showSamplesY ? "" : " mathgraph-samples-row-2d"}`
     });
-    if (this.spec.view === "3d" || this.spec.type === "surface3d" || this.spec.type === "pde") {
-      new import_obsidian2.Setting(this.rangesSection).setName("Samples Y").addText((text) => {
-        var _a2;
-        text.inputEl.addClass("mathgraph-input");
-        text.setValue(String((_a2 = this.spec.samplesY) != null ? _a2 : 35)).onChange((value) => {
-          const parsed = Number.parseInt(value, 10);
-          this.spec.samplesY = Number.isFinite(parsed) ? parsed : 35;
-        });
+    this.formSampleField(samplesRow, "Samples", String((_b = this.spec.samples) != null ? _b : 100), (value) => {
+      const parsed = Number.parseInt(value, 10);
+      this.spec.samples = Number.isFinite(parsed) ? parsed : 100;
+    });
+    if (showSamplesY) {
+      this.formSampleField(samplesRow, "Samples Y", String((_c = this.spec.samplesY) != null ? _c : 35), (value) => {
+        const parsed = Number.parseInt(value, 10);
+        this.spec.samplesY = Number.isFinite(parsed) ? parsed : 35;
       });
     }
   }
-  renderLabels() {
-    var _a;
-    const labels = (_a = this.spec.labels) != null ? _a : {};
+  renderStylePanel(panel) {
+    var _a, _b, _c, _d, _e, _f;
+    const grid = this.formGrid(panel);
+    const style = (_a = this.spec.style) != null ? _a : {};
+    hydrateGraphStyle(this.spec);
+    if (graphSupportsGridToggle(this.spec)) {
+      this.formSelect(grid, "Grid", gridEnabledForGraph(this.spec) ? "on" : "off", [
+        { value: "on", label: "On" },
+        { value: "off", label: "Off" }
+      ], (value) => {
+        var _a2;
+        this.spec.style = (_a2 = this.spec.style) != null ? _a2 : {};
+        this.spec.style.grid = value === "on";
+      });
+    }
+    if (graphSupportsSurfaceStyleControl(this.spec)) {
+      this.formSelect(grid, "Surface style", (_b = style.surfaceStyle) != null ? _b : "colored", [
+        { value: "colored", label: "Colored" },
+        { value: "wireframe", label: "Wireframe" },
+        { value: "solid", label: "Solid" }
+      ], (value) => {
+        var _a2;
+        this.spec.style = (_a2 = this.spec.style) != null ? _a2 : {};
+        this.spec.style.surfaceStyle = value;
+      });
+    } else {
+      this.formText(grid, "Color", (_c = style.color) != null ? _c : "", (value) => {
+        var _a2;
+        this.spec.style = (_a2 = this.spec.style) != null ? _a2 : {};
+        this.spec.style.color = value;
+      }, { placeholder: "auto" });
+    }
+    this.formText(grid, "Line width", (_d = style.width) != null ? _d : "", (value) => {
+      var _a2;
+      this.spec.style = (_a2 = this.spec.style) != null ? _a2 : {};
+      this.spec.style.width = value;
+    }, { placeholder: "1pt" });
+    const labels = (_e = this.spec.labels) != null ? _e : {};
     for (const axis of ["x", "y", "z"]) {
       if (axis === "z" && this.spec.type === "function2d") {
         continue;
       }
-      new import_obsidian2.Setting(this.styleSection).setName(`${axis}-axis label`).addText((text) => {
+      this.formText(grid, `${axis}-axis label`, (_f = labels[axis]) != null ? _f : axis, (value) => {
         var _a2;
-        text.inputEl.addClass("mathgraph-input");
-        text.setValue((_a2 = labels[axis]) != null ? _a2 : axis).onChange((value) => {
-          var _a3;
-          this.spec.labels = (_a3 = this.spec.labels) != null ? _a3 : {};
-          this.spec.labels[axis] = value;
-        });
+        this.spec.labels = (_a2 = this.spec.labels) != null ? _a2 : {};
+        this.spec.labels[axis] = value;
       });
     }
   }
-  renderStyle() {
-    var _a;
-    const style = (_a = this.spec.style) != null ? _a : {};
-    new import_obsidian2.Setting(this.styleSection).setName("Color").addText((text) => {
-      var _a2;
-      text.inputEl.addClass("mathgraph-input");
-      text.setPlaceholder("blue").setValue((_a2 = style.color) != null ? _a2 : "").onChange((value) => {
-        var _a3;
-        this.spec.style = (_a3 = this.spec.style) != null ? _a3 : {};
-        this.spec.style.color = value;
-      });
+  renderSizePanel(panel) {
+    var _a, _b, _c, _d, _e;
+    const grid = this.formGrid(panel);
+    grid.addClass("mathgraph-size-section");
+    const size = ensureGraphSize(this.spec);
+    this.formSelect(grid, "LaTeX size preset", size.preset, Object.entries(GRAPH_SIZE_PRESET_LABELS).map(([value, label]) => ({ value, label })), (value) => {
+      this.spec.size = applyPresetToGraphSize(value, this.spec.size, this.spec);
+      this.renderForm();
+      this.switchTab("size");
+    }, {
+      wide: true
     });
-    new import_obsidian2.Setting(this.styleSection).setName("Line width").addText((text) => {
-      var _a2;
-      text.inputEl.addClass("mathgraph-input");
-      text.setPlaceholder("1pt").setValue((_a2 = style.width) != null ? _a2 : "").onChange((value) => {
-        var _a3;
-        this.spec.style = (_a3 = this.spec.style) != null ? _a3 : {};
-        this.spec.style.width = value;
-      });
+    if (graphUses2dAspectRatio(this.spec)) {
+      this.formSelect(grid, "Aspect", (_a = size.aspectMode) != null ? _a : "auto", Object.entries(ASPECT_MODE_LABELS).map(([value, label]) => ({ value, label })), (value) => {
+        this.spec.size = __spreadProps(__spreadValues({}, ensureGraphSize(this.spec)), {
+          aspectMode: value
+        });
+      }, { wide: true });
+    }
+    if (size.preset === "custom") {
+      this.formText(grid, "Width", (_b = size.width) != null ? _b : "", (value) => {
+        this.spec.size = __spreadProps(__spreadValues({}, ensureGraphSize(this.spec)), {
+          preset: "custom",
+          width: value.trim()
+        });
+      }, { placeholder: "15cm" });
+      this.formText(grid, "Height", (_c = size.height) != null ? _c : "", (value) => {
+        this.spec.size = __spreadProps(__spreadValues({}, ensureGraphSize(this.spec)), {
+          preset: "custom",
+          height: value.trim()
+        });
+      }, { placeholder: "10cm" });
+    }
+    const scaleRow = grid.createDiv({ cls: "mathgraph-form-row mathgraph-form-row-wide" });
+    scaleRow.createEl("label", { cls: "mathgraph-field-label", text: "Display scale" });
+    const scaleField = scaleRow.createDiv({ cls: "mathgraph-field mathgraph-size-scale-field" });
+    const scaleValue = scaleField.createSpan({
+      cls: "mathgraph-size-scale-value",
+      text: formatDisplayScaleLabel((_d = size.displayScale) != null ? _d : 1)
     });
-  }
-  renderSize() {
-    var _a, _b, _c, _d;
-    const size = ensureGraphSize(this.spec, this.plugin.settings);
-    const dims = resolveGraphDimensions(this.spec, this.plugin.settings);
-    const latexHeader = this.sizeSection.createDiv({ cls: "mathgraph-size-subsection-header" });
-    latexHeader.createDiv({ cls: "mathgraph-size-subsection-title", text: "Graph size (LaTeX)" });
-    latexHeader.createDiv({
-      cls: "mathgraph-size-subsection-desc",
-      text: "PGFPlots axis width and height. Affects labels, spacing, quality, and SVG/PNG export. Saving changes re-renders the graph."
-    });
-    new import_obsidian2.Setting(this.sizeSection).setName("Size preset").setDesc(`Current axis: ${dims.width} \xD7 ${dims.height}`).addDropdown((drop) => {
-      drop.selectEl.addClass("mathgraph-select");
-      for (const [value, label] of Object.entries(GRAPH_SIZE_PRESET_LABELS)) {
-        drop.addOption(value, label);
-      }
-      drop.setValue(size.preset);
-      drop.onChange((value) => {
-        this.spec.size = applyPresetToGraphSize(value, this.spec.size, this.plugin.settings, this.spec);
-        this.renderForm();
-      });
-    });
-    this.customSizeFields = this.sizeSection.createDiv({ cls: "mathgraph-field-grid" });
-    this.customSizeFields.toggleVisibility(size.preset === "custom");
-    const widthField = this.customSizeFields.createDiv({ cls: "mathgraph-field" });
-    widthField.createEl("label", { text: "Width", cls: "mathgraph-label" });
-    const widthInput = widthField.createEl("input", {
-      type: "text",
-      cls: "mathgraph-input",
-      value: (_a = size.width) != null ? _a : ""
-    });
-    widthInput.placeholder = "15cm";
-    widthInput.addEventListener("change", () => {
-      this.spec.size = __spreadProps(__spreadValues({}, ensureGraphSize(this.spec, this.plugin.settings)), {
-        preset: "custom",
-        width: widthInput.value.trim()
-      });
-      this.updatePreview();
-    });
-    const heightField = this.customSizeFields.createDiv({ cls: "mathgraph-field" });
-    heightField.createEl("label", { text: "Height", cls: "mathgraph-label" });
-    const heightInput = heightField.createEl("input", {
-      type: "text",
-      cls: "mathgraph-input",
-      value: (_b = size.height) != null ? _b : ""
-    });
-    heightInput.placeholder = "9cm";
-    heightInput.addEventListener("change", () => {
-      this.spec.size = __spreadProps(__spreadValues({}, ensureGraphSize(this.spec, this.plugin.settings)), {
-        preset: "custom",
-        height: heightInput.value.trim()
-      });
-      this.updatePreview();
-    });
-    const displayHeader = this.sizeSection.createDiv({ cls: "mathgraph-size-subsection-header" });
-    displayHeader.createDiv({ cls: "mathgraph-size-subsection-title", text: "Display scale (Obsidian)" });
-    displayHeader.createDiv({
-      cls: "mathgraph-size-subsection-desc",
-      text: "Visual zoom in Reading View only. Use hover \u2212 / + on the graph for quick adjustments without recompiling LaTeX."
-    });
-    const scaleField = this.sizeSection.createDiv({ cls: "mathgraph-field mathgraph-field-wide" });
-    const scaleHeader = scaleField.createDiv({ cls: "mathgraph-size-scale-header" });
-    scaleHeader.createEl("label", { text: "Display scale", cls: "mathgraph-label" });
-    const scaleValue = scaleHeader.createSpan({ cls: "mathgraph-size-scale-value" });
-    scaleValue.setText(String(clampDisplayScale((_c = size.displayScale) != null ? _c : 1)));
     const scaleInput = scaleField.createEl("input", {
       type: "range",
       cls: "mathgraph-size-slider"
@@ -2043,208 +5990,205 @@ var GraphBuilderModal = class extends import_obsidian2.Modal {
     scaleInput.min = String(DISPLAY_SCALE_MIN);
     scaleInput.max = String(DISPLAY_SCALE_MAX);
     scaleInput.step = String(DISPLAY_SCALE_STEP);
-    scaleInput.value = String(clampDisplayScale((_d = size.displayScale) != null ? _d : 1));
+    scaleInput.value = String(clampDisplayScale((_e = size.displayScale) != null ? _e : 1));
     scaleInput.addEventListener("input", () => {
       const next = clampDisplayScale(Number.parseFloat(scaleInput.value));
-      scaleValue.setText(String(next));
-      this.spec.size = __spreadProps(__spreadValues({}, ensureGraphSize(this.spec, this.plugin.settings)), {
+      scaleValue.setText(formatDisplayScaleLabel(next));
+      this.spec.size = __spreadProps(__spreadValues({}, ensureGraphSize(this.spec)), {
         displayScale: next
       });
-      this.updatePreview();
     });
   }
-  renderParameters() {
-    var _a;
-    if (this.spec.type !== "ode" && this.spec.type !== "pde") {
-      return;
-    }
-    const params = (_a = this.spec.parameters) != null ? _a : {};
-    const entries = Object.entries(params);
-    if (entries.length === 0) {
-      this.addParameterRow("t", "0");
-    } else {
-      for (const [name, value] of entries) {
-        this.addParameterRow(name, value);
-      }
-    }
-    new import_obsidian2.Setting(this.parametersSection).addButton((btn) => {
-      btn.setButtonText("Add parameter");
-      btn.buttonEl.addClass("mathgraph-button", "mathgraph-button-secondary");
-      btn.onClick(() => this.addParameterRow("", ""));
-    });
-  }
-  addParameterRow(name, value) {
-    const row = this.parametersSection.createDiv({ cls: "mathgraph-param-row" });
-    new import_obsidian2.Setting(row).addText((text) => {
-      text.inputEl.addClass("mathgraph-input");
-      text.setPlaceholder("name").setValue(name).onChange(() => this.syncParametersFromDom());
-    }).addText((text) => {
-      text.inputEl.addClass("mathgraph-input");
-      text.setPlaceholder("value").setValue(value).onChange(() => this.syncParametersFromDom());
-    }).addExtraButton((btn) => {
-      btn.setIcon("trash").setTooltip("Remove").onClick(() => {
-        row.remove();
-        this.syncParametersFromDom();
-        this.updatePreview();
-      });
-    });
-  }
-  syncParametersFromDom() {
-    const rows = this.parametersSection.querySelectorAll(".mathgraph-param-row");
-    const params = {};
-    rows.forEach((row) => {
-      var _a, _b, _c;
-      const inputs = row.querySelectorAll("input");
-      const paramName = (_a = inputs[0]) == null ? void 0 : _a.value.trim();
-      const value = (_c = (_b = inputs[1]) == null ? void 0 : _b.value.trim()) != null ? _c : "";
-      if (paramName) {
-        params[paramName] = value;
-      }
-    });
-    this.spec.parameters = params;
-  }
-  renderDataEditor() {
+  renderPointsPanel(panel) {
     var _a;
     if (this.spec.type === "data") {
+      panel.createEl("p", {
+        cls: "mathgraph-field-help",
+        text: "Data plots use the Equation tab for point values."
+      });
       return;
     }
+    const is3d = graphUses3dPoints(this.spec);
+    const autoY = graphSupportsAutoComputeY(this.spec);
+    const autoZ = graphSupportsAutoComputeZ(this.spec);
+    const list = panel.createDiv({ cls: "mathgraph-point-list" });
     const points = (_a = this.spec.points) != null ? _a : [];
+    const emptyPoint = is3d ? { x: "", y: "", z: "", label: "" } : { x: "", y: autoY ? "" : "", label: "" };
     if (points.length === 0) {
-      this.addPointRow({ x: "", y: "", label: "" });
+      this.addPointRow(list, emptyPoint, is3d, autoY, autoZ);
     } else {
       for (const point of points) {
-        this.addPointRow(point);
+        this.addPointRow(list, point, is3d, autoY, autoZ);
       }
     }
-    new import_obsidian2.Setting(this.pointsSection).addButton((btn) => {
-      btn.setButtonText("Add point");
-      btn.buttonEl.addClass("mathgraph-button", "mathgraph-button-secondary");
-      btn.onClick(() => this.addPointRow({ x: "", y: "", label: "" }));
-    });
+    panel.createEl("button", {
+      type: "button",
+      cls: "mathgraph-button mathgraph-button-secondary mathgraph-inline-add-btn",
+      text: "Add point"
+    }).addEventListener("click", () => this.addPointRow(list, __spreadValues({}, emptyPoint), is3d, autoY, autoZ));
+    this.pointWarningsEl = panel.createDiv({ cls: "mathgraph-point-warnings" });
+    this.refreshPointWarnings(list, is3d);
   }
-  addPointRow(point) {
-    const row = this.pointsSection.createDiv({ cls: "mathgraph-point-row" });
-    new import_obsidian2.Setting(row).addText((text) => {
-      text.inputEl.addClass("mathgraph-input");
-      text.setPlaceholder("x").setValue(point.x).onChange(() => this.syncPointsFromDom());
-    }).addText((text) => {
-      text.inputEl.addClass("mathgraph-input");
-      text.setPlaceholder("y").setValue(point.y).onChange(() => this.syncPointsFromDom());
-    }).addText((text) => {
+  addPointRow(parent, point, is3d, autoY, autoZ) {
+    var _a, _b, _c;
+    const wrap = parent.createDiv({ cls: "mathgraph-point-row-wrap" });
+    const row = wrap.createDiv({ cls: "mathgraph-inline-row mathgraph-point-row" });
+    const sync = () => {
+      this.syncPointsFromDom(parent, is3d);
+      this.refreshPointWarnings(parent, is3d);
+    };
+    row.createEl("input", {
+      type: "text",
+      cls: "mathgraph-input",
+      value: point.x,
+      attr: { placeholder: "x" }
+    }).addEventListener("input", sync);
+    row.createEl("input", {
+      type: "text",
+      cls: "mathgraph-input",
+      value: (_a = point.y) != null ? _a : "",
+      attr: { placeholder: autoY ? "y (optional)" : "y" }
+    }).addEventListener("input", sync);
+    if (is3d) {
+      row.createEl("input", {
+        type: "text",
+        cls: "mathgraph-input",
+        value: (_b = point.z) != null ? _b : "",
+        attr: { placeholder: autoZ ? "z (optional)" : "z" }
+      }).addEventListener("input", sync);
+    }
+    row.createEl("input", {
+      type: "text",
+      cls: "mathgraph-input",
+      value: (_c = point.label) != null ? _c : "",
+      attr: { placeholder: "label" }
+    }).addEventListener("input", sync);
+    row.createEl("button", {
+      type: "button",
+      cls: "mathgraph-button mathgraph-button-secondary mathgraph-row-remove",
+      text: "\xD7",
+      attr: { "aria-label": "Remove point" }
+    }).addEventListener("click", () => {
+      wrap.remove();
+      sync();
+    });
+    const status = wrap.createDiv({ cls: "mathgraph-point-status" });
+    this.updatePointRowStatus(status, point);
+  }
+  updatePointRowStatus(statusEl, point) {
+    statusEl.empty();
+    statusEl.removeClass("mathgraph-point-status-computed", "mathgraph-point-status-warning", "mathgraph-point-status-error");
+    const analysis = analyzeGraphPoint(this.spec, point);
+    if (!(analysis == null ? void 0 : analysis.statusText)) {
+      return;
+    }
+    statusEl.setText(analysis.statusText);
+    if (analysis.status === "computed-y" || analysis.status === "computed-z") {
+      statusEl.addClass("mathgraph-point-status-computed");
+    } else if (analysis.status === "not-on-graph") {
+      statusEl.addClass("mathgraph-point-status-warning");
+    } else if (analysis.status === "could-not-evaluate") {
+      statusEl.addClass("mathgraph-point-status-error");
+    }
+  }
+  refreshPointWarnings(list, is3d) {
+    this.syncPointsFromDom(list, is3d);
+    list.querySelectorAll(".mathgraph-point-row-wrap").forEach((wrap, index) => {
       var _a;
-      text.inputEl.addClass("mathgraph-input");
-      text.setPlaceholder("label").setValue((_a = point.label) != null ? _a : "").onChange(() => this.syncPointsFromDom());
-    }).addExtraButton((btn) => {
-      btn.setIcon("trash").onClick(() => {
-        row.remove();
-        this.syncPointsFromDom();
-      });
+      const statusEl = wrap.querySelector(".mathgraph-point-status");
+      const point = (_a = this.spec.points) == null ? void 0 : _a[index];
+      if (statusEl instanceof HTMLElement && point) {
+        this.updatePointRowStatus(statusEl, point);
+      }
     });
+    if (!this.pointWarningsEl) {
+      return;
+    }
+    this.pointWarningsEl.empty();
+    const warning = summarizeGraphPointWarnings(this.spec);
+    if (warning) {
+      this.pointWarningsEl.createDiv({
+        cls: "mathgraph-point-warning-banner",
+        text: warning
+      });
+    }
   }
-  syncPointsFromDom() {
-    const rows = this.pointsSection.querySelectorAll(".mathgraph-point-row");
+  syncPointsFromDom(list, is3d = graphUses3dPoints(this.spec)) {
+    const rows = list.querySelectorAll(".mathgraph-point-row");
     const points = [];
+    const autoY = graphSupportsAutoComputeY(this.spec);
+    const autoZ = graphSupportsAutoComputeZ(this.spec);
     rows.forEach((row) => {
-      var _a, _b, _c, _d, _e;
+      var _a, _b, _c, _d, _e, _f, _g;
       const inputs = row.querySelectorAll("input");
       const x = (_b = (_a = inputs[0]) == null ? void 0 : _a.value.trim()) != null ? _b : "";
       const y = (_d = (_c = inputs[1]) == null ? void 0 : _c.value.trim()) != null ? _d : "";
-      const label = (_e = inputs[2]) == null ? void 0 : _e.value.trim();
-      if (x && y) {
-        points.push({ x, y, label: label || void 0 });
+      const z = is3d ? (_f = (_e = inputs[2]) == null ? void 0 : _e.value.trim()) != null ? _f : "" : void 0;
+      const labelIndex = is3d ? 3 : 2;
+      const label = (_g = inputs[labelIndex]) == null ? void 0 : _g.value.trim();
+      if (!x) {
+        return;
       }
-    });
-    this.spec.points = points;
-  }
-  updatePreview() {
-    var _a, _b;
-    this.previewSection.empty();
-    const header = this.previewSection.createDiv({ cls: "mathgraph-preview-card-header" });
-    header.createDiv({
-      cls: "mathgraph-pill mathgraph-pill-accent",
-      text: GRAPH_TYPE_LABELS[this.spec.type]
-    });
-    const renderEngine = (_a = this.spec.renderEngine) != null ? _a : "auto";
-    header.createDiv({ cls: "mathgraph-pill", text: `Render: ${renderEngine}` });
-    const expression = this.previewExpressionText();
-    if (expression) {
-      this.previewSection.createDiv({
-        cls: "mathgraph-preview-expression",
-        text: expression
-      });
-    }
-    const rangeSummary = this.previewRangeSummary();
-    const dims = resolveGraphDimensions(this.spec, this.plugin.settings);
-    const size = ensureGraphSize(this.spec, this.plugin.settings);
-    this.previewSection.createDiv({
-      cls: "mathgraph-preview-meta",
-      text: `LaTeX: ${dims.width} \xD7 ${dims.height} \xB7 Display: ${formatDisplayScaleLabel((_b = size.displayScale) != null ? _b : 1)}${rangeSummary ? ` \xB7 ${rangeSummary}` : ""}`
-    });
-    const clipWarning = surfaceZRangeClipWarning(this.spec);
-    if (clipWarning) {
-      this.previewSection.createDiv({
-        cls: "mathgraph-preview-warning",
-        text: clipWarning
-      });
-    }
-  }
-  previewExpressionText() {
-    var _a, _b, _c, _d, _e;
-    switch (this.spec.type) {
-      case "parametric2d":
-      case "parametric3d": {
-        const parts = [
-          (_a = this.spec.xExpression) == null ? void 0 : _a.trim(),
-          (_b = this.spec.yExpression) == null ? void 0 : _b.trim(),
-          (_c = this.spec.zExpression) == null ? void 0 : _c.trim()
-        ].filter(Boolean);
-        return parts.length ? parts.join(" ; ") : "";
+      if (!autoY && !y) {
+        return;
       }
-      case "data":
-        return `${(_e = (_d = this.spec.data) == null ? void 0 : _d.length) != null ? _e : 0} data points`;
-      default:
-        return getUserFunction(this.spec);
-    }
-  }
-  previewRangeSummary() {
-    var _a;
-    const ranges = (_a = this.spec.ranges) != null ? _a : {};
-    const parts = [];
-    for (const key of ["x", "y", "z", "t"]) {
-      const range = ranges[key];
-      if ((range == null ? void 0 : range[0]) && (range == null ? void 0 : range[1])) {
-        parts.push(`${key}: [${range[0]}, ${range[1]}]`);
+      if (!autoZ && is3d && !z) {
+        return;
       }
-    }
-    return parts.join(" \xB7 ");
+      if (autoZ && is3d && !y) {
+        return;
+      }
+      const entry = {
+        x,
+        label: label || void 0
+      };
+      if (autoY) {
+        entry.y = y;
+      } else if (y) {
+        entry.y = y;
+      }
+      if (is3d) {
+        entry.z = autoZ ? z : z || void 0;
+      }
+      points.push(entry);
+    });
+    this.spec.points = attachComputedCoordinates(this.spec, points);
   }
   submit() {
     return __async(this, null, function* () {
-      this.syncParametersFromDom();
-      this.syncPointsFromDom();
-      const sizeError = validateGraphSize(ensureGraphSize(this.spec, this.plugin.settings));
+      var _a, _b;
+      const paramList = (_a = this.panels.get("equation")) == null ? void 0 : _a.querySelector(".mathgraph-param-list");
+      if (paramList instanceof HTMLElement) {
+        this.syncParametersFromDom(paramList);
+      }
+      const pointList = (_b = this.panels.get("points")) == null ? void 0 : _b.querySelector(".mathgraph-point-list");
+      if (pointList instanceof HTMLElement) {
+        this.syncPointsFromDom(pointList);
+      }
+      const sizeError = validateGraphSize(ensureGraphSize(this.spec));
       if (sizeError) {
-        new import_obsidian2.Notice(sizeError);
+        new import_obsidian3.Notice(sizeError);
+        this.switchTab("size");
         return;
       }
       try {
         if (this.options.mode === "edit" && this.options.location) {
           yield replaceGraphBlockBody(this.app, this.options.location, this.spec);
-          new import_obsidian2.Notice("Graph updated.");
+          new import_obsidian3.Notice("Graph updated.");
         } else if (this.options.onInsert) {
           yield this.options.onInsert(this.spec);
-          new import_obsidian2.Notice("Graph inserted.");
+          new import_obsidian3.Notice("Graph inserted.");
         } else {
           yield this.plugin.insertGraph(this.spec);
-          new import_obsidian2.Notice("Graph inserted.");
+          new import_obsidian3.Notice("Graph inserted.");
         }
         const clipWarning = surfaceZRangeClipWarning(this.spec);
         if (clipWarning) {
-          new import_obsidian2.Notice(clipWarning);
+          new import_obsidian3.Notice(clipWarning);
         }
         this.close();
       } catch (err) {
-        new import_obsidian2.Notice(err instanceof Error ? err.message : "Could not save graph.");
+        new import_obsidian3.Notice(err instanceof Error ? err.message : "Could not save graph.");
       }
     });
   }
@@ -2255,10 +6199,10 @@ var GraphBuilderModal = class extends import_obsidian2.Modal {
 };
 
 // src/graphProcessor.ts
-var import_obsidian5 = __toModule(require("obsidian"));
+var import_obsidian6 = __toModule(require("obsidian"));
 
 // src/InlineGraphBuilder.ts
-var import_obsidian3 = __toModule(require("obsidian"));
+var import_obsidian4 = __toModule(require("obsidian"));
 
 // src/inlineGraphDefaults.ts
 var INLINE_GRAPH_TYPE_LABELS = {
@@ -2281,7 +6225,8 @@ function defaultInlineFields(type = "function2d") {
         yMax: "1.5",
         zMin: "",
         zMax: "",
-        paramT: ""
+        paramT: "",
+        grid: true
       };
     case "surface3d":
       return {
@@ -2295,7 +6240,8 @@ function defaultInlineFields(type = "function2d") {
         yMax: "pi",
         zMin: "-1",
         zMax: "1",
-        paramT: ""
+        paramT: "",
+        grid: true
       };
     case "ode":
       return {
@@ -2309,7 +6255,8 @@ function defaultInlineFields(type = "function2d") {
         yMax: "5",
         zMin: "",
         zMax: "",
-        paramT: ""
+        paramT: "",
+        grid: true
       };
     case "pde":
       return {
@@ -2323,11 +6270,13 @@ function defaultInlineFields(type = "function2d") {
         yMax: "2*pi",
         zMin: "-1",
         zMax: "1",
-        paramT: "0.25"
+        paramT: "0.25",
+        grid: true
       };
   }
 }
 function specFromInlineFields(fields) {
+  var _a;
   const base = {
     version: 1,
     type: fields.type,
@@ -2346,6 +6295,9 @@ function specFromInlineFields(fields) {
   switch (fields.type) {
     case "function2d":
       setUserFunction(base, fields.expression);
+      if (!fields.grid) {
+        base.style = __spreadProps(__spreadValues({}, (_a = base.style) != null ? _a : {}), { grid: false });
+      }
       return base;
     case "surface3d":
       setUserFunction(base, fields.expression);
@@ -2409,10 +6361,9 @@ function validateInlineFields(fields) {
 // src/InlineGraphBuilder.ts
 function renderInlineGraphBuilder(el, options) {
   el.empty();
-  el.addClass("mathgraph-processor-root");
-  decorateMathGraphRoot(el, options.plugin.settings);
+  el.addClass("mathgraph-processor-root", "mathgraph-inline-builder-wrapper");
   const card = el.createDiv({ cls: "mathgraph-inline-builder" });
-  card.createDiv({ cls: "mathgraph-inline-builder-header", text: "Create Math Graph" });
+  card.createDiv({ cls: "mathgraph-inline-builder-header", text: "Create Function Plot" });
   card.createDiv({
     cls: "mathgraph-inline-builder-subtitle",
     text: "Quick setup \u2014 use More Options for advanced settings."
@@ -2463,6 +6414,12 @@ function renderInlineGraphBuilder(el, options) {
     cls: "mathgraph-input"
   });
   paramInput.value = fields.paramT;
+  const gridRow = grid.createDiv({ cls: "mathgraph-field" });
+  gridRow.createEl("label", { text: "Grid", cls: "mathgraph-label" });
+  const gridSelect = gridRow.createEl("select", { cls: "mathgraph-select" });
+  gridSelect.createEl("option", { text: "On", value: "on" });
+  gridSelect.createEl("option", { text: "Off", value: "off" });
+  gridSelect.value = fields.grid ? "on" : "off";
   const errorEl = card.createDiv({ cls: "mathgraph-inline-error" });
   errorEl.hide();
   const zMinWrap = zMinInput.closest(".mathgraph-field");
@@ -2481,6 +6438,7 @@ function renderInlineGraphBuilder(el, options) {
     zMinInput.value = defaults.zMin;
     zMaxInput.value = defaults.zMax;
     paramInput.value = defaults.paramT;
+    gridSelect.value = defaults.grid ? "on" : "off";
     updateVisibility(type);
   }
   function updateVisibility(type) {
@@ -2488,6 +6446,7 @@ function renderInlineGraphBuilder(el, options) {
     zMinWrap.toggleVisibility(show3d);
     zMaxWrap.toggleVisibility(show3d);
     paramRow.toggleVisibility(type === "pde");
+    gridRow.toggleVisibility(type === "function2d");
   }
   function readFields() {
     return {
@@ -2501,7 +6460,8 @@ function renderInlineGraphBuilder(el, options) {
       yMax: yMaxInput.value,
       zMin: zMinInput.value,
       zMax: zMaxInput.value,
-      paramT: paramInput.value
+      paramT: paramInput.value,
+      grid: gridSelect.value === "on"
     };
   }
   typeSelect.addEventListener("change", () => {
@@ -2536,8 +6496,8 @@ function renderInlineGraphBuilder(el, options) {
     }).open();
   });
   cancelBtn.addEventListener("click", () => {
-    void removeGraphBlock(options.plugin.app, options.location).then(() => new import_obsidian3.Notice("Graph block removed.")).catch((err) => {
-      new import_obsidian3.Notice(err instanceof Error ? err.message : "Could not remove block.");
+    void removeGraphBlock(options.plugin.app, options.location).then(() => new import_obsidian4.Notice("Graph block removed.")).catch((err) => {
+      new import_obsidian4.Notice(err instanceof Error ? err.message : "Could not remove block.");
     });
   });
   function insertFromInline() {
@@ -2553,9 +6513,9 @@ function renderInlineGraphBuilder(el, options) {
       const spec = specFromInlineFields(current);
       try {
         yield replaceGraphBlockBody(options.plugin.app, options.location, spec);
-        new import_obsidian3.Notice("Graph inserted.");
+        new import_obsidian4.Notice("Graph inserted.");
       } catch (err) {
-        new import_obsidian3.Notice(err instanceof Error ? err.message : "Could not insert graph.");
+        new import_obsidian4.Notice(err instanceof Error ? err.message : "Could not insert graph.");
       }
     });
   }
@@ -2865,10 +6825,10 @@ function isLikelyDegreeDomain(range) {
   if (span < 180 || span > 720) {
     return false;
   }
-  const min = range.min;
-  const max = range.max;
-  const nearZeroStart = Math.abs(min) <= 1 || isNearInteger(min % 90);
-  const roundEnd = isNearInteger(max) || isNearInteger(max % 90);
+  const min2 = range.min;
+  const max2 = range.max;
+  const nearZeroStart = Math.abs(min2) <= 1 || isNearInteger(min2 % 90);
+  const roundEnd = isNearInteger(max2) || isNearInteger(max2 % 90);
   const classicDegreeSpan = Math.abs(span - 360) <= 1 || Math.abs(span - 180) <= 1 || Math.abs(span - 720) <= 1;
   return classicDegreeSpan && nearZeroStart && roundEnd;
 }
@@ -2894,10 +6854,10 @@ function findBracedArgument(text, start) {
   }
   return null;
 }
-function padNumericRange(min, max, ratio = 0.08) {
-  const span = max - min;
+function padNumericRange(min2, max2, ratio = 0.08) {
+  const span = max2 - min2;
   const pad = span === 0 ? 1 : span * ratio;
-  return { min: min - pad, max: max + pad };
+  return { min: min2 - pad, max: max2 + pad };
 }
 function sampleRange(range, samples) {
   const values = [];
@@ -3024,17 +6984,17 @@ function parseSliderParamValue(raw) {
   if (!slider) {
     return trimmed;
   }
-  const min = Number.parseFloat(slider[1]);
-  const max = Number.parseFloat(slider[2]);
+  const min2 = Number.parseFloat(slider[1]);
+  const max2 = Number.parseFloat(slider[2]);
   const step = slider[3] ? Number.parseFloat(slider[3]) : null;
-  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+  if (!Number.isFinite(min2) || !Number.isFinite(max2)) {
     return trimmed;
   }
   if (step !== null && Number.isFinite(step) && step > 0) {
-    const midpoint = min + Math.floor((max - min) / step / 2) * step;
+    const midpoint = min2 + Math.floor((max2 - min2) / step / 2) * step;
     return String(Number.parseFloat(midpoint.toFixed(6)));
   }
-  return String((min + max) / 2);
+  return String((min2 + max2) / 2);
 }
 
 // graphAnalysis.ts
@@ -3555,12 +7515,79 @@ function buildFilledCycleLine(domain, expr, colorOpt, opacity = 0.2) {
   return `\\addplot[${colorPart}fill opacity=${opacity}, draw=none, domain=${domain}] {${expr}} \\closedcycle;`;
 }
 
+// src/pgfplotsTickStyle.ts
+function pgfplotsTextSafeTickOptions() {
+  return [
+    "/pgf/number format/.cd, fixed",
+    "every tick label/.style={font=\\sffamily}"
+  ].join(", ");
+}
+
+// src/pgfplots3dAxisStyle.ts
+function joinOptions2(options) {
+  return options.filter(Boolean).join(", ");
+}
+function pgfplotsThemeAxisStyleOptions() {
+  return joinOptions2([
+    "axis line style={mathgraphAxis}",
+    "tick style={mathgraphAxis}",
+    "tick label style={color=mathgraphAxis, font=\\small}",
+    "label style={color=mathgraphAxis, font=\\small}",
+    "grid style={mathgraphGrid}"
+  ]);
+}
+function pgfplots3dAxisOptions(spec) {
+  var _a, _b, _c, _d;
+  const labels = (_a = spec.labels) != null ? _a : {};
+  const { width, height } = resolveGraphDimensions(spec);
+  const xRange = (_b = spec.ranges) == null ? void 0 : _b.x;
+  const yRange = (_c = spec.ranges) == null ? void 0 : _c.y;
+  return joinOptions2([
+    "view={45}{28}",
+    "axis lines=box",
+    labels.x ? `xlabel={${labels.x}}` : "xlabel={$x$}",
+    labels.y ? `ylabel={${labels.y}}` : "ylabel={$y$}",
+    labels.z ? `zlabel={${labels.z}}` : "zlabel={$z$}",
+    "xlabel style={at={(axis description cs:1.05,0.05)},anchor=west}",
+    "ylabel style={at={(axis description cs:0.05,1.05)},anchor=south}",
+    "zlabel style={at={(axis description cs:0.5,1.08)},anchor=south}",
+    "tick align=outside",
+    pgfplotsThemeAxisStyleOptions(),
+    pgfplotsTextSafeTickOptions(),
+    "grid=none",
+    "enlargelimits=false",
+    "axis background/.style={fill=none}",
+    `width=${width}`,
+    `height=${height}`,
+    ((_d = spec.title) == null ? void 0 : _d.trim()) ? `title={${spec.title.trim()}}` : "",
+    xRange ? `xmin=${xRange[0]}` : "",
+    xRange ? `xmax=${xRange[1]}` : "",
+    yRange ? `ymin=${yRange[0]}` : "",
+    yRange ? `ymax=${yRange[1]}` : ""
+  ]);
+}
+function pgfplots3dAxisCoreOptions() {
+  return joinOptions2([
+    "view={45}{28}",
+    "axis lines=box",
+    "tick align=outside",
+    pgfplotsThemeAxisStyleOptions(),
+    pgfplotsTextSafeTickOptions(),
+    "grid=none",
+    "enlargelimits=false",
+    "axis background/.style={fill=none}"
+  ]);
+}
+
 // graphPreprocessor.ts
 var DEFAULT_AXIS_WIDTH = "6cm";
 var DEFAULT_AXIS_HEIGHT = "4cm";
+var DEFAULT_PLOT_COLOR = "mathgraphLine";
 var DEFAULT_AXIS_OPTIONS = [
   "grid=both",
-  "axis lines=middle"
+  "axis lines=middle",
+  pgfplotsThemeAxisStyleOptions(),
+  pgfplotsTextSafeTickOptions()
 ].join(", ");
 var NUMERIC_RANGE_PATTERN = /^(-?\d+(?:\.\d+)?)\s*:\s*(-?\d+(?:\.\d+)?)$/;
 var SIZE_UNIT_PATTERN = /^(?:\d+(?:\.\d+)?|\.\d+)(cm|mm|in|pt|ex|em)$/i;
@@ -3737,7 +7764,7 @@ function convertShadeToPlot(options, expression, parameters = [], plotIndex) {
   const inequality = parseInequality(expression);
   const style = applyPlotStyleOptions(options.trim(), plotIndex);
   const opacity = (_a = style.fillOpacity) != null ? _a : 0.2;
-  const colorOpt = (_b = style.extraPlotOpts.find((opt) => !opt.includes("="))) != null ? _b : "blue";
+  const colorOpt = (_b = style.extraPlotOpts.find((opt) => !opt.includes("="))) != null ? _b : DEFAULT_PLOT_COLOR;
   if ((inequality == null ? void 0 : inequality.kind) === "implicit") {
     const fallback2 = tryInequalityCircleFill(substituteParameters(expression, parameters));
     if (fallback2) {
@@ -3911,12 +7938,12 @@ function parseNumericRange(value) {
   if (!match) {
     return null;
   }
-  const min = Number.parseFloat(match[1]);
-  const max = Number.parseFloat(match[2]);
-  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+  const min2 = Number.parseFloat(match[1]);
+  const max2 = Number.parseFloat(match[2]);
+  if (!Number.isFinite(min2) || !Number.isFinite(max2)) {
     return null;
   }
-  return min <= max ? { min, max } : { min: max, max: min };
+  return min2 <= max2 ? { min: min2, max: max2 } : { min: max2, max: min2 };
 }
 function isSizeValue(value) {
   const trimmed = value.trim();
@@ -4037,10 +8064,10 @@ function extractAxisLimitsFromOptions(options) {
   const domain = extractOptionValue2(cleanedOptions, "domain");
   const yDomain = extractOptionValue2(cleanedOptions, "y domain");
   if (xmin !== null && xmax !== null) {
-    const min = Number.parseFloat(xmin);
-    const max = Number.parseFloat(xmax);
-    if (Number.isFinite(min) && Number.isFinite(max)) {
-      limits.x = min <= max ? { min, max } : { min: max, max: min };
+    const min2 = Number.parseFloat(xmin);
+    const max2 = Number.parseFloat(xmax);
+    if (Number.isFinite(min2) && Number.isFinite(max2)) {
+      limits.x = min2 <= max2 ? { min: min2, max: max2 } : { min: max2, max: min2 };
       limits.explicitX = true;
     }
   } else if (domain) {
@@ -4051,10 +8078,10 @@ function extractAxisLimitsFromOptions(options) {
     }
   }
   if (ymin !== null && ymax !== null) {
-    const min = Number.parseFloat(ymin);
-    const max = Number.parseFloat(ymax);
-    if (Number.isFinite(min) && Number.isFinite(max)) {
-      limits.y = min <= max ? { min, max } : { min: max, max: min };
+    const min2 = Number.parseFloat(ymin);
+    const max2 = Number.parseFloat(ymax);
+    if (Number.isFinite(min2) && Number.isFinite(max2)) {
+      limits.y = min2 <= max2 ? { min: min2, max: max2 } : { min: max2, max: min2 };
       limits.explicitY = true;
     }
   } else if (yDomain) {
@@ -4121,14 +8148,18 @@ function formatLimitOptions(limits) {
   }
   return parts;
 }
-function buildAxisOptions(parsedBraces, bracketOpts, limits, equalAspect = false, extraAxisOptions) {
-  const parts = [DEFAULT_AXIS_OPTIONS];
+function buildAxisOptions(parsedBraces, bracketOpts, limits, equalAspect = false, extraAxisOptions, hasSurface3d = false) {
+  const parts = [hasSurface3d ? pgfplots3dAxisCoreOptions() : DEFAULT_AXIS_OPTIONS];
   const hasFullWindow = Boolean(limits.x && limits.y);
-  parts.push(hasFullWindow ? "enlargelimits=false" : "enlargelimits=true");
+  if (hasSurface3d) {
+    parts.push("enlargelimits=false");
+  } else {
+    parts.push(hasFullWindow ? "enlargelimits=false" : "enlargelimits=true");
+  }
   if (equalAspect) {
     parts.push("axis equal image");
   }
-  if (extraAxisOptions == null ? void 0 : extraAxisOptions.trim()) {
+  if ((extraAxisOptions == null ? void 0 : extraAxisOptions.trim()) && !hasSurface3d) {
     parts.push(extraAxisOptions.trim());
   }
   if (parsedBraces.kind === "kv" && parsedBraces.kvOptions) {
@@ -4397,8 +8428,12 @@ function convertFunctionToPlot(options, expression, parameters = [], plotIndex, 
     ]);
     const surfOpts = [
       "mesh",
+      "thick",
+      "point meta=z",
+      "colormap/hot",
       resolvedPlotOpts,
-      "samples=20"
+      "samples=20",
+      ...style.extraPlotOpts.filter((opt) => /colormap|shader|surf|mesh|draw|point meta|mathgraphLine|black/i.test(opt))
     ].filter(Boolean).join(", ");
     return {
       line: `\\addplot3[${surfOpts}] {${expr2}};`,
@@ -4469,7 +8504,8 @@ function convertFunctionToPlot(options, expression, parameters = [], plotIndex, 
     ["samples", "100"]
   ]);
   const trigDegrees = resolveTrigDegrees(addplotOpts, "-5:5");
-  const finalAddplotOpts = trigDegrees ? mergePlotOptions(addplotOpts, [], [...trigPlotOptions(true), ...style.extraPlotOpts]) : mergePlotOptions(addplotOpts, [], style.extraPlotOpts);
+  const plotColorOpts = style.extraPlotOpts.length > 0 ? style.extraPlotOpts : [DEFAULT_PLOT_COLOR, "thick"];
+  const finalAddplotOpts = trigDegrees ? mergePlotOptions(addplotOpts, [], [...trigPlotOptions(true), ...plotColorOpts]) : mergePlotOptions(addplotOpts, [], plotColorOpts);
   const limits = plotLimitsFromUserOptions(opts, finalAddplotOpts);
   if (limits.x && !limits.y) {
     const yEstimate = estimateExplicitYRange(expr, limits.x, trigDegrees);
@@ -4484,9 +8520,9 @@ function convertFunctionToPlot(options, expression, parameters = [], plotIndex, 
   const lines = [mainLine];
   appendLegend(lines, style.legendLabel);
   if (style.fillMode === "under") {
-    lines.push(buildFilledCycleLine(domain, expr, (_m = style.extraPlotOpts[0]) != null ? _m : "blue", (_n = style.fillOpacity) != null ? _n : 0.2));
+    lines.push(buildFilledCycleLine(domain, expr, (_m = style.extraPlotOpts[0]) != null ? _m : DEFAULT_PLOT_COLOR, (_n = style.fillOpacity) != null ? _n : 0.2));
   } else if (style.fillMode === "between" && lastNamePath && style.namePath) {
-    lines.push(buildFillBetweenLine(lastNamePath, style.namePath, (_o = style.extraPlotOpts[0]) != null ? _o : "blue", (_p = style.fillOpacity) != null ? _p : 0.15));
+    lines.push(buildFillBetweenLine(lastNamePath, style.namePath, (_o = style.extraPlotOpts[0]) != null ? _o : DEFAULT_PLOT_COLOR, (_p = style.fillOpacity) != null ? _p : 0.15));
   }
   return {
     line: lines.join("\n"),
@@ -4694,7 +8730,7 @@ function transformGraphBlock(blockBody, nestedInTikzpicture, baseLine = 1) {
   }
   let axisLimits = mergeAxisLimits(bracketLimits, applyParsedAxisBraces(emptyAxisLimits(), parsedBraces));
   axisLimits = mergePlotLimitsIntoAxis(axisLimits, plotLimits);
-  const axisOptions2 = buildAxisOptions(parsedBraces, cleanedOptions, axisLimits, equalAspect, hasSurface3d ? "view={45}{30}" : void 0);
+  const axisOptions2 = buildAxisOptions(parsedBraces, cleanedOptions, axisLimits, equalAspect, void 0, hasSurface3d);
   const paramDefs = buildParameterDefs(parameters);
   const fillBetweenLib = needsFillBetween ? "\\usepgfplotslibrary{fillbetween}\n" : "";
   const axisBlock = [
@@ -4793,46 +8829,48 @@ function csvPreviewLines(content, maxLines = 10) {
 }
 
 // octave/octaveDataTikz.ts
-function joinOptions(options) {
+function joinOptions3(options) {
   return options.filter(Boolean).join(", ");
 }
 function axisOptions(spec, view3d) {
-  var _a, _b, _c;
-  const labels = (_a = spec.labels) != null ? _a : {};
+  var _a, _b, _c, _d, _e;
+  if (view3d) {
+    const opts = pgfplots3dAxisOptions(spec);
+    const zRange = (_a = spec.ranges) == null ? void 0 : _a.z;
+    if (zRange) {
+      return joinOptions3([opts, `zmin=${zRange[0]}`, `zmax=${zRange[1]}`]);
+    }
+    return opts;
+  }
+  const labels = (_b = spec.labels) != null ? _b : {};
   const { width, height } = resolveGraphDimensions(spec);
-  const xRange = (_b = spec.ranges) == null ? void 0 : _b.x;
-  const yRange = (_c = spec.ranges) == null ? void 0 : _c.y;
+  const xRange = (_c = spec.ranges) == null ? void 0 : _c.x;
+  const yRange = (_d = spec.ranges) == null ? void 0 : _d.y;
   const parts = [
-    "grid=both",
+    gridAxisOption(spec),
     "axis lines=middle",
     "axis background/.style={fill=none}",
+    pgfplotsThemeAxisStyleOptions(),
+    pgfplotsTextSafeTickOptions(),
     `width=${width}`,
     `height=${height}`,
     labels.x ? `xlabel={${labels.x}}` : "",
     labels.y ? `ylabel={${labels.y}}` : "",
-    spec.title ? `title={${spec.title}}` : ""
+    ((_e = spec.title) == null ? void 0 : _e.trim()) ? `title={${spec.title.trim()}}` : ""
   ];
-  if (view3d) {
-    parts.push("view={45}{30}");
-    if (labels.z) {
-      parts.push(`zlabel={${labels.z}}`);
-    }
-  }
   if (xRange) {
     parts.push(`xmin=${xRange[0]}`, `xmax=${xRange[1]}`);
   }
   if (yRange) {
     parts.push(`ymin=${yRange[0]}`, `ymax=${yRange[1]}`);
   }
-  return joinOptions(parts);
+  return joinOptions3(parts);
 }
-function plotStyleOptions(spec) {
-  var _a, _b;
-  const style = (_a = spec.style) != null ? _a : {};
-  return joinOptions([
-    style.color ? `${style.color}` : "",
-    (_b = style.width) != null ? _b : ""
-  ]);
+function plotStyleOptions(spec, is3d) {
+  if (is3d) {
+    return buildSampled3dPlotOptions(spec);
+  }
+  return buildSampled2dPlotOptions(spec);
 }
 function tableColumnBindings(useCase) {
   const columns = csvColumnsForUseCase(useCase);
@@ -4846,12 +8884,12 @@ function tableColumnBindings(useCase) {
 }
 function buildOctavePlotTableCommand(spec, useCase, tableFile) {
   var _a, _b;
-  const styleOpts = plotStyleOptions(spec);
-  const tableOpts = tableColumnBindings(useCase);
   const is3d = useCase === "surface3d" || useCase === "pde3d" || useCase === "largeSurface";
+  const styleOpts = plotStyleOptions(spec, is3d);
+  const tableOpts = tableColumnBindings(useCase);
   if (is3d) {
     const meshRows = (_b = (_a = spec.samplesY) != null ? _a : spec.samples) != null ? _b : 35;
-    const surfOpts = joinOptions([
+    const surfOpts = joinOptions3([
       "mesh",
       `mesh/rows=${meshRows}`,
       styleOpts
@@ -4862,7 +8900,7 @@ function buildOctavePlotTableCommand(spec, useCase, tableFile) {
       meshRows
     };
   }
-  const plotOpts = joinOptions([styleOpts, "thick"]);
+  const plotOpts = joinOptions3([styleOpts]);
   return {
     addplotLine: `\\addplot[${plotOpts}] table[${tableOpts}] {${tableFile}};`,
     colSepComma: true
@@ -4900,26 +8938,103 @@ function formatOctaveRenderDebugDetails(debug) {
 }
 
 // octave/octaveRunner.ts
-var fs4 = __toModule(require("fs"));
+var fs6 = __toModule(require("fs"));
 var os2 = __toModule(require("os"));
-var path2 = __toModule(require("path"));
+var path4 = __toModule(require("path"));
+
+// octave/octaveProcess.ts
+var import_child_process2 = __toModule(require("child_process"));
+var OCTAVE_HEADLESS_FLAGS = [
+  "--quiet",
+  "--no-gui",
+  "--no-window-system",
+  "--no-history"
+];
+function buildOctaveProcessEnv() {
+  const env = __spreadProps(__spreadValues({}, process.env), {
+    OCTAVE_HISTFILE: process.platform === "win32" ? "NUL" : "/dev/null",
+    GNUTERM: "dumb"
+  });
+  if (process.platform !== "win32") {
+    env.DISPLAY = "";
+  }
+  return env;
+}
+function spawnOctaveWithTimeout(octavePath, args, options, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    var _a, _b;
+    const child = (0, import_child_process2.spawn)(octavePath, args, {
+      cwd: options.cwd,
+      env: buildOctaveProcessEnv(),
+      windowsHide: true,
+      detached: false,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    (_a = child.stdout) == null ? void 0 : _a.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    (_b = child.stderr) == null ? void 0 : _b.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+      reject(new RenderTimeoutError(timeoutMs));
+    }, timeoutMs);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      if (!timedOut) {
+        reject(err);
+      }
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        return;
+      }
+      const exitCode = code != null ? code : 1;
+      if (exitCode !== 0) {
+        const err = new Error(`Octave exited with code ${exitCode}`);
+        err.stdout = stdout;
+        err.stderr = stderr;
+        err.code = exitCode;
+        reject(err);
+        return;
+      }
+      resolve({ stdout, stderr, exitCode });
+    });
+  });
+}
+function buildOctaveEvalArgs(evalScript) {
+  return [...OCTAVE_HEADLESS_FLAGS, "--eval", evalScript];
+}
 
 // octave/octaveResolver.ts
-var fs3 = __toModule(require("fs"));
+var fs5 = __toModule(require("fs"));
+var OCTAVE_CLI_DETECT_PATHS = [
+  "/opt/homebrew/bin/octave-cli",
+  "/usr/local/bin/octave-cli",
+  "/usr/bin/octave-cli",
+  "/opt/homebrew/bin/octave",
+  "/usr/local/bin/octave",
+  "/usr/bin/octave"
+];
+var DEFAULT_OCTAVE_CLI_PATH = "/opt/homebrew/bin/octave-cli";
+function detectOctaveCli() {
+  return __async(this, null, function* () {
+    return resolveOctave("");
+  });
+}
 function resolveOctave(customPath) {
   return __async(this, null, function* () {
-    const candidates = customPath.trim() ? [customPath.trim()] : [
-      "/opt/homebrew/bin/octave-cli",
-      "/usr/local/bin/octave-cli",
-      "/Applications/Octave.app/Contents/Resources/usr/bin/octave-cli",
-      "/opt/homebrew/bin/octave",
-      "/usr/local/bin/octave",
-      "octave-cli",
-      "octave"
-    ];
+    const trimmed = customPath.trim();
+    const candidates = trimmed ? [trimmed] : [...OCTAVE_CLI_DETECT_PATHS, "octave-cli", "octave"];
     for (const candidate of candidates) {
       if (candidate.includes("/")) {
-        if (fs3.existsSync(candidate)) {
+        if (fs5.existsSync(candidate)) {
           return candidate;
         }
         continue;
@@ -4927,7 +9042,7 @@ function resolveOctave(customPath) {
       try {
         const { stdout } = yield execFileWithTimeout("/usr/bin/which", [candidate], {}, 5e3);
         const resolved = stdout.trim();
-        if (resolved) {
+        if (resolved && !resolved.includes("/Applications/Octave.app")) {
           return resolved;
         }
       } catch (e) {
@@ -4939,6 +9054,7 @@ function resolveOctave(customPath) {
 
 // octave/octaveRunner.ts
 var OCTAVE_TIMEOUT_MS = 12e4;
+var OCTAVE_TEST_TIMEOUT_MS = 3e4;
 var OctaveEngineError = class extends Error {
   constructor(message, rawLog) {
     super(message);
@@ -4946,36 +9062,109 @@ var OctaveEngineError = class extends Error {
     this.name = "OctaveEngineError";
   }
 };
-function runOctaveScript(script, octavePathSetting) {
+function formatOctaveDebugLog(details) {
+  return [
+    `Octave CLI path: ${details.octavePath}`,
+    details.workDir ? `Working directory: ${details.workDir}` : "",
+    details.scriptPath ? `Script path: ${details.scriptPath}` : "",
+    details.exitCode !== void 0 ? `Exit code: ${details.exitCode}` : "",
+    details.stdout ? `
+--- stdout ---
+${details.stdout.trim()}` : "",
+    details.stderr ? `
+--- stderr ---
+${details.stderr.trim()}` : ""
+  ].filter(Boolean).join("\n");
+}
+function testOctaveCli(octavePathSetting) {
   return __async(this, null, function* () {
+    var _a, _b;
     const octavePath = yield resolveOctave(octavePathSetting);
     if (!octavePath) {
-      throw new OctaveEngineError("Octave not found. Install Octave or set the Octave path in MathGraph Studio settings.");
+      return {
+        ok: false,
+        path: "",
+        stdout: "",
+        stderr: "",
+        error: "Octave CLI not found."
+      };
     }
-    const workDir = fs4.mkdtempSync(path2.join(os2.tmpdir(), "mathgraph-octave-"));
-    const scriptPath = path2.join(workDir, "graph-sample.m");
-    const csvPath = path2.join(workDir, "graph-data.csv");
-    fs4.writeFileSync(scriptPath, script, "utf8");
+    const workDir = fs6.mkdtempSync(path4.join(os2.tmpdir(), "mathgraph-octave-test-"));
     try {
-      const { stdout, stderr } = yield execFileWithTimeout(octavePath, ["--quiet", "--no-gui", "--eval", `cd("${workDir.replace(/\\/g, "/")}"); source("graph-sample.m");`], { cwd: workDir, maxBuffer: 20 * 1024 * 1024 }, OCTAVE_TIMEOUT_MS);
-      if (!fs4.existsSync(csvPath)) {
-        throw new OctaveEngineError("Octave did not produce graph-data.csv.", [stdout, stderr].filter(Boolean).join("\n"));
+      const { stdout, stderr, exitCode } = yield spawnOctaveWithTimeout(octavePath, buildOctaveEvalArgs("disp(2+2);"), { cwd: workDir }, OCTAVE_TEST_TIMEOUT_MS);
+      const ok = stdout.trim().includes("4");
+      return { ok, path: octavePath, stdout, stderr, exitCode };
+    } catch (err) {
+      const execErr = err;
+      return {
+        ok: false,
+        path: octavePath,
+        stdout: (_a = execErr.stdout) != null ? _a : "",
+        stderr: (_b = execErr.stderr) != null ? _b : formatExecError(err),
+        exitCode: execErr.code,
+        error: formatExecError(err)
+      };
+    } finally {
+      try {
+        fs6.rmSync(workDir, { recursive: true, force: true });
+      } catch (e) {
+      }
+    }
+  });
+}
+function runOctaveScript(script, octavePathSetting) {
+  return __async(this, null, function* () {
+    var _a, _b;
+    const octavePath = yield resolveOctave(octavePathSetting);
+    if (!octavePath) {
+      throw new OctaveEngineError("Octave CLI not found. Install Octave or set the Octave CLI path in Math Plotter settings.");
+    }
+    if (octavePath.includes("/Applications/Octave.app")) {
+      throw new OctaveEngineError("The Octave GUI app path is not supported. Use the headless Octave CLI (octave-cli) instead.");
+    }
+    const workDir = fs6.mkdtempSync(path4.join(os2.tmpdir(), "mathgraph-octave-"));
+    const scriptPath = path4.join(workDir, "graph-sample.m");
+    const csvPath = path4.join(workDir, "graph-data.csv");
+    fs6.writeFileSync(scriptPath, script, "utf8");
+    const evalScript = `cd("${workDir.replace(/\\/g, "/")}"); source("graph-sample.m");`;
+    const args = buildOctaveEvalArgs(evalScript);
+    try {
+      const { stdout, stderr, exitCode } = yield spawnOctaveWithTimeout(octavePath, args, { cwd: workDir }, OCTAVE_TIMEOUT_MS);
+      if (!fs6.existsSync(csvPath)) {
+        throw new OctaveEngineError("Octave failed while sampling the graph. Open debug details for the Octave log.", formatOctaveDebugLog({
+          octavePath,
+          workDir,
+          scriptPath,
+          exitCode,
+          stdout,
+          stderr
+        }));
       }
       return {
         workDir,
         scriptPath,
         csvPath,
-        csvContent: fs4.readFileSync(csvPath, "utf8"),
+        csvContent: fs6.readFileSync(csvPath, "utf8"),
         stdout,
-        stderr
+        stderr,
+        exitCode
       };
     } catch (err) {
       if (err instanceof OctaveEngineError) {
         throw err;
       }
       const timedOut = err instanceof RenderTimeoutError;
-      const raw = formatExecError(err);
-      throw new OctaveEngineError(timedOut ? "Octave timed out." : formatOctaveFailureMessage(raw), raw);
+      const execErr = err;
+      const stdout = (_a = execErr.stdout) != null ? _a : "";
+      const stderr = (_b = execErr.stderr) != null ? _b : formatExecError(err);
+      throw new OctaveEngineError(timedOut ? "Octave timed out while sampling the graph. Open debug details for the Octave log." : formatOctaveFailureMessage(stderr || formatExecError(err)), formatOctaveDebugLog({
+        octavePath,
+        workDir,
+        scriptPath,
+        exitCode: execErr.code,
+        stdout,
+        stderr
+      }));
     }
   });
 }
@@ -4983,11 +9172,11 @@ function formatOctaveFailureMessage(raw) {
   if (/elementwise|Use \.\^|only square matrix arguments are permitted/i.test(raw)) {
     return "Octave could not evaluate the function. The plugin may have failed to convert the expression to elementwise form.";
   }
-  return `Octave failed: ${raw}`;
+  return "Octave failed while sampling the graph. Open debug details for the Octave log.";
 }
 function cleanupOctaveWorkDir(workDir) {
   try {
-    fs4.rmSync(workDir, { recursive: true, force: true });
+    fs6.rmSync(workDir, { recursive: true, force: true });
   } catch (e) {
   }
 }
@@ -5058,7 +9247,7 @@ function generateOctaveScript(spec, useCase) {
   const yMax = rangeBoundToOctave((_o = (_n = (_m = spec.ranges) == null ? void 0 : _m.y) == null ? void 0 : _n[1]) != null ? _o : "", "5");
   const csvColumns = csvColumnsForUseCase(useCase);
   const header = [
-    "# MathGraph Studio \u2014 generated Octave script",
+    "# Math Plotter \u2014 generated Octave script",
     'warning("off", "all");',
     paramBlock
   ].filter(Boolean).join("\n");
@@ -5190,12 +9379,6 @@ function shouldUseOctave(spec, settings) {
   if (!settings.enableOctaveEngine) {
     return null;
   }
-  if (spec.renderEngine === "symbolic") {
-    return null;
-  }
-  if (spec.renderEngine === "octave") {
-    return resolveForcedOctaveCase(spec);
-  }
   if (spec.numericMode && isOdePde(spec)) {
     if (spec.type === "pde" && ((_a = spec.view) != null ? _a : "3d") === "3d") {
       return "pde3d";
@@ -5225,19 +9408,85 @@ function shouldUseOctave(spec, settings) {
   }
   return null;
 }
-function resolveForcedOctaveCase(spec) {
+
+// sampler/jsSamplingPipeline.ts
+var JsSamplingError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "JsSamplingError";
+  }
+};
+function boundOrDefault(raw, fallback) {
+  var _a;
+  return (_a = parseBoundToNumber(raw != null ? raw : "")) != null ? _a : fallback;
+}
+function generateCsv(spec, useCase) {
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
+  const expression = getUserFunction(spec);
+  if (!expression.trim()) {
+    throw new JsSamplingError("Graph requires an expression to sample.");
+  }
+  const parameters = (_a = spec.parameters) != null ? _a : {};
+  const xMin = boundOrDefault((_c = (_b = spec.ranges) == null ? void 0 : _b.x) == null ? void 0 : _c[0], -5);
+  const xMax = boundOrDefault((_e = (_d = spec.ranges) == null ? void 0 : _d.x) == null ? void 0 : _e[1], 5);
+  const yMin = boundOrDefault((_g = (_f = spec.ranges) == null ? void 0 : _f.y) == null ? void 0 : _g[0], -5);
+  const yMax = boundOrDefault((_i = (_h = spec.ranges) == null ? void 0 : _h.y) == null ? void 0 : _i[1], 5);
+  const samples = (_j = spec.samples) != null ? _j : 100;
+  const samplesY = (_l = (_k = spec.samplesY) != null ? _k : spec.samples) != null ? _l : 35;
+  try {
+    switch (useCase) {
+      case "function2d":
+      case "ode2d": {
+        const points = sampleFunction2D(expression, xMin, xMax, samples, parameters);
+        return formatSampleCsv(["x", "y"], points);
+      }
+      case "surface3d":
+      case "pde3d": {
+        const points = sampleSurface3D(expression, xMin, xMax, yMin, yMax, samples, samplesY, parameters);
+        return formatSampleCsv(["x", "y", "z"], points);
+      }
+      case "pde2d": {
+        const points = samplePde2D(expression, xMin, xMax, yMin, yMax, samples, parameters);
+        return formatSampleCsv(["x", "u"], points);
+      }
+      default:
+        throw new JsSamplingError(`Unsupported sampling case: ${String(useCase)}`);
+    }
+  } catch (err) {
+    if (err instanceof ExpressionEvaluationError) {
+      throw new JsSamplingError(err.message);
+    }
+    throw err;
+  }
+}
+function runJsSamplingPipeline(spec, useCase) {
+  const csvContent = generateCsv(spec, useCase);
+  const columns = csvColumnsForUseCase(useCase);
+  validateOctaveCsv(csvContent, { columns });
+  return {
+    csvContent,
+    csvFilename: OCTAVE_DATA_FILENAME,
+    useCase
+  };
+}
+
+// sampler/samplingRouter.ts
+function shouldUseJsSampling(spec) {
   var _a;
   switch (spec.type) {
+    case "function2d":
+      if (spec.implicit) {
+        return null;
+      }
+      return "function2d";
     case "surface3d":
       return "surface3d";
     case "ode":
       return "ode2d";
     case "pde":
       return ((_a = spec.view) != null ? _a : "3d") === "3d" ? "pde3d" : "pde2d";
-    case "function2d":
-      return spec.implicit ? "implicit2d" : "function2d";
     default:
-      return is3dSurface(spec) ? "surface3d" : "function2d";
+      return null;
   }
 }
 
@@ -5248,7 +9497,7 @@ function rangeToDomain(range) {
   }
   return `${range[0].trim()}:${range[1].trim()}`;
 }
-function joinOptions2(options) {
+function joinOptions4(options) {
   return options.filter(Boolean).join(", ");
 }
 function mapParametricVariable(text, paramName) {
@@ -5277,15 +9526,13 @@ function prepareSpecForRender(spec) {
   return prepared;
 }
 function buildStyleOptions(spec) {
-  var _a;
+  var _a, _b;
+  hydrateGraphStyle(spec);
   const style = (_a = spec.style) != null ? _a : {};
-  const parts = [];
-  if (style.color) {
-    parts.push(`color=${style.color}`);
-  }
-  if (style.width) {
-    parts.push(`width=${style.width}`);
-  }
+  const parts = [
+    resolvePlotStrokeColor(spec),
+    (_b = style.width) != null ? _b : "thick"
+  ];
   if (style.fill && style.fill !== "none") {
     parts.push(`fill=${style.fill}`);
   }
@@ -5295,10 +9542,10 @@ function buildStyleOptions(spec) {
   if (style.legend) {
     parts.push(`label={${style.legend}}`);
   }
-  return joinOptions2(parts);
+  return joinOptions4(parts);
 }
 function buildAxisBracketOptions(spec) {
-  var _a;
+  var _a, _b;
   const labels = (_a = spec.labels) != null ? _a : {};
   const parts = [];
   if (labels.x) {
@@ -5310,14 +9557,14 @@ function buildAxisBracketOptions(spec) {
   if (labels.z) {
     parts.push(`zlabel={${labels.z}}`);
   }
-  if (spec.title) {
-    parts.push(`title={${spec.title}}`);
+  if ((_b = spec.title) == null ? void 0 : _b.trim()) {
+    parts.push(`title={${spec.title.trim()}}`);
   }
-  return joinOptions2(parts);
+  return joinOptions4(parts);
 }
 function buildAxisSize(spec, settings) {
   var _a, _b;
-  const { width, height } = resolveLatexGraphDimensions(spec, settings);
+  const { width, height } = resolveLatexGraphDimensions(spec);
   const xDomain = rangeToDomain((_a = spec.ranges) == null ? void 0 : _a.x);
   const yDomain = rangeToDomain((_b = spec.ranges) == null ? void 0 : _b.y);
   const parts = [width, height];
@@ -5330,14 +9577,6 @@ function buildParameterLines(spec) {
   var _a;
   const params = (_a = spec.parameters) != null ? _a : {};
   return Object.entries(params).map(([name, value]) => `\\param{${name}}{${value}}`).join("\n");
-}
-function buildPointLines(spec) {
-  var _a;
-  const points = (_a = spec.points) != null ? _a : [];
-  return points.map((point) => {
-    const opts = point.label ? `[label={${point.label}}]` : "";
-    return `\\point${opts}{${point.x}, ${point.y}}`;
-  }).join("\n");
 }
 function buildDataPlot(spec, styleOpts) {
   var _a, _b, _c;
@@ -5356,7 +9595,7 @@ function buildFunction2d(spec, styleOpts) {
   }
   const body = /^y\s*=/i.test(expr) ? expr : `y = ${expr}`;
   const domain = rangeToDomain((_a = spec.ranges) == null ? void 0 : _a.x);
-  const plotOpts = joinOptions2([
+  const plotOpts = joinOptions4([
     domain ? `domain=${domain}` : "",
     spec.samples ? `samples=${spec.samples}` : "",
     styleOpts
@@ -5371,7 +9610,7 @@ function buildSurface3d(spec, styleOpts) {
   }
   const xDomain = rangeToDomain((_a = spec.ranges) == null ? void 0 : _a.x);
   const yDomain = rangeToDomain((_b = spec.ranges) == null ? void 0 : _b.y);
-  const plotOpts = joinOptions2([
+  const plotOpts = joinOptions4([
     "3d",
     "pde",
     xDomain ? `domain=${xDomain}` : "",
@@ -5390,7 +9629,7 @@ function buildParametric2d(spec, styleOpts) {
     throw new Error("Parametric 2D requires x and y expressions.");
   }
   const tDomain = rangeToDomain((_c = spec.ranges) == null ? void 0 : _c.t);
-  const plotOpts = joinOptions2([
+  const plotOpts = joinOptions4([
     "parametric",
     tDomain ? `domain=${tDomain}` : "",
     spec.samples ? `samples=${spec.samples}` : "",
@@ -5410,7 +9649,7 @@ function buildExplicitSolutionPlot(spec, styleOpts) {
   }
   const body = /^y\s*=/i.test(solution) ? solution : solution;
   const xDomain = rangeToDomain((_b = spec.ranges) == null ? void 0 : _b.x);
-  const plotOpts = joinOptions2([
+  const plotOpts = joinOptions4([
     xDomain ? `domain=${xDomain}` : "",
     spec.samples ? `samples=${spec.samples}` : "",
     styleOpts
@@ -5427,25 +9666,11 @@ function buildParametric3dTikz(spec, styleOpts, settings) {
   }
   const tDomain = (_e = rangeToDomain((_d = spec.ranges) == null ? void 0 : _d.t)) != null ? _e : "0:6.28318";
   const labels = (_f = spec.labels) != null ? _f : {};
-  const { width, height } = resolveLatexGraphDimensions(spec, settings);
+  const { width, height } = resolveLatexGraphDimensions(spec);
   const xDomain = rangeToDomain((_g = spec.ranges) == null ? void 0 : _g.x);
   const yDomain = rangeToDomain((_h = spec.ranges) == null ? void 0 : _h.y);
-  const axisOpts = joinOptions2([
-    "grid=both",
-    "axis lines=middle",
-    "view={45}{30}",
-    `width=${width}`,
-    `height=${height}`,
-    labels.x ? `xlabel={${labels.x}}` : "",
-    labels.y ? `ylabel={${labels.y}}` : "",
-    labels.z ? `zlabel={${labels.z}}` : "",
-    spec.title ? `title={${spec.title}}` : "",
-    xDomain ? `xmin=${xDomain.split(":")[0]}` : "",
-    xDomain ? `xmax=${xDomain.split(":")[1]}` : "",
-    yDomain ? `ymin=${yDomain.split(":")[0]}` : "",
-    yDomain ? `ymax=${yDomain.split(":")[1]}` : ""
-  ]);
-  const plotOpts = joinOptions2([
+  const axisOpts = pgfplots3dAxisOptions(spec);
+  const plotOpts = joinOptions4([
     styleOpts,
     `domain=${tDomain}`,
     spec.samples ? `samples=${spec.samples}` : "samples=100"
@@ -5475,7 +9700,6 @@ function buildGraphBlockBody(spec, settings) {
   const axisBracket = buildAxisBracketOptions(spec);
   const axisSize = buildAxisSize(spec, settings);
   const paramLines = buildParameterLines(spec);
-  const pointLines = buildPointLines(spec);
   let plotLine;
   switch (spec.type) {
     case "function2d":
@@ -5500,7 +9724,7 @@ function buildGraphBlockBody(spec, settings) {
       throw new Error(`Unsupported graph type: ${String(spec.type)}`);
   }
   const axisLine = axisBracket ? `\\axis[${axisBracket}]{${axisSize}}` : `\\axis{${axisSize}}`;
-  return [paramLines, axisLine, plotLine, pointLines].filter(Boolean).join("\n");
+  return [paramLines, axisLine, plotLine].filter(Boolean).join("\n");
 }
 function graphSpecToGraphSyntax(spec, settings) {
   if (spec.type === "parametric3d") {
@@ -5515,22 +9739,47 @@ function graphSpecToGraphSyntax(spec, settings) {
 function graphSpecToTikz(spec, settings) {
   const prepared = prepareSpecForRender(spec);
   if (prepared.type === "parametric3d") {
-    return buildParametric3dTikz(prepared, buildStyleOptions(prepared), settings);
+    return appendGraphPointsToTikz(buildParametric3dTikz(prepared, buildStyleOptions(prepared), settings), prepared);
   }
   const graphSyntax = graphSpecToGraphSyntax(prepared, settings);
-  return expandGraphSyntax(graphSyntax);
+  return applyGridStyleToTikz(appendGraphPointsToTikz(expandGraphSyntax(graphSyntax), prepared), prepared);
 }
-function buildGraphRenderBundle(spec, settings) {
-  return __async(this, null, function* () {
-    const prepared = prepareSpecForRender(spec);
+function withRenderModeSamples(spec, renderMode) {
+  if (renderMode === "svgFast") {
+    return spec;
+  }
+  const copy = structuredClone(spec);
+  if (isGraph3dView(copy)) {
+    const { samplesX, samplesY } = effectiveSamples3D(copy, renderMode);
+    copy.samples = samplesX;
+    copy.samplesY = samplesY;
+  } else {
+    copy.samples = effectiveSamples2D(copy, renderMode);
+  }
+  return copy;
+}
+function buildGraphRenderBundle(_0, _1) {
+  return __async(this, arguments, function* (spec, settings, options = {}) {
+    var _a;
+    const renderMode = (_a = options.renderMode) != null ? _a : "tikzjax";
+    const prepared = withRenderModeSamples(prepareSpecForRender(spec), renderMode);
     const octaveCase = shouldUseOctave(prepared, settings);
     if (octaveCase) {
       const octaveData = yield runOctavePipeline(prepared, octaveCase, settings);
       return {
-        tikz: buildTikzFromOctaveData(prepared, octaveData),
+        tikz: applyGridStyleToTikz(appendGraphPointsToTikz(buildTikzFromOctaveData(prepared, octaveData), prepared), prepared),
         assets: { [octaveData.csvFilename]: octaveData.csvContent },
         engine: "octave",
         octaveDebug: octaveData.debug
+      };
+    }
+    const jsCase = shouldUseJsSampling(prepared);
+    if (jsCase) {
+      const jsData = runJsSamplingPipeline(prepared, jsCase);
+      return {
+        tikz: applyGridStyleToTikz(appendGraphPointsToTikz(buildTikzFromOctaveData(prepared, jsData), prepared), prepared),
+        assets: { [jsData.csvFilename]: jsData.csvContent },
+        engine: "numerical"
       };
     }
     return {
@@ -5542,7 +9791,7 @@ function buildGraphRenderBundle(spec, settings) {
 }
 
 // src/graphView.ts
-var import_obsidian4 = __toModule(require("obsidian"));
+var import_obsidian5 = __toModule(require("obsidian"));
 function downloadBlob(blob, filename, doc) {
   const url = URL.createObjectURL(blob);
   const link = doc.createElement("a");
@@ -5591,16 +9840,8 @@ function svgToPng(svgText) {
     }
   });
 }
-function applyRenderedGraphDisplayScale(container, spec) {
-  const scale = resolveDisplayScale(spec);
-  const inner = container.querySelector(".mathgraph-rendered-inner");
-  if (inner instanceof HTMLElement) {
-    inner.style.setProperty("--mathgraph-display-scale", String(scale));
-  }
-  const label = container.querySelector(".mathgraph-scale-label");
-  if (label) {
-    label.setText(formatDisplayScaleLabel(scale));
-  }
+function applyRenderedGraphDisplayScale(container, spec, svgText) {
+  applyRenderedGraphLayoutScale(container, spec, { svgText });
 }
 function appendGraphError(parent, message, detailsOrOptions, onRetry) {
   var _a;
@@ -5641,69 +9882,90 @@ function appendGraphError(parent, message, detailsOrOptions, onRetry) {
   }
 }
 function renderGraphView(el, spec, result, tikzSource, actions = {}) {
-  var _a, _b, _c, _d;
+  var _a, _b;
   el.empty();
   el.addClass("mathgraph-root");
   if (!result.ok || !result.dataUrl || !result.svgText) {
+    const detailParts = [result.rawLog, actions.debugSource].filter(Boolean);
     appendGraphError(el, (_a = result.error) != null ? _a : "Render failed.", {
-      details: result.rawLog,
+      details: detailParts.length > 0 ? detailParts.join("\n\n--- generated source ---\n\n") : void 0,
       onRetry: actions.onRefresh
     });
     return;
   }
+  const svgText = result.svgText;
   const size = ensureGraphSize(spec);
-  const frame = (_b = actions.frame) != null ? _b : "none";
-  const block = el.createDiv({
-    cls: `mathgraph-rendered-container ${graphFrameClassName(frame)} ${graphDisplayCssClasses(spec)}`
-  });
-  if (spec.title || spec.equation) {
-    const header = block.createDiv({ cls: "mathgraph-graph-caption" });
-    if (spec.title) {
-      header.createDiv({ cls: "mathgraph-title", text: spec.title });
-    }
-    if (spec.equation) {
-      header.createDiv({ cls: "mathgraph-equation", text: spec.equation });
-    }
+  if (spec.equation) {
+    const header = el.createDiv({ cls: "mathgraph-graph-caption" });
+    header.createDiv({ cls: "mathgraph-equation", text: spec.equation });
   }
-  for (const warning of (_c = actions.warnings) != null ? _c : []) {
-    block.createDiv({ cls: "mathgraph-graph-warning", text: warning });
-  }
-  const imageWrap = block.createDiv({ cls: "mathgraph-image-wrap" });
-  const toolbar = imageWrap.createDiv({ cls: "mathgraph-hover-actions" });
+  const block = el.createDiv({ cls: "mathgraph-rendered-container" });
+  const toolbar = block.createDiv({ cls: "mathgraph-toolbar" });
   const makeButton = (label, handler, extraClass = "") => {
     const cls = ["mathgraph-button", "mathgraph-button-secondary", extraClass].filter(Boolean).join(" ");
-    const btn = toolbar.createEl("button", { text: label, cls });
-    btn.addEventListener("click", handler);
+    const btn = toolbar.createEl("button", { text: label, cls, type: "button" });
+    btn.setAttr("tabindex", "-1");
+    btn.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+    });
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handler(event);
+    });
     return btn;
   };
   if (actions.onEdit) {
-    makeButton("Edit", actions.onEdit);
+    makeButton("Edit", () => actions.onEdit());
   }
   if (actions.onEditSize) {
-    makeButton("Edit size", actions.onEditSize);
+    makeButton("Edit size", () => actions.onEditSize());
   }
   if (actions.onRefresh) {
-    makeButton("Refresh", actions.onRefresh);
+    makeButton("Refresh", () => actions.onRefresh());
+  }
+  if (actions.showHighQualityAction && actions.onHighQualityRender) {
+    makeButton("High quality", () => actions.onHighQualityRender(), "mathgraph-hq-btn");
   }
   if (actions.onDisplayScaleChange) {
-    const scaleGroup = toolbar.createDiv({ cls: "mathgraph-scale-controls" });
-    scaleGroup.setAttr("aria-label", "Display scale (no recompile)");
-    const minusBtn = scaleGroup.createEl("button", {
+    const minusBtn = toolbar.createEl("button", {
       text: "\u2212",
+      type: "button",
       cls: "mathgraph-button mathgraph-button-secondary mathgraph-scale-btn"
     });
+    minusBtn.setAttr("tabindex", "-1");
     minusBtn.setAttr("aria-label", "Decrease display scale");
-    const scaleLabel = scaleGroup.createEl("button", {
-      text: formatDisplayScaleLabel((_d = size.displayScale) != null ? _d : 1),
+    const scaleLabel = toolbar.createEl("button", {
+      text: formatDisplayScaleLabel((_b = size.displayScale) != null ? _b : 1),
+      type: "button",
       cls: "mathgraph-button mathgraph-button-secondary mathgraph-scale-label"
     });
+    scaleLabel.setAttr("tabindex", "-1");
     scaleLabel.setAttr("aria-label", "Reset display scale to 100%");
     scaleLabel.setAttr("title", "Display scale \u2014 visual zoom in Obsidian (no LaTeX recompile)");
-    const plusBtn = scaleGroup.createEl("button", {
+    const plusBtn = toolbar.createEl("button", {
       text: "+",
+      type: "button",
       cls: "mathgraph-button mathgraph-button-secondary mathgraph-scale-btn"
     });
+    plusBtn.setAttr("tabindex", "-1");
     plusBtn.setAttr("aria-label", "Increase display scale");
+    const bindScaleButton = (btn, handler) => {
+      btn.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+      });
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        handler();
+      });
+    };
+    const applyScale = (next) => {
+      size.displayScale = next;
+      spec.size = size;
+      applyRenderedGraphDisplayScale(block, spec, svgText);
+      void Promise.resolve(actions.onDisplayScaleChange(next));
+    };
     const changeScale = (delta) => {
       var _a2;
       const current = clampDisplayScale((_a2 = size.displayScale) != null ? _a2 : 1);
@@ -5711,60 +9973,220 @@ function renderGraphView(el, spec, result, tikzSource, actions = {}) {
       if (next === current) {
         return;
       }
-      void Promise.resolve(actions.onDisplayScaleChange(next)).then(() => {
-        size.displayScale = next;
-        applyRenderedGraphDisplayScale(block, spec);
-      });
+      applyScale(next);
     };
-    minusBtn.addEventListener("click", () => changeScale(-0.1));
-    plusBtn.addEventListener("click", () => changeScale(0.1));
-    scaleLabel.addEventListener("click", () => {
-      void Promise.resolve(actions.onDisplayScaleChange(1)).then(() => {
-        size.displayScale = 1;
-        applyRenderedGraphDisplayScale(block, spec);
-      });
-    });
+    bindScaleButton(minusBtn, () => changeScale(-0.1));
+    bindScaleButton(plusBtn, () => changeScale(0.1));
+    bindScaleButton(scaleLabel, () => applyScale(1));
   }
   makeButton("Export", () => {
-    downloadSvg(result.svgText, el.ownerDocument, `${spec.title || "math-graph"}.svg`);
-    new import_obsidian4.Notice("SVG exported.");
+    downloadSvg(svgText, el.ownerDocument, `${spec.title || "math-graph"}.svg`);
+    new import_obsidian5.Notice("SVG exported.");
   });
   makeButton("Export PNG", () => {
-    void svgToPng(result.svgText).then((blob) => {
+    void svgToPng(svgText).then((blob) => {
       downloadBlob(blob, `${spec.title || "math-graph"}.png`, el.ownerDocument);
-      new import_obsidian4.Notice("PNG exported.");
+      new import_obsidian5.Notice("PNG exported.");
     }).catch((err) => {
-      new import_obsidian4.Notice(err instanceof Error ? err.message : "PNG export failed.");
+      new import_obsidian5.Notice(err instanceof Error ? err.message : "PNG export failed.");
     });
   });
   makeButton("Copy TikZ", () => {
     void navigator.clipboard.writeText(tikzSource).then(() => {
-      new import_obsidian4.Notice("TikZ copied.");
+      new import_obsidian5.Notice("TikZ copied.");
     }).catch(() => {
-      new import_obsidian4.Notice("Could not copy TikZ.");
+      new import_obsidian5.Notice("Could not copy TikZ.");
     });
   });
-  const inner = imageWrap.createDiv({ cls: "mathgraph-rendered-inner mathgraph-display-scaled" });
-  inner.style.setProperty("--mathgraph-display-scale", String(resolveDisplayScale(spec)));
-  const container = inner.createDiv({ cls: "mathgraph-graph-output" });
-  const img = container.createEl("img");
+  const scroll = block.createDiv({ cls: "mathgraph-graph-scroll" });
+  const inner = scroll.createDiv({ cls: "mathgraph-rendered-inner" });
+  const img = inner.createEl("img");
   img.setAttr("src", result.dataUrl);
   img.setAttr("alt", spec.title || GRAPH_TYPE_LABELS[spec.type] || "Math graph");
   img.addClass("mathgraph-image");
+  bindRenderedGraphLayoutScale(block, spec, svgText);
+}
+
+// src/scrollPreserve.ts
+function scrollContainerCandidates(doc) {
+  const selectors = [
+    ".markdown-reading-view .markdown-preview-view",
+    ".markdown-reading-view",
+    ".workspace-leaf-content .view-content",
+    ".cm-scroller"
+  ];
+  const seen = new Set();
+  const results = [];
+  for (const selector of selectors) {
+    for (const element of Array.from(doc.querySelectorAll(selector))) {
+      if (seen.has(element)) {
+        continue;
+      }
+      seen.add(element);
+      results.push(element);
+    }
+  }
+  return results;
+}
+function captureScrollPosition(app) {
+  var _a, _b;
+  const leaf = app.workspace.getMostRecentLeaf();
+  const doc = (_b = (_a = leaf == null ? void 0 : leaf.view) == null ? void 0 : _a.containerEl.ownerDocument) != null ? _b : document;
+  const containers = scrollContainerCandidates(doc).filter((element) => element.scrollHeight > element.clientHeight + 1).map((element) => ({ element, top: element.scrollTop }));
+  return {
+    windowY: window.scrollY,
+    containers
+  };
+}
+function restoreScrollPosition(_app, snapshot) {
+  const apply = () => {
+    window.scrollTo({ top: snapshot.windowY });
+    for (const { element, top } of snapshot.containers) {
+      element.scrollTop = top;
+    }
+  };
+  requestAnimationFrame(() => {
+    apply();
+    requestAnimationFrame(apply);
+  });
+}
+
+// src/graphThemeWatcher.ts
+var graphRerenderHandlers = new WeakMap();
+var THEME_REFRESH_DEBOUNCE_MS = 100;
+function registerGraphRerenderHandler(el, handler) {
+  graphRerenderHandlers.set(el, handler);
+}
+function rerenderGraphContainer(container, options) {
+  var _a;
+  const root = container.closest(".mathgraph-processor-root");
+  if (root instanceof HTMLElement) {
+    (_a = graphRerenderHandlers.get(root)) == null ? void 0 : _a(options);
+  }
+}
+function findMountedGraphRoots(app) {
+  const seen = new Set();
+  const results = [];
+  app.workspace.iterateAllLeaves((leaf) => {
+    var _a;
+    const container = (_a = leaf.view) == null ? void 0 : _a.containerEl;
+    if (!(container == null ? void 0 : container.isConnected)) {
+      return;
+    }
+    for (const root of Array.from(container.querySelectorAll(".mathgraph-processor-root"))) {
+      if (!(root instanceof HTMLElement)) {
+        continue;
+      }
+      if (!root.isConnected || !root.querySelector(".mathgraph-rendered-container")) {
+        continue;
+      }
+      if (seen.has(root)) {
+        continue;
+      }
+      seen.add(root);
+      results.push(root);
+    }
+  });
+  return results;
+}
+function refreshVisibleGraphsForThemeChange(app) {
+  var _a;
+  const snapshot = captureScrollPosition(app);
+  const roots = findMountedGraphRoots(app);
+  for (const root of roots) {
+    (_a = graphRerenderHandlers.get(root)) == null ? void 0 : _a({
+      preserveScale: true,
+      reason: "theme-change"
+    });
+  }
+  restoreScrollPosition(app, snapshot);
+}
+function createThemeWatcher(plugin) {
+  let currentTheme = getCurrentTheme();
+  let refreshTimer = null;
+  const scheduleRefresh = () => {
+    if (refreshTimer !== null) {
+      window.clearTimeout(refreshTimer);
+    }
+    refreshTimer = window.setTimeout(() => {
+      refreshTimer = null;
+      plugin.refreshVisibleGraphsForThemeChange();
+    }, THEME_REFRESH_DEBOUNCE_MS);
+  };
+  const onMutation = () => {
+    const nextTheme = getCurrentTheme();
+    if (nextTheme === currentTheme) {
+      return;
+    }
+    currentTheme = nextTheme;
+    plugin.currentTheme = nextTheme;
+    plugin.renderer.clearCache();
+    clearGraphRenderCache();
+    plugin.notifyThemeChanged(nextTheme);
+    scheduleRefresh();
+  };
+  const observer = new MutationObserver(onMutation);
+  const targets = [document.body, document.documentElement];
+  for (const target of targets) {
+    observer.observe(target, { attributes: true, attributeFilter: ["class"] });
+  }
+  return {
+    disconnect: () => {
+      if (refreshTimer !== null) {
+        window.clearTimeout(refreshTimer);
+      }
+      observer.disconnect();
+    }
+  };
 }
 
 // src/graphProcessor.ts
+var DISPLAY_SCALE_SAVE_DELAY_MS = 500;
+var RENDER_DEBOUNCE_MS = 500;
+var displayScaleSaveTimers = new Map();
+function blockLocationKey(location) {
+  return `${location.sourcePath}:${location.startLine}`;
+}
+function scheduleDisplayScaleSave(plugin, location, spec) {
+  const key = blockLocationKey(location);
+  const existing = displayScaleSaveTimers.get(key);
+  if (existing !== void 0) {
+    window.clearTimeout(existing);
+  }
+  displayScaleSaveTimers.set(key, window.setTimeout(() => {
+    displayScaleSaveTimers.delete(key);
+    const snapshot = captureScrollPosition(plugin.app);
+    const updated = hydrateGraphSpec(structuredClone(spec), plugin.settings);
+    void replaceGraphBlockBody(plugin.app, location, updated).finally(() => {
+      restoreScrollPosition(plugin.app, snapshot);
+    });
+  }, DISPLAY_SCALE_SAVE_DELAY_MS));
+}
 function registerGraphProcessor(plugin) {
   plugin.registerMarkdownCodeBlockProcessor("graph", (source, el, ctx) => {
     var _a;
+    const classification = classifyGraphBlockSource(source, plugin.settings);
+    if (classification.state === "valid" && classification.spec) {
+      const hydrated = hydrateGraphSpec(structuredClone(classification.spec), plugin.settings);
+      const fingerprint = specRenderFingerprint(hydrated);
+      const prevFingerprint = el.dataset.mathgraphFingerprint;
+      const themeKey = isObsidianDarkTheme() ? "dark" : "light";
+      const prevTheme = el.dataset.mathgraphTheme;
+      const hasRenderedGraph = el.querySelector(".mathgraph-rendered-container") !== null;
+      if (hasRenderedGraph && prevFingerprint === fingerprint && prevTheme === themeKey) {
+        el.dataset.mathgraphFingerprint = fingerprint;
+        el.dataset.mathgraphTheme = themeKey;
+        applyDisplayScaleToRoot(el, hydrated);
+        return;
+      }
+    }
     el.empty();
     el.addClass("mathgraph-processor-root");
-    decorateMathGraphRoot(el, plugin.settings);
-    const classification = classifyGraphBlockSource(source, plugin.settings);
     if (classification.state === "empty") {
       void renderEmptyBlock(plugin, el, ctx, source);
       return;
     }
+    decorateMathGraphRoot(el);
     if (classification.state === "invalid") {
       renderInvalidBlock(plugin, el, ctx, source, (_a = classification.error) != null ? _a : "Invalid graph block.");
       return;
@@ -5783,18 +10205,113 @@ function renderEmptyBlock(plugin, el, ctx, source) {
   });
 }
 function renderValidBlock(plugin, el, ctx, source, spec) {
-  const loading = el.createDiv({ cls: "mathgraph-loading", text: "Rendering graph\u2026" });
-  let currentSpec = hydrateGraphSpec(structuredClone(spec), plugin.settings);
-  const render = () => __async(this, null, function* () {
+  var _a;
+  const ensureLoading = (text = "Drawing graph\u2026") => {
+    const existing = el.querySelector(".mathgraph-loading");
+    if (existing instanceof HTMLElement) {
+      existing.setText(text);
+      return existing;
+    }
+    return el.createDiv({ cls: "mathgraph-loading", text });
+  };
+  ensureLoading();
+  const currentSpec = hydrateGraphSpec(structuredClone(spec), plugin.settings);
+  const fingerprint = specRenderFingerprint(currentSpec);
+  el.dataset.mathgraphFingerprint = fingerprint;
+  el.dataset.mathgraphTheme = isObsidianDarkTheme() ? "dark" : "light";
+  const clipWarning = surfaceZRangeClipWarning(currentSpec);
+  if (clipWarning) {
+    console.warn("[Math Plotter]", clipWarning);
+  }
+  let renderGeneration = 0;
+  let debounceTimer = null;
+  const runRender = (mode) => __async(this, null, function* () {
+    var _a2, _b, _c, _d, _e;
+    const generation = ++renderGeneration;
+    const themeIsDark = isObsidianDarkTheme();
+    el.dataset.mathgraphTheme = themeIsDark ? "dark" : "light";
+    const cacheKey2 = renderCacheKey(fingerprint, mode, themeIsDark);
+    const cached = getCachedGraphRender(fingerprint, mode, themeIsDark);
+    if ((cached == null ? void 0 : cached.result.ok) && cached.result.dataUrl) {
+      if (generation !== renderGeneration) {
+        return;
+      }
+      el.dataset.mathgraphRenderMode = mode;
+      (_a2 = el.querySelector(".mathgraph-loading")) == null ? void 0 : _a2.remove();
+      void setupGraphView(el, plugin, ctx, source, currentSpec, cached.result, (_b = cached.tikz) != null ? _b : "", () => scheduleRender("svgFast", true), mode === "svgFast");
+      return;
+    }
     let bundle;
     try {
-      bundle = yield buildGraphRenderBundle(currentSpec, plugin.settings);
-      const result = yield plugin.renderer.renderToSvg(bundle.tikz, void 0, bundle.assets);
-      loading.remove();
-      const clipWarning = surfaceZRangeClipWarning(currentSpec);
-      void setupGraphView(el, plugin, ctx, source, currentSpec, result, bundle.tikz, render, clipWarning);
+      let result;
+      let tikz = "";
+      if (mode === "svgFast" && plugin.renderer.canRenderFast(currentSpec)) {
+        if (generation !== renderGeneration) {
+          return;
+        }
+        ensureLoading("Drawing graph\u2026");
+        result = yield plugin.renderer.renderFastSpec(currentSpec, void 0, fingerprint);
+      } else if (mode === "svgFast") {
+        if (generation !== renderGeneration) {
+          return;
+        }
+        (_c = el.querySelector(".mathgraph-loading")) == null ? void 0 : _c.remove();
+        appendGraphError(el, "Fast preview is not available for this graph type.", {
+          actions: [
+            {
+              label: "High quality render",
+              onClick: () => {
+                el.empty();
+                el.addClass("mathgraph-processor-root");
+                decorateMathGraphRoot(el);
+                el.createDiv({ cls: "mathgraph-loading", text: "High-quality rendering\u2026" });
+                void runRender("tikzjax");
+              },
+              primary: true
+            }
+          ]
+        });
+        return;
+      } else {
+        if (shouldUseOctave(currentSpec, plugin.settings)) {
+          ensureLoading("Sampling graph with Octave\u2026");
+        } else if (shouldUseJsSampling(currentSpec)) {
+          ensureLoading("Sampling graph\u2026");
+        } else {
+          ensureLoading("Preparing graph\u2026");
+        }
+        bundle = yield buildGraphRenderBundle(currentSpec, plugin.settings, { renderMode: mode });
+        if (generation !== renderGeneration) {
+          return;
+        }
+        ensureLoading(mode === "tikzjax" ? "High-quality rendering\u2026" : "Rendering graph\u2026");
+        result = yield plugin.renderer.renderGraph(currentSpec, {
+          mode,
+          tikz: bundle.tikz,
+          assets: bundle.assets,
+          specFingerprint: fingerprint
+        });
+        tikz = bundle.tikz;
+      }
+      if (generation !== renderGeneration) {
+        return;
+      }
+      if (result.ok && result.dataUrl) {
+        setCachedGraphRender({
+          cacheKey: cacheKey2,
+          renderMode: mode,
+          result,
+          tikz
+        });
+      }
+      el.dataset.mathgraphRenderMode = mode;
+      (_d = el.querySelector(".mathgraph-loading")) == null ? void 0 : _d.remove();
+      void setupGraphView(el, plugin, ctx, source, currentSpec, result, tikz, () => scheduleRender("svgFast", true), mode === "svgFast");
     } catch (err) {
-      loading.remove();
+      if (generation !== renderGeneration) {
+        return;
+      }
+      (_e = el.querySelector(".mathgraph-loading")) == null ? void 0 : _e.remove();
       const detailParts = [];
       if (err instanceof OctaveEngineError && err.rawLog) {
         detailParts.push(err.rawLog);
@@ -5802,47 +10319,118 @@ function renderValidBlock(plugin, el, ctx, source, spec) {
       if (bundle == null ? void 0 : bundle.octaveDebug) {
         detailParts.push(formatOctaveRenderDebugDetails(bundle.octaveDebug));
       }
+      if (plugin.settings.debugMode && (bundle == null ? void 0 : bundle.tikz)) {
+        detailParts.push(`--- generated TikZ ---
+${bundle.tikz}`);
+      }
       appendGraphError(el, err instanceof Error ? err.message : "Could not render graph.", {
         details: detailParts.length > 0 ? detailParts.join("\n\n") : err instanceof Error ? err.stack : void 0,
         onRetry: () => {
           el.empty();
           el.addClass("mathgraph-processor-root");
-          decorateMathGraphRoot(el, plugin.settings);
-          el.createDiv({ cls: "mathgraph-loading", text: "Rendering graph\u2026" });
-          void render();
+          decorateMathGraphRoot(el);
+          el.createDiv({ cls: "mathgraph-loading", text: "Drawing graph\u2026" });
+          scheduleRender("svgFast", true);
         }
       });
     }
   });
-  void render();
+  const scheduleRender = (mode, immediate = false) => {
+    if (debounceTimer !== null) {
+      window.clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    const cached = getCachedGraphRender(fingerprint, mode, isObsidianDarkTheme());
+    const delay = immediate || (cached == null ? void 0 : cached.result.ok) ? 0 : RENDER_DEBOUNCE_MS;
+    debounceTimer = window.setTimeout(() => {
+      debounceTimer = null;
+      void runRender(mode);
+    }, delay);
+  };
+  const triggerThemeRerender = (options) => {
+    var _a2;
+    void 0;
+    const mode = (_a2 = el.dataset.mathgraphRenderMode) != null ? _a2 : "svgFast";
+    renderGeneration++;
+    if (debounceTimer !== null) {
+      window.clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    el.empty();
+    el.addClass("mathgraph-processor-root");
+    decorateMathGraphRoot(el);
+    ensureLoading(mode === "tikzjax" ? "Updating graph\u2026" : "Drawing graph\u2026");
+    el.dataset.mathgraphTheme = isObsidianDarkTheme() ? "dark" : "light";
+    scheduleRender(mode, true);
+  };
+  registerGraphRerenderHandler(el, triggerThemeRerender);
+  scheduleRender("svgFast", Boolean((_a = getCachedGraphRender(fingerprint, "svgFast", isObsidianDarkTheme())) == null ? void 0 : _a.result.ok));
 }
-function setupGraphView(el, plugin, ctx, source, spec, result, tikz, rerender, clipWarning) {
+function setupGraphView(el, plugin, ctx, source, spec, result, tikz, rerender, isFastPreview) {
   return __async(this, null, function* () {
     const location = yield resolveGraphBlockLocation(plugin.app, ctx, source, el);
     renderGraphView(el, spec, result, tikz, {
-      frame: plugin.settings.renderedGraphFrame,
-      warnings: clipWarning ? [clipWarning] : void 0,
+      debugSource: plugin.settings.debugMode ? tikz : void 0,
+      showHighQualityAction: isFastPreview && plugin.renderer.canRenderFast(spec),
       onEdit: () => void openEditModal(plugin, spec, source, ctx, el),
       onEditSize: () => void openEditModal(plugin, spec, source, ctx, el),
       onRefresh: () => {
         el.empty();
         el.addClass("mathgraph-processor-root");
-        decorateMathGraphRoot(el, plugin.settings);
-        el.createDiv({ cls: "mathgraph-loading", text: "Rendering graph\u2026" });
-        void rerender();
+        decorateMathGraphRoot(el);
+        el.createDiv({ cls: "mathgraph-loading", text: "Drawing graph\u2026" });
+        rerender();
       },
-      onDisplayScaleChange: (newScale) => __async(this, null, function* () {
+      onHighQualityRender: () => {
+        el.empty();
+        el.addClass("mathgraph-processor-root");
+        decorateMathGraphRoot(el);
+        el.createDiv({ cls: "mathgraph-loading", text: "High-quality rendering\u2026" });
+        void (() => __async(this, null, function* () {
+          var _a, _b;
+          const fingerprint = specRenderFingerprint(spec);
+          const themeIsDark = isObsidianDarkTheme();
+          const cacheKey2 = renderCacheKey(fingerprint, "tikzjax", themeIsDark);
+          try {
+            const bundle = yield buildGraphRenderBundle(spec, plugin.settings, { renderMode: "tikzjax" });
+            const hqResult = yield plugin.renderer.renderGraph(spec, {
+              mode: "tikzjax",
+              tikz: bundle.tikz,
+              assets: bundle.assets,
+              specFingerprint: fingerprint
+            });
+            if (hqResult.ok && hqResult.dataUrl) {
+              setCachedGraphRender({
+                cacheKey: cacheKey2,
+                renderMode: "tikzjax",
+                result: hqResult,
+                tikz: bundle.tikz
+              });
+            }
+            (_a = el.querySelector(".mathgraph-loading")) == null ? void 0 : _a.remove();
+            void setupGraphView(el, plugin, ctx, source, spec, hqResult, bundle.tikz, rerender, false);
+          } catch (err) {
+            (_b = el.querySelector(".mathgraph-loading")) == null ? void 0 : _b.remove();
+            appendGraphError(el, err instanceof Error ? err.message : "High-quality render failed.", {
+              onRetry: () => rerender()
+            });
+          }
+        }))();
+      },
+      onDisplayScaleChange: (newScale) => {
         if (!location) {
-          new import_obsidian5.Notice("Could not locate graph block to save size.");
+          new import_obsidian6.Notice("Could not locate graph block to save size.");
           return;
         }
-        const updated = hydrateGraphSpec(structuredClone(spec), plugin.settings);
-        const size = ensureGraphSize(updated, plugin.settings);
+        const size = ensureGraphSize(spec);
         size.displayScale = clampDisplayScale(newScale);
-        updated.size = size;
         spec.size = size;
-        yield replaceGraphBlockBody(plugin.app, location, updated);
-      })
+        const container = el.querySelector(".mathgraph-rendered-container");
+        if (container instanceof HTMLElement) {
+          applyRenderedGraphDisplayScale(container, spec, result.svgText);
+        }
+        scheduleDisplayScaleSave(plugin, location, spec);
+      }
     });
   });
 }
@@ -5875,7 +10463,7 @@ function openEditModal(plugin, spec, source, ctx, el) {
   return __async(this, null, function* () {
     const location = yield resolveGraphBlockLocation(plugin.app, ctx, source, el);
     if (!location) {
-      new import_obsidian5.Notice("Could not locate graph block in note.");
+      new import_obsidian6.Notice("Could not locate graph block in note.");
       return;
     }
     new GraphBuilderModal(plugin.app, plugin, {
@@ -5890,7 +10478,7 @@ function openInvalidEditModal(plugin, source, ctx, el) {
     var _a;
     const location = yield resolveGraphBlockLocation(plugin.app, ctx, source, el);
     if (!location) {
-      new import_obsidian5.Notice("Could not locate graph block in note.");
+      new import_obsidian6.Notice("Could not locate graph block in note.");
       return;
     }
     let seed = defaultGraphSpec("function2d", plugin.settings);
@@ -5912,35 +10500,31 @@ function resetBlock(plugin, source, ctx, el) {
   return __async(this, null, function* () {
     const location = yield resolveGraphBlockLocation(plugin.app, ctx, source, el);
     if (!location) {
-      new import_obsidian5.Notice("Could not locate graph block in note.");
+      new import_obsidian6.Notice("Could not locate graph block in note.");
       return;
     }
     try {
       yield clearGraphBlockBody(plugin.app, location);
-      new import_obsidian5.Notice("Graph block reset.");
+      new import_obsidian6.Notice("Graph block reset.");
     } catch (err) {
-      new import_obsidian5.Notice(err instanceof Error ? err.message : "Could not reset block.");
+      new import_obsidian6.Notice(err instanceof Error ? err.message : "Could not reset block.");
     }
   });
 }
 
 // src/settings.ts
-var import_obsidian6 = __toModule(require("obsidian"));
+var import_obsidian7 = __toModule(require("obsidian"));
 var DEFAULT_SETTINGS = {
-  uiStyle: "glass",
-  renderedGraphFrame: "none",
-  defaultSizePreset: "large",
-  default2dWidth: "15cm",
-  default2dHeight: "9cm",
-  default3dWidth: "15cm",
-  default3dHeight: "10cm",
-  defaultDisplayScale: 1,
   enableOctaveEngine: false,
   octavePath: "",
   preferOctaveFor3dSurfaces: false,
-  preferOctaveForOdePdeNumeric: false
+  preferOctaveForOdePdeNumeric: false,
+  useLocalLuaLatexFallback: false,
+  lualatexPath: "",
+  renderOutputFormat: "svg",
+  debugMode: false
 };
-var MathGraphSettingTab = class extends import_obsidian6.PluginSettingTab {
+var MathGraphSettingTab = class extends import_obsidian7.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -5948,74 +10532,31 @@ var MathGraphSettingTab = class extends import_obsidian6.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.addClass("mathgraph-settings-tab", uiStyleClassName(this.plugin.settings.uiStyle));
-    this.renderSection(containerEl, "Appearance", "Choose how MathGraph Studio panels and cards look inside Obsidian.", (section) => {
-      new import_obsidian6.Setting(section).setName("UI style").setDesc("Glass uses frosted panels with subtle blur. Native Obsidian uses flat theme cards.").addDropdown((drop) => {
-        for (const [value, label] of Object.entries(UI_STYLE_LABELS)) {
-          drop.addOption(value, label);
-        }
-        drop.setValue(this.plugin.settings.uiStyle);
+    containerEl.addClass("mathgraph-settings-tab", mathgraphUiClassName());
+    this.renderSection(containerEl, "Output", (section) => {
+      new import_obsidian7.Setting(section).setName("Output format").setDesc("Reading View uses SVG; PNG is used for export when selected.").addDropdown((drop) => {
+        drop.addOption("svg", "SVG");
+        drop.addOption("png", "PNG");
+        drop.setValue(this.plugin.settings.renderOutputFormat);
         drop.onChange((value) => __async(this, null, function* () {
-          this.plugin.settings.uiStyle = value;
-          yield this.plugin.saveSettings();
-          this.plugin.applyUiStyle();
-          this.display();
-        }));
-      });
-      new import_obsidian6.Setting(section).setName("Rendered graph frame").setDesc("Border and background around graphs embedded in notes. None keeps output transparent and borderless.").addDropdown((drop) => {
-        for (const [value, label] of Object.entries(RENDERED_GRAPH_FRAME_LABELS)) {
-          drop.addOption(value, label);
-        }
-        drop.setValue(this.plugin.settings.renderedGraphFrame);
-        drop.onChange((value) => __async(this, null, function* () {
-          this.plugin.settings.renderedGraphFrame = value;
+          this.plugin.settings.renderOutputFormat = value;
           yield this.plugin.saveSettings();
         }));
       });
     });
-    this.renderSection(containerEl, "Default graph size (LaTeX)", "Default PGFPlots axis dimensions for new graphs. Affects render quality and export.", (section) => {
-      new import_obsidian6.Setting(section).setName("Default size preset").addDropdown((drop) => {
-        for (const [value, label] of Object.entries(GRAPH_SIZE_PRESET_LABELS)) {
-          if (value === "custom") {
-            continue;
-          }
-          drop.addOption(value, label);
-        }
-        drop.setValue(this.plugin.settings.defaultSizePreset);
-        drop.onChange((value) => __async(this, null, function* () {
-          this.plugin.settings.defaultSizePreset = value;
+    this.renderSection(containerEl, "Advanced", (section) => {
+      new import_obsidian7.Setting(section).setName("Use local LuaLaTeX fallback").setDesc("When enabled, retry failed TikZJax renders with local LuaLaTeX if installed.").addToggle((toggle) => toggle.setValue(this.plugin.settings.useLocalLuaLatexFallback).onChange((value) => __async(this, null, function* () {
+        this.plugin.settings.useLocalLuaLatexFallback = value;
+        yield this.plugin.saveSettings();
+        this.display();
+      })));
+      if (this.plugin.settings.useLocalLuaLatexFallback) {
+        new import_obsidian7.Setting(section).setName("LuaLaTeX path").setDesc("Leave empty to auto-detect.").addText((text) => text.setPlaceholder("/Library/TeX/texbin/lualatex").setValue(this.plugin.settings.lualatexPath).onChange((value) => __async(this, null, function* () {
+          this.plugin.settings.lualatexPath = value.trim();
           yield this.plugin.saveSettings();
-        }));
-      });
-      new import_obsidian6.Setting(section).setName("Default 2D width").addText((text) => text.setPlaceholder("15cm").setValue(this.plugin.settings.default2dWidth).onChange((value) => __async(this, null, function* () {
-        this.plugin.settings.default2dWidth = value.trim();
-        yield this.plugin.saveSettings();
-      })));
-      new import_obsidian6.Setting(section).setName("Default 2D height").addText((text) => text.setPlaceholder("9cm").setValue(this.plugin.settings.default2dHeight).onChange((value) => __async(this, null, function* () {
-        this.plugin.settings.default2dHeight = value.trim();
-        yield this.plugin.saveSettings();
-      })));
-      new import_obsidian6.Setting(section).setName("Default 3D width").addText((text) => text.setPlaceholder("15cm").setValue(this.plugin.settings.default3dWidth).onChange((value) => __async(this, null, function* () {
-        this.plugin.settings.default3dWidth = value.trim();
-        yield this.plugin.saveSettings();
-      })));
-      new import_obsidian6.Setting(section).setName("Default 3D height").addText((text) => text.setPlaceholder("10cm").setValue(this.plugin.settings.default3dHeight).onChange((value) => __async(this, null, function* () {
-        this.plugin.settings.default3dHeight = value.trim();
-        yield this.plugin.saveSettings();
-      })));
-      new import_obsidian6.Setting(section).setName("Default display scale").setDesc("Visual zoom in Reading View (0.5\u20132.5). Does not change LaTeX output; adjustable per graph without recompiling.").addSlider((slider) => slider.setLimits(0.5, 2.5, 0.1).setValue(this.plugin.settings.defaultDisplayScale).setDynamicTooltip().onChange((value) => __async(this, null, function* () {
-        this.plugin.settings.defaultDisplayScale = value;
-        yield this.plugin.saveSettings();
-      })));
-    });
-    this.renderSection(containerEl, "Function syntax", "Type simple math in graph fields. The plugin converts expressions internally for rendering.", (section) => {
-      section.createEl("p", {
-        cls: "mathgraph-settings-note",
-        text: "Examples: sin^2(x), x^2+y^2, exp(-2*t)*sin(x)*sin(y). log(x) is treated as the natural logarithm (same as ln(x))."
-      });
-    });
-    this.renderSection(containerEl, "Rendering", "Basic graphs always work with LuaLaTeX + PGFPlots. Octave is optional for numerical sampling.", (section) => {
-      new import_obsidian6.Setting(section).setName("Enable Octave engine").setDesc("Allow numerical sampling via Octave CLI. Octave is not required for basic graphs.").addToggle((toggle) => toggle.setValue(this.plugin.settings.enableOctaveEngine).onChange((value) => __async(this, null, function* () {
+        })));
+      }
+      new import_obsidian7.Setting(section).setName("Enable Octave engine").setDesc("Optional external numerical sampler. Off by default.").addToggle((toggle) => toggle.setValue(this.plugin.settings.enableOctaveEngine).onChange((value) => __async(this, null, function* () {
         this.plugin.settings.enableOctaveEngine = value;
         yield this.plugin.saveSettings();
         this.display();
@@ -6023,46 +10564,95 @@ var MathGraphSettingTab = class extends import_obsidian6.PluginSettingTab {
       if (!this.plugin.settings.enableOctaveEngine) {
         return;
       }
-      new import_obsidian6.Setting(section).setName("Octave path").setDesc("Leave empty to auto-detect (octave-cli or octave on PATH).").addText((text) => text.setPlaceholder("/opt/homebrew/bin/octave-cli").setValue(this.plugin.settings.octavePath).onChange((value) => __async(this, null, function* () {
-        this.plugin.settings.octavePath = value.trim();
-        yield this.plugin.saveSettings();
-      })));
-      new import_obsidian6.Setting(section).setName("Prefer Octave for 3D surfaces").setDesc("Sample 3D surfaces and large grids with Octave, then render via PGFPlots table data.").addToggle((toggle) => toggle.setValue(this.plugin.settings.preferOctaveFor3dSurfaces).onChange((value) => __async(this, null, function* () {
+      new import_obsidian7.Setting(section).setName("Octave CLI path").setDesc("Use octave-cli if available.").addText((text) => {
+        text.setPlaceholder(DEFAULT_OCTAVE_CLI_PATH).setValue(this.plugin.settings.octavePath).onChange((value) => __async(this, null, function* () {
+          this.plugin.settings.octavePath = value.trim();
+          yield this.plugin.saveSettings();
+        }));
+      }).addButton((btn) => {
+        btn.setButtonText("Detect Octave CLI");
+        btn.onClick(() => __async(this, null, function* () {
+          const detected = yield detectOctaveCli();
+          if (detected) {
+            this.plugin.settings.octavePath = detected;
+            yield this.plugin.saveSettings();
+            new import_obsidian7.Notice(`Detected: ${detected}`);
+            this.display();
+          } else {
+            new import_obsidian7.Notice("Octave CLI not found.");
+          }
+        }));
+      });
+      new import_obsidian7.Setting(section).setName("Test Octave").setDesc("Check the configured Octave CLI.").addButton((btn) => {
+        btn.setButtonText("Test Octave");
+        btn.onClick(() => __async(this, null, function* () {
+          btn.setDisabled(true);
+          try {
+            const result = yield testOctaveCli(this.plugin.settings.octavePath);
+            if (result.ok) {
+              new import_obsidian7.Notice("Octave CLI works.");
+            } else {
+              new import_obsidian7.Notice("Octave CLI failed. Check the Octave CLI path.");
+              console.warn("[Math Plotter] Octave test failed", result);
+            }
+          } finally {
+            btn.setDisabled(false);
+          }
+        }));
+      });
+      new import_obsidian7.Setting(section).setName("Prefer Octave for 3D surfaces").setDesc("Use Octave instead of the built-in sampler when enabled.").addToggle((toggle) => toggle.setValue(this.plugin.settings.preferOctaveFor3dSurfaces).onChange((value) => __async(this, null, function* () {
         this.plugin.settings.preferOctaveFor3dSurfaces = value;
         yield this.plugin.saveSettings();
       })));
-      new import_obsidian6.Setting(section).setName("Prefer Octave for ODE/PDE numeric mode").setDesc("Use Octave when a graph is marked numericMode or needs numerical ODE/PDE sampling.").addToggle((toggle) => toggle.setValue(this.plugin.settings.preferOctaveForOdePdeNumeric).onChange((value) => __async(this, null, function* () {
+      new import_obsidian7.Setting(section).setName("Prefer Octave for ODE/PDE numeric mode").setDesc("Use Octave when numericMode is set on a graph.").addToggle((toggle) => toggle.setValue(this.plugin.settings.preferOctaveForOdePdeNumeric).onChange((value) => __async(this, null, function* () {
         this.plugin.settings.preferOctaveForOdePdeNumeric = value;
         yield this.plugin.saveSettings();
       })));
     });
+    this.renderSection(containerEl, "Debug", (section) => {
+      new import_obsidian7.Setting(section).setName("Debug mode").setDesc("Include generated TikZ in error details.").addToggle((toggle) => toggle.setValue(this.plugin.settings.debugMode).onChange((value) => __async(this, null, function* () {
+        this.plugin.settings.debugMode = value;
+        yield this.plugin.saveSettings();
+      })));
+    });
   }
-  renderSection(parent, title, description, renderContent) {
+  renderSection(parent, title, renderContent) {
     const card = parent.createDiv({ cls: "mathgraph-settings-section" });
     card.createDiv({ cls: "mathgraph-settings-section-title", text: title });
-    card.createDiv({ cls: "mathgraph-settings-section-desc", text: description });
-    const body = card.createDiv({ cls: "mathgraph-section-body" });
+    const body = card.createDiv({ cls: "mathgraph-section-body mathgraph-settings-section-body" });
     renderContent(body);
   }
 };
 
 // main.ts
-var MathGraphStudioPlugin = class extends import_obsidian7.Plugin {
+var MathGraphStudioPlugin = class extends import_obsidian8.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
+    this.currentTheme = "light";
+    this.themeWatcher = null;
+    this.themeChangeCallbacks = new Set();
   }
   onload() {
     return __async(this, null, function* () {
       yield this.loadSettings();
       this.applyUiStyle();
-      this.renderer = new TikzRenderer(() => activeDocument.body.classList.contains("theme-dark"));
+      const pluginBaseDir = resolvePluginBaseDir(this);
+      if (!GraphRenderer.tikzJaxAssetsPresent(pluginBaseDir)) {
+        console.warn("[Math Plotter] TikZJax assets missing. Run `npm install && npm run build` in the plugin folder.", pluginBaseDir);
+      }
+      this.renderer = new GraphRenderer(() => activeDocument.body.classList.contains("theme-dark"), () => ({
+        lualatexPath: this.settings.lualatexPath,
+        useLocalLuaLatexFallback: this.settings.useLocalLuaLatexFallback
+      }), pluginBaseDir, () => ensureTikzJaxFontsLoaded(this.app, this));
+      this.currentTheme = getCurrentTheme();
+      this.initThemeWatcher();
       this.addCommand({
         id: "insert-math-graph",
-        name: "Insert Math Graph",
+        name: "Insert Function Plot",
         callback: () => this.openInsertModal()
       });
-      this.addRibbonIcon("line-chart", "Insert Math Graph", () => {
+      this.addRibbonIcon("line-chart", "Insert Function Plot", () => {
         this.openInsertModal();
       });
       this.addSettingTab(new MathGraphSettingTab(this.app, this));
@@ -6070,11 +10660,54 @@ var MathGraphStudioPlugin = class extends import_obsidian7.Plugin {
     });
   }
   onunload() {
+    var _a;
+    (_a = this.themeWatcher) == null ? void 0 : _a.disconnect();
     this.renderer.clearCache();
+  }
+  getCurrentTheme() {
+    return getCurrentTheme();
+  }
+  onThemeChanged(callback) {
+    this.themeChangeCallbacks.add(callback);
+    return () => {
+      this.themeChangeCallbacks.delete(callback);
+    };
+  }
+  notifyThemeChanged(theme) {
+    for (const callback of this.themeChangeCallbacks) {
+      callback(theme);
+    }
+  }
+  refreshVisibleGraphsForThemeChange() {
+    refreshVisibleGraphsForThemeChange(this.app);
+  }
+  rerenderGraphContainer(container, options) {
+    rerenderGraphContainer(container, options);
+  }
+  initThemeWatcher() {
+    var _a;
+    (_a = this.themeWatcher) == null ? void 0 : _a.disconnect();
+    this.currentTheme = getCurrentTheme();
+    this.themeWatcher = createThemeWatcher(this);
+    this.register(() => {
+      var _a2;
+      return (_a2 = this.themeWatcher) == null ? void 0 : _a2.disconnect();
+    });
   }
   loadSettings() {
     return __async(this, null, function* () {
       const saved = yield this.loadData();
+      if (saved && typeof saved === "object") {
+        delete saved.renderTimeoutSeconds;
+        delete saved.renderCacheEnabled;
+        delete saved.renderTimeout;
+        delete saved.timeoutSeconds;
+        delete saved.cacheEnabled;
+        delete saved.renderCache;
+        delete saved.uiStyle;
+        delete saved.themeStyle;
+        delete saved.glassMode;
+      }
       this.settings = Object.assign({}, DEFAULT_SETTINGS, saved != null ? saved : {});
     });
   }
@@ -6083,15 +10716,16 @@ var MathGraphStudioPlugin = class extends import_obsidian7.Plugin {
       yield this.saveData(this.settings);
       this.applyUiStyle();
       this.renderer.clearCache();
+      clearGraphRenderCache();
     });
   }
   applyUiStyle() {
-    applyMathGraphUiStyle(activeDocument, this.settings);
+    applyMathGraphUiStyle(activeDocument);
   }
   openInsertModal() {
-    const view = this.app.workspace.getActiveViewOfType(import_obsidian7.MarkdownView);
+    const view = this.app.workspace.getActiveViewOfType(import_obsidian8.MarkdownView);
     if (!view) {
-      new import_obsidian7.Notice("Open a note to insert a graph.");
+      new import_obsidian8.Notice("Open a note to insert a graph.");
       return;
     }
     new GraphBuilderModal(this.app, this, {
@@ -6105,3 +10739,13 @@ var MathGraphStudioPlugin = class extends import_obsidian7.Plugin {
     });
   }
 };
+/*!
+ Based on ndef.parser, by Raphael Graf(r@undefined.ch)
+ http://www.undefined.ch/mparser/index.html
+
+ Ported to JavaScript and modified by Matthew Crumley (email@matthewcrumley.com, http://silentmatt.com/)
+
+ You are free to use and modify this code in anyway you find useful. Please leave this comment in the code
+ to acknowledge its original source. If you feel like it, I enjoy hearing about projects that use my code,
+ but don't feel like you have to let me know or ask permission.
+*/

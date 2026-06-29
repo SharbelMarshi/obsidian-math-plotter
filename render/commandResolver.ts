@@ -62,7 +62,17 @@ async function resolveCommand(candidates: string[]): Promise<string | null> {
 	return null;
 }
 
-export async function resolveLuaLatex(): Promise<string | null> {
+export async function resolveLuaLatex(customPath?: string): Promise<string | null> {
+	const trimmed = customPath?.trim();
+	if (trimmed) {
+		if (trimmed.includes('/') && fs.existsSync(trimmed)) {
+			return trimmed;
+		}
+		if (!trimmed.includes('/')) {
+			return resolveCommand([trimmed]);
+		}
+	}
+
 	return resolveCommand([
 		'/Library/TeX/texbin/lualatex',
 		'/usr/local/texlive/2025/bin/universal-darwin/lualatex',
