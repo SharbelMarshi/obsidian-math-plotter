@@ -28,7 +28,7 @@ function downloadSvg(svgText: string, doc: Document, filename = 'math-graph.svg'
 	downloadBlob(blob, filename, doc);
 }
 
-async function svgToPng(svgText: string): Promise<Blob> {
+async function svgToPng(svgText: string, doc: Document): Promise<Blob> {
 	const svgBlob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
 	const url = URL.createObjectURL(svgBlob);
 	try {
@@ -39,7 +39,7 @@ async function svgToPng(svgText: string): Promise<Blob> {
 			img.onerror = () => reject(new Error('Could not load SVG image.'));
 		});
 
-		const canvas = document.createElement('canvas');
+		const canvas = doc.createElement('canvas');
 		canvas.width = img.naturalWidth || 800;
 		canvas.height = img.naturalHeight || 600;
 		const ctx = canvas.getContext('2d');
@@ -264,7 +264,7 @@ export function renderGraphView(
 	});
 
 	makeButton('Export PNG', () => {
-		void svgToPng(svgText).then(blob => {
+		void svgToPng(svgText, el.ownerDocument).then(blob => {
 			downloadBlob(blob, `${spec.title || 'math-graph'}.png`, el.ownerDocument);
 			new Notice('PNG exported.');
 		}).catch(err => {

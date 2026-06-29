@@ -9,7 +9,6 @@ import {
 } from './GraphBlockUpdater';
 import {
 	defaultInlineFields,
-	inlineFieldsFromSpec,
 	INLINE_GRAPH_TYPE_LABELS,
 	specFromInlineFields,
 	validateInlineFields,

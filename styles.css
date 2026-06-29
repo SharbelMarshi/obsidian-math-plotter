@@ -7,20 +7,20 @@
 }
 
 /* Inline builder host: never inherit card/glass chrome from processor root */
-.mathgraph-processor-root:has(.mathgraph-inline-builder),
+.mathgraph-processor-root.mathgraph-inline-builder-wrapper,
 .mathgraph-inline-builder-wrapper,
-.mathgraph-processor-root.mathgraph-ui-glass:has(.mathgraph-inline-builder),
-.mathgraph-processor-root.mathgraph-ui-native:has(.mathgraph-inline-builder),
+.mathgraph-processor-root.mathgraph-inline-builder-wrapper.mathgraph-ui-glass,
+.mathgraph-processor-root.mathgraph-inline-builder-wrapper.mathgraph-ui-native,
 .mathgraph-inline-builder-wrapper.mathgraph-ui-glass,
 .mathgraph-inline-builder-wrapper.mathgraph-ui-native {
-	background: transparent !important;
-	border: none !important;
-	box-shadow: none !important;
-	padding: 0 !important;
-	margin: 0 !important;
-	backdrop-filter: none !important;
-	-webkit-backdrop-filter: none !important;
-	min-height: 0 !important;
+	background: transparent;
+	border: none;
+	box-shadow: none;
+	padding: 0;
+	margin: 0;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+	min-height: 0;
 }
 
 .mathgraph-root {
@@ -796,7 +796,7 @@
 /* ── Inline builder (lightweight, note-integrated) ─────────────────────────── */
 
 .mathgraph-inline-builder-wrapper,
-.mathgraph-processor-root:has(.mathgraph-inline-builder) {
+.mathgraph-processor-root.mathgraph-inline-builder-wrapper {
 	background: transparent;
 	border: none;
 	box-shadow: none;
@@ -1060,7 +1060,6 @@
 	opacity: 0;
 	pointer-events: none;
 	transition: opacity 120ms ease;
-	scrollbar-width: thin;
 }
 
 .mathgraph-rendered-container:hover .mathgraph-toolbar {
@@ -1360,42 +1359,26 @@
 
 /* ── Reading view integration ───────────────────────────────────────────────── */
 
-.markdown-reading-view .mathgraph-processor-root:has(.mathgraph-inline-builder),
-.markdown-preview-view .mathgraph-processor-root:has(.mathgraph-inline-builder),
+.markdown-reading-view .mathgraph-processor-root.mathgraph-inline-builder-wrapper,
+.markdown-preview-view .mathgraph-processor-root.mathgraph-inline-builder-wrapper,
 .markdown-reading-view .mathgraph-inline-builder-wrapper,
 .markdown-preview-view .mathgraph-inline-builder-wrapper {
-	border: none !important;
-	background: transparent !important;
-	box-shadow: none !important;
-	padding: 0 !important;
-	backdrop-filter: none !important;
-	-webkit-backdrop-filter: none !important;
+	border: none;
+	background: transparent;
+	box-shadow: none;
+	padding: 0;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
 }
 
-/* Obsidian / theme wrappers around the code-block processor output */
-.markdown-reading-view div:has(> .mathgraph-inline-builder-wrapper),
-.markdown-preview-view div:has(> .mathgraph-inline-builder-wrapper),
-.markdown-reading-view div:has(> .mathgraph-processor-root > .mathgraph-inline-builder),
-.markdown-preview-view div:has(> .mathgraph-processor-root > .mathgraph-inline-builder),
-.markdown-reading-view .block-language-graph:has(.mathgraph-inline-builder),
-.markdown-preview-view .block-language-graph:has(.mathgraph-inline-builder),
-.markdown-reading-view .el-pre:has(+ .mathgraph-processor-root .mathgraph-inline-builder),
-.markdown-preview-view .el-pre:has(+ .mathgraph-processor-root .mathgraph-inline-builder) {
-	background: transparent !important;
-	border: none !important;
-	box-shadow: none !important;
-	backdrop-filter: none !important;
-	-webkit-backdrop-filter: none !important;
-}
-
-.markdown-reading-view .mathgraph-processor-root:not(:has(.mathgraph-inline-builder)),
-.markdown-preview-view .mathgraph-processor-root:not(:has(.mathgraph-inline-builder)) {
-	border: none !important;
-	background: transparent !important;
-	box-shadow: none !important;
-	padding: 0 !important;
-	backdrop-filter: none !important;
-	-webkit-backdrop-filter: none !important;
+.markdown-reading-view .mathgraph-processor-root.mathgraph-has-rendered-graph,
+.markdown-preview-view .mathgraph-processor-root.mathgraph-has-rendered-graph {
+	border: none;
+	background: transparent;
+	box-shadow: none;
+	padding: 0;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
 }
 
 .markdown-reading-view .mathgraph-rendered-container,
@@ -1408,23 +1391,12 @@
 .markdown-preview-view .mathgraph-rendered-inner img,
 .markdown-reading-view .mathgraph-image,
 .markdown-preview-view .mathgraph-image {
-	border: none !important;
-	background: transparent !important;
-	box-shadow: none !important;
-	padding: 0 !important;
-	backdrop-filter: none !important;
-	-webkit-backdrop-filter: none !important;
-}
-
-.markdown-reading-view div:has(> .mathgraph-processor-root > .mathgraph-rendered-container),
-.markdown-preview-view div:has(> .mathgraph-processor-root > .mathgraph-rendered-container),
-.markdown-reading-view .block-language-graph:has(.mathgraph-rendered-container),
-.markdown-preview-view .block-language-graph:has(.mathgraph-rendered-container) {
-	background: transparent !important;
-	border: none !important;
-	box-shadow: none !important;
-	backdrop-filter: none !important;
-	-webkit-backdrop-filter: none !important;
+	border: none;
+	background: transparent;
+	box-shadow: none;
+	padding: 0;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
 }
 
 .markdown-reading-view pre.language-graph,
@@ -1432,6 +1404,6 @@
 	display: none;
 }
 
-.markdown-source-view.mod-cm6 .cm-embed-block:has(+ .mathgraph-processor-root) {
+.markdown-source-view.mod-cm6 .cm-embed-block.mathgraph-hidden-embed {
 	display: none;
 }

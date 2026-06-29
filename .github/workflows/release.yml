@@ -51,6 +51,23 @@ jobs:
             fi
           done
 
+      - name: Verify release manifest matches repository
+        run: |
+          cmp -s manifest.json <(unzip -p math-plotter-full.zip manifest.json)
+          node -e "
+            const fs = require('fs');
+            const repo = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+            const { execSync } = require('child_process');
+            const zipManifest = JSON.parse(execSync('unzip -p math-plotter-full.zip manifest.json', { encoding: 'utf8' }));
+            for (const key of ['id', 'name', 'version', 'minAppVersion', 'description', 'author']) {
+              if (repo[key] !== zipManifest[key]) {
+                console.error('Release manifest mismatch for ' + key + ': repo=' + repo[key] + ' zip=' + zipManifest[key]);
+                process.exit(1);
+              }
+            }
+            console.log('Release manifest matches repository manifest.');
+          "
+
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:

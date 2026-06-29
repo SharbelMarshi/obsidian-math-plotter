@@ -12,7 +12,6 @@ import { parseBoundToNumber } from '../src/graphRangeValidation';
 import { resolveGraphPointCoordinates } from '../src/graphPointResolution';
 import { getUserFunction, type GraphPoint, type GraphSpec } from '../src/graphSpec';
 import {
-	graphSupportsSurfaceStyleControl,
 	heatColorFromZ,
 	resolveFastSvgStrokeColor,
 	resolveSurfaceStyle,
@@ -443,32 +442,6 @@ function renderSurfaceMeshWithLayout(
 	}
 
 	return paths.join('');
-}
-
-function renderSurfaceMesh(
-	grid: SamplePoint3D[],
-	samplesX: number,
-	samplesY: number,
-	left: number,
-	top: number,
-	width: number,
-	height: number,
-	stroke: string,
-	spec: GraphSpec,
-	zMin: number,
-	zMax: number,
-): string {
-	const layout = createProjectionLayout(grid, left, top, width, height);
-	return renderSurfaceMeshWithLayout(
-		grid,
-		samplesX,
-		samplesY,
-		layout.projectWorld,
-		stroke,
-		resolveSurfaceStyle(spec),
-		zMin,
-		zMax,
-	);
 }
 
 function axisArrowMarker(stroke: string): string {

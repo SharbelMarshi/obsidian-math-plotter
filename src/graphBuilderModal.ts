@@ -13,6 +13,7 @@ import {
 	type GraphType,
 } from './graphSpec';
 import { graphUses3dPoints } from './graphPointsTikz';
+import { isHTMLElement } from './domUtils';
 import {
 	analyzeGraphPoint,
 	attachComputedCoordinates,
@@ -749,7 +750,7 @@ export class GraphBuilderModal extends Modal {
 		list.querySelectorAll('.mathgraph-point-row-wrap').forEach((wrap, index) => {
 			const statusEl = wrap.querySelector('.mathgraph-point-status');
 			const point = this.spec.points?.[index];
-			if (statusEl instanceof HTMLElement && point) {
+			if (isHTMLElement(statusEl) && point) {
 				this.updatePointRowStatus(statusEl, point);
 			}
 		});
@@ -815,11 +816,11 @@ export class GraphBuilderModal extends Modal {
 
 	private async submit(): Promise<void> {
 		const paramList = this.panels.get('equation')?.querySelector('.mathgraph-param-list');
-		if (paramList instanceof HTMLElement) {
+		if (isHTMLElement(paramList)) {
 			this.syncParametersFromDom(paramList);
 		}
 		const pointList = this.panels.get('points')?.querySelector('.mathgraph-point-list');
-		if (pointList instanceof HTMLElement) {
+		if (isHTMLElement(pointList)) {
 			this.syncPointsFromDom(pointList);
 		}
 

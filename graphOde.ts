@@ -1,4 +1,5 @@
 import { normalizePgfMath, type NumericRange } from './graphExpression';
+import { compileSafeMathExpression } from './src/safeMathEvaluator';
 
 export type OdeKind = 'first_order_slope' | 'first_order_solution' | 'second_order_solution';
 
@@ -19,10 +20,6 @@ const SECOND_ORDER_EXPLICIT = /^y\s*''\s*=\s*(.+)$/i;
 
 function containsSecondDerivative(expr: string): boolean {
 	return /y\s*''/i.test(expr);
-}
-
-function containsFirstDerivative(expr: string): boolean {
-	return /y\s*'(?![a-zA-Z])/i.test(expr) || /dy\s*\/\s*dx/i.test(expr);
 }
 
 function equationToSecondOrderRhs(body: string): string | null {
@@ -101,53 +98,27 @@ export function parseOdeExpression(body: string, solutionMode: boolean): ParsedO
 	};
 }
 
-function prepareJsExpr(expr: string, variables: Record<string, string>): string {
-	let js = normalizePgfMath(expr)
-		.replace(/\\pi\b/g, 'Math.PI')
-		.replace(/\^/g, '**');
-
-	const ordered = Object.entries(variables).sort((left, right) => right[0].length - left[0].length);
-	for (const [name, replacement] of ordered) {
-		js = js.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), replacement);
-	}
-
-	return js
-		.replace(/\bexp\b/g, 'Math.exp')
-		.replace(/\blog\b/g, 'Math.log')
-		.replace(/\bsqrt\b/g, 'Math.sqrt')
-		.replace(/\babs\b/g, 'Math.abs')
-		.replace(/\bsin\b/g, 'Math.sin')
-		.replace(/\bcos\b/g, 'Math.cos')
-		.replace(/\btan\b/g, 'Math.tan');
+function prepareSafeOdeExpr(expr: string): string {
+	return normalizePgfMath(expr)
+		.replace(/y\s*''/gi, '0')
+		.replace(/y\s*'(?![a-zA-Z])/gi, 'yp')
+		.replace(/\^/g, '^');
 }
 
 function compileFirstOrderRhs(expr: string): (x: number, y: number) => number {
-	const js = prepareJsExpr(expr, {
-		"y'": 'yp',
-		'y': 'yVal',
-		'x': 'xVal',
-	});
-	const fn = Function('xVal', 'yVal', `"use strict"; return (${js});`) as (x: number, y: number) => number;
+	const normalized = prepareSafeOdeExpr(expr);
+	const evaluate = compileSafeMathExpression(normalized, ['x', 'y', 'yp']);
 	return (x, y) => {
-		const result = fn(x, y);
+		const result = evaluate({ x, y, yp: 0 });
 		return Number.isFinite(result) ? result : Number.NaN;
 	};
 }
 
 function compileSecondOrderRhs(expr: string): (x: number, y: number, yp: number) => number {
-	const js = prepareJsExpr(expr, {
-		"y''": '0',
-		"y'": 'ypVal',
-		'y': 'yVal',
-		'x': 'xVal',
-	});
-	const fn = Function('xVal', 'yVal', 'ypVal', `"use strict"; return (${js});`) as (
-		x: number,
-		y: number,
-		yp: number,
-	) => number;
-	return (x, y, yp) => {
-		const result = fn(x, y, yp);
+	const normalized = prepareSafeOdeExpr(expr);
+	const evaluate = compileSafeMathExpression(normalized, ['x', 'y', 'yp']);
+	return (x, y, ypVal) => {
+		const result = evaluate({ x, y, yp: ypVal });
 		return Number.isFinite(result) ? result : Number.NaN;
 	};
 }

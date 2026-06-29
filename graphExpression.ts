@@ -1,3 +1,5 @@
+import { compileSafeMathExpression } from './src/safeMathEvaluator';
+
 export class GraphSyntaxError extends Error {
 	hint?: string;
 	line?: number;
@@ -346,64 +348,23 @@ function replaceDegCalls(expr: string, variable: string, value: number): string 
 	return expr.replace(pattern, String((value * 180) / Math.PI));
 }
 
-function trigReplacements(trigDegrees: boolean): Array<[RegExp, string]> {
-	if (trigDegrees) {
-		return [
-			[/\bsin\b/g, 'sinDeg'],
-			[/\bcos\b/g, 'cosDeg'],
-			[/\btan\b/g, 'tanDeg'],
-		];
-	}
-
-	return [
-		[/\bsin\b/g, 'Math.sin'],
-		[/\bcos\b/g, 'Math.cos'],
-		[/\btan\b/g, 'Math.tan'],
-	];
-}
-
 export function evaluatePlotExpr(expr: string, variable: string, value: number, trigDegrees = false): number | null {
-	let jsExpr = normalizePgfMath(expr)
-		.replace(/\\pi\b/g, String(Math.PI))
-		.replace(/\\lambda\b/g, '1')
-		.replace(/\^/g, '**')
-		.replace(new RegExp(`\\b${variable}\\b`, 'g'), `(${value})`);
+	let normalized = normalizePgfMath(expr)
+		.replace(/\\lambda\b/g, '1');
 
-	jsExpr = replaceDegCalls(jsExpr, variable, value);
+	normalized = replaceDegCalls(normalized, variable, value);
 
-	if (!AUTO_FIT_SAFE_PATTERN.test(jsExpr)) {
+	if (!AUTO_FIT_SAFE_PATTERN.test(normalized)) {
 		return null;
 	}
 
-	for (const [pattern, replacement] of trigReplacements(trigDegrees)) {
-		jsExpr = jsExpr.replace(pattern, replacement);
-	}
-
-	jsExpr = jsExpr
-		.replace(/\bexp\b/g, 'Math.exp')
-		.replace(/\blog\b/g, 'Math.log')
-		.replace(/\bsqrt\b/g, 'Math.sqrt')
-		.replace(/\babs\b/g, 'Math.abs');
-
 	try {
-		const sinDeg = (x: number) => Math.sin((x * Math.PI) / 180);
-		const cosDeg = (x: number) => Math.cos((x * Math.PI) / 180);
-		const tanDeg = (x: number) => Math.tan((x * Math.PI) / 180);
-		const valueFn = Function(
-			'sinDeg',
-			'cosDeg',
-			'tanDeg',
-			`"use strict"; return (${jsExpr});`,
-		);
-		const result = valueFn(sinDeg, cosDeg, tanDeg) as number;
+		const evaluate = compileSafeMathExpression(normalized, [variable], { trigDegrees });
+		const result = evaluate({ [variable]: value });
 		return Number.isFinite(result) ? result : null;
 	} catch {
 		return null;
 	}
-}
-
-function evaluateForAutoFit(expr: string, x: number, trigDegrees = false): number | null {
-	return evaluatePlotExpr(expr, 'x', x, trigDegrees);
 }
 
 function isNearInteger(value: number, tolerance = 0.01): boolean {
@@ -651,37 +612,15 @@ export function evaluatePlotExpr2D(
 	y: number,
 	trigDegrees = false,
 ): number | null {
-	let jsExpr = normalizePgfMath(expr)
-		.replace(/\\pi\b/g, String(Math.PI))
-		.replace(/\^/g, '**')
-		.replace(/\bx\b/g, `(${x})`)
-		.replace(/\by\b/g, `(${y})`);
+	const normalized = normalizePgfMath(expr);
 
-	if (!/^[\d\s+x+\-*/^().,a-zA-Z\\]+$/.test(jsExpr)) {
+	if (!/^[\d\s+x+\-*/^().,a-zA-Z\\]+$/.test(normalized)) {
 		return null;
 	}
 
-	for (const [pattern, replacement] of trigReplacements(trigDegrees)) {
-		jsExpr = jsExpr.replace(pattern, replacement);
-	}
-
-	jsExpr = jsExpr
-		.replace(/\bexp\b/g, 'Math.exp')
-		.replace(/\blog\b/g, 'Math.log')
-		.replace(/\bsqrt\b/g, 'Math.sqrt')
-		.replace(/\babs\b/g, 'Math.abs');
-
 	try {
-		const sinDeg = (value: number) => Math.sin((value * Math.PI) / 180);
-		const cosDeg = (value: number) => Math.cos((value * Math.PI) / 180);
-		const tanDeg = (value: number) => Math.tan((value * Math.PI) / 180);
-		const valueFn = Function(
-			'sinDeg',
-			'cosDeg',
-			'tanDeg',
-			`"use strict"; return (${jsExpr});`,
-		);
-		const result = valueFn(sinDeg, cosDeg, tanDeg) as number;
+		const evaluate = compileSafeMathExpression(normalized, ['x', 'y'], { trigDegrees });
+		const result = evaluate({ x, y });
 		return Number.isFinite(result) ? result : null;
 	} catch {
 		return null;

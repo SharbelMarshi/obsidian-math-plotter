@@ -1,5 +1,6 @@
 import { formatDisplayScaleLabel, isGraph3dView, resolveDisplayScale } from './graphSize';
 import type { GraphSpec } from './graphSpec';
+import { isHTMLElement, isHTMLImageElement, isSVGSVGElement } from './domUtils';
 
 const BASE_WIDTH_DATA_ATTR = 'data-mathgraph-base-width';
 const FALLBACK_BASE_WIDTH_2D = 540;
@@ -125,11 +126,11 @@ export function measureRenderedGraphBaseWidth(
 	let measured: number | null = null;
 	const media = inner.querySelector('img, svg');
 
-	if (media instanceof HTMLImageElement) {
+	if (isHTMLImageElement(media)) {
 		measured = measureNaturalImageWidth(media, svgText);
 	}
 
-	if (measured === null && media instanceof SVGSVGElement) {
+	if (measured === null && isSVGSVGElement(media)) {
 		const rendered = media.getBoundingClientRect().width;
 		if (rendered >= MIN_RELIABLE_IMAGE_WIDTH) {
 			measured = rendered;
@@ -145,7 +146,7 @@ export function measureRenderedGraphBaseWidth(
 
 function updateOverflowState(container: HTMLElement, scaledWidth: number): void {
 	const scroll = container.querySelector('.mathgraph-graph-scroll');
-	if (!(scroll instanceof HTMLElement)) {
+	if (!isHTMLElement(scroll)) {
 		return;
 	}
 
@@ -166,7 +167,7 @@ export function applyRenderedGraphLayoutScale(
 	options?: { remeasure?: boolean; svgText?: string },
 ): void {
 	const inner = container.querySelector('.mathgraph-rendered-inner');
-	if (!(inner instanceof HTMLElement)) {
+	if (!isHTMLElement(inner)) {
 		return;
 	}
 
@@ -198,7 +199,7 @@ export function bindRenderedGraphLayoutScale(
 	svgText?: string,
 ): void {
 	const inner = container.querySelector('.mathgraph-rendered-inner');
-	if (!(inner instanceof HTMLElement)) {
+	if (!isHTMLElement(inner)) {
 		return;
 	}
 
@@ -207,7 +208,7 @@ export function bindRenderedGraphLayoutScale(
 	};
 
 	const media = inner.querySelector('img, svg');
-	if (media instanceof HTMLImageElement) {
+	if (isHTMLImageElement(media)) {
 		if (media.complete) {
 			apply();
 		} else {
@@ -219,7 +220,7 @@ export function bindRenderedGraphLayoutScale(
 	}
 
 	const scroll = container.querySelector('.mathgraph-graph-scroll');
-	if (scroll instanceof HTMLElement && typeof ResizeObserver !== 'undefined') {
+	if (isHTMLElement(scroll) && typeof ResizeObserver !== 'undefined') {
 		const observer = new ResizeObserver(() => {
 			const stored = readStoredBaseWidth(inner);
 			if (stored === null) {

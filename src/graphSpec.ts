@@ -42,7 +42,7 @@ export interface GraphStyle {
 	/** 3D surfaces — colored (default), wireframe, or solid. */
 	surfaceStyle?: SurfaceStyle;
 	/** Colormap for colored/solid 3D surfaces. Default heat. */
-	colormap?: ColormapName | string;
+	colormap?: ColormapName;
 	/** 2D graphs only — show background grid lines. Default true when omitted. */
 	grid?: boolean;
 }

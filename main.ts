@@ -20,6 +20,7 @@ import {
 	rerenderGraphContainer,
 	type GraphRerenderOptions,
 } from './src/graphThemeWatcher';
+import { mergeLoadedSettings } from './src/settingsGuards';
 // TODO(v2): register inlineGraphEditorExtension() for source-mode empty ```graph``` widgets.
 
 export default class MathGraphStudioPlugin extends Plugin {
@@ -43,7 +44,7 @@ export default class MathGraphStudioPlugin extends Plugin {
 		}
 
 		this.renderer = new GraphRenderer(
-			() => activeDocument.body.classList.contains('theme-dark'),
+			() => this.app.workspace.containerEl.ownerDocument.body.classList.contains('theme-dark'),
 			() => ({
 				lualatexPath: this.settings.lualatexPath,
 				useLocalLuaLatexFallback: this.settings.useLocalLuaLatexFallback,
@@ -108,18 +109,7 @@ export default class MathGraphStudioPlugin extends Plugin {
 
 	async loadSettings(): Promise<void> {
 		const saved = await this.loadData();
-		if (saved && typeof saved === 'object') {
-			delete saved.renderTimeoutSeconds;
-			delete saved.renderCacheEnabled;
-			delete saved.renderTimeout;
-			delete saved.timeoutSeconds;
-			delete saved.cacheEnabled;
-			delete saved.renderCache;
-			delete saved.uiStyle;
-			delete saved.themeStyle;
-			delete saved.glassMode;
-		}
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved ?? {});
+		this.settings = mergeLoadedSettings(saved);
 	}
 
 	async saveSettings(): Promise<void> {
@@ -130,7 +120,7 @@ export default class MathGraphStudioPlugin extends Plugin {
 	}
 
 	applyUiStyle(): void {
-		applyMathGraphUiStyle(activeDocument);
+		applyMathGraphUiStyle(this.app.workspace.containerEl.ownerDocument);
 	}
 
 	openInsertModal(): void {

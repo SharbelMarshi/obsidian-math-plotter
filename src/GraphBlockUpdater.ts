@@ -1,7 +1,14 @@
-import { MarkdownView, type App, type TFile } from 'obsidian';
-import type { MarkdownPostProcessorContext } from 'obsidian';
+import { MarkdownView, type App, TFile, type MarkdownPostProcessorContext } from 'obsidian';
 import { hydrateGraphSpec, serializeGraphSpec, type GraphSpec } from './graphSpec';
 import type { MathGraphSettings } from './settings';
+import { isRecord } from './settingsGuards';
+
+function isGraphSpec(value: unknown): value is GraphSpec {
+	if (!isRecord(value)) {
+		return false;
+	}
+	return value.version === 1 && typeof value.type === 'string';
+}
 
 export interface GraphBlockLocation {
 	sourcePath: string;
@@ -27,12 +34,9 @@ export function classifyGraphBlockSource(
 	}
 
 	try {
-		const parsed = JSON.parse(trimmed) as GraphSpec;
-		if (parsed.version !== 1) {
-			return { state: 'invalid', error: `Unsupported graph version: ${String(parsed.version)}` };
-		}
-		if (!parsed.type) {
-			return { state: 'invalid', error: 'Graph block is missing "type".' };
+		const parsed: unknown = JSON.parse(trimmed);
+		if (!isGraphSpec(parsed)) {
+			return { state: 'invalid', error: 'Graph block is missing required fields.' };
 		}
 		return { state: 'valid', spec: hydrateGraphSpec(parsed, settings) };
 	} catch (err) {
@@ -45,10 +49,10 @@ export function classifyGraphBlockSource(
 
 export async function readNoteLines(app: App, sourcePath: string): Promise<string[] | null> {
 	const file = app.vault.getAbstractFileByPath(sourcePath);
-	if (!file) {
+	if (!(file instanceof TFile)) {
 		return null;
 	}
-	const content = await app.vault.read(file as TFile);
+	const content = await app.vault.read(file);
 	return content.split('\n');
 }
 
@@ -133,12 +137,11 @@ export async function replaceGraphBlockBody(
 	spec: GraphSpec,
 ): Promise<void> {
 	const file = app.vault.getAbstractFileByPath(location.sourcePath);
-	if (!file) {
+	if (!(file instanceof TFile)) {
 		throw new Error('Note not found.');
 	}
 
-	const tfile = file as TFile;
-	const lines = (await app.vault.read(tfile)).split('\n');
+	const lines = (await app.vault.read(file)).split('\n');
 	const jsonLines = serializeGraphSpec(spec).split('\n');
 	const replacement = ['```graph', ...jsonLines, '```'];
 
@@ -147,7 +150,7 @@ export async function replaceGraphBlockBody(
 		...replacement,
 		...lines.slice(location.endLine + 1),
 	];
-	await app.vault.modify(tfile, nextLines.join('\n'));
+	await app.vault.modify(file, nextLines.join('\n'));
 }
 
 export async function clearGraphBlockBody(
@@ -155,12 +158,11 @@ export async function clearGraphBlockBody(
 	location: GraphBlockLocation,
 ): Promise<void> {
 	const file = app.vault.getAbstractFileByPath(location.sourcePath);
-	if (!file) {
+	if (!(file instanceof TFile)) {
 		throw new Error('Note not found.');
 	}
 
-	const tfile = file as TFile;
-	const lines = (await app.vault.read(tfile)).split('\n');
+	const lines = (await app.vault.read(file)).split('\n');
 	const replacement = ['```graph', '```'];
 
 	const nextLines = [
@@ -168,7 +170,7 @@ export async function clearGraphBlockBody(
 		...replacement,
 		...lines.slice(location.endLine + 1),
 	];
-	await app.vault.modify(tfile, nextLines.join('\n'));
+	await app.vault.modify(file, nextLines.join('\n'));
 }
 
 export async function removeGraphBlock(
@@ -176,17 +178,16 @@ export async function removeGraphBlock(
 	location: GraphBlockLocation,
 ): Promise<void> {
 	const file = app.vault.getAbstractFileByPath(location.sourcePath);
-	if (!file) {
+	if (!(file instanceof TFile)) {
 		throw new Error('Note not found.');
 	}
 
-	const tfile = file as TFile;
-	const lines = (await app.vault.read(tfile)).split('\n');
+	const lines = (await app.vault.read(file)).split('\n');
 	const nextLines = [
 		...lines.slice(0, location.startLine),
 		...lines.slice(location.endLine + 1),
 	];
-	await app.vault.modify(tfile, nextLines.join('\n'));
+	await app.vault.modify(file, nextLines.join('\n'));
 }
 
 export async function insertGraphBlockAtCursor(app: App, spec: GraphSpec): Promise<void> {

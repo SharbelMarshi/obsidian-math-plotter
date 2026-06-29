@@ -199,10 +199,6 @@ function buildParametric3dTikz(spec: GraphSpec, styleOpts: string, settings?: Ma
 	}
 
 	const tDomain = rangeToDomain(spec.ranges?.t) ?? '0:6.28318';
-	const labels = spec.labels ?? {};
-	const { width, height } = resolveLatexGraphDimensions(spec);
-	const xDomain = rangeToDomain(spec.ranges?.x);
-	const yDomain = rangeToDomain(spec.ranges?.y);
 
 	const axisOpts = pgfplots3dAxisOptions(spec);
 

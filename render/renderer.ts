@@ -137,7 +137,7 @@ export class GraphRenderer {
 		}
 
 		const pending = this.inFlight.get(key);
-		if (pending) {
+		if (pending !== undefined) {
 			return pending;
 		}
 
@@ -180,7 +180,7 @@ export class GraphRenderer {
 		}
 
 		const pending = this.inFlight.get(key);
-		if (pending) {
+		if (pending !== undefined) {
 			return pending;
 		}
 

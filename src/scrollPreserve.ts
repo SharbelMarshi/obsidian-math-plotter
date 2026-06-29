@@ -28,28 +28,31 @@ function scrollContainerCandidates(doc: Document): Element[] {
 
 export function captureScrollPosition(app: App): ScrollSnapshot {
 	const leaf = app.workspace.getMostRecentLeaf();
-	const doc = leaf?.view?.containerEl.ownerDocument ?? document;
+	const doc = leaf?.view?.containerEl.ownerDocument ?? app.workspace.containerEl.ownerDocument;
+	const activeWindow = doc.defaultView ?? window;
 	const containers = scrollContainerCandidates(doc)
 		.filter(element => element.scrollHeight > element.clientHeight + 1)
 		.map(element => ({ element, top: element.scrollTop }));
 
 	return {
-		windowY: window.scrollY,
+		windowY: activeWindow.scrollY,
 		containers,
 	};
 }
 
-export function restoreScrollPosition(_app: App, snapshot: ScrollSnapshot): void {
+export function restoreScrollPosition(app: App, snapshot: ScrollSnapshot): void {
+	const doc = app.workspace.containerEl.ownerDocument;
+	const activeWindow = doc.defaultView ?? window;
 	const apply = () => {
-		window.scrollTo({ top: snapshot.windowY });
+		activeWindow.scrollTo({ top: snapshot.windowY });
 		for (const { element, top } of snapshot.containers) {
 			element.scrollTop = top;
 		}
 	};
 
-	requestAnimationFrame(() => {
+	activeWindow.requestAnimationFrame(() => {
 		apply();
-		requestAnimationFrame(apply);
+		activeWindow.requestAnimationFrame(apply);
 	});
 }
 

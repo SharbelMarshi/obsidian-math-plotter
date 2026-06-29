@@ -1,6 +1,7 @@
 import { evaluateExpression } from './ExpressionEngine';
 import type { GraphSpec } from './graphSpec';
 import { getUserFunction } from './graphSpec';
+import { evaluateSafeMathExpression } from './safeMathEvaluator';
 
 export const SURFACE_Z_CLIP_WARNING =
 	'Most of the surface may be clipped by the selected z range.';
@@ -18,20 +19,16 @@ export function parseBoundToNumber(raw: string): number | null {
 		return Number.parseFloat(trimmed);
 	}
 
-	const jsExpr = trimmed
-		.replace(/\bpi\b/gi, 'Math.PI')
-		.replace(/\^/g, '**');
+	const expr = trimmed
+		.replace(/\bpi\b/gi, 'pi')
+		.replace(/\^/g, '^');
 
-	if (!/^[\d\s+\-*/().MathPI]+$/.test(jsExpr.replace(/Math\.PI/g, ''))) {
+	if (!/^[\d\s+\-*/().a-zA-Z]+$/.test(expr)) {
 		return null;
 	}
 
-	try {
-		const value = Function(`"use strict"; return (${jsExpr});`)() as number;
-		return Number.isFinite(value) ? value : null;
-	} catch {
-		return null;
-	}
+	const value = evaluateSafeMathExpression(expr, {}, []);
+	return Number.isFinite(value) ? value : null;
 }
 
 function evaluateSurfaceZ(

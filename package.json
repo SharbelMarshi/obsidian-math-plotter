@@ -1,6 +1,6 @@
 {
 	"name": "math-plotter",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "GUI-first function plotting for Obsidian",
 	"main": "main.js",
 	"scripts": {
@@ -34,7 +34,6 @@
 		"typescript": "^5.0.0"
 	},
 	"dependencies": {
-		"expr-eval": "^2.0.2",
 		"node-tikzjax": "^1.0.5"
 	}
 }

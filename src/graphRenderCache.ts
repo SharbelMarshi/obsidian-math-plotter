@@ -2,10 +2,11 @@ import type { RenderImageResult } from '../render/types';
 import type { RenderMode } from '../render/renderMode';
 import type { GraphSpec } from './graphSpec';
 import { applyRenderedGraphLayoutScale } from './displayScaleLayout';
+import { isHTMLElement } from './domUtils';
 
 /** Fingerprint for render caching — ignores displayScale-only changes. */
 export function specRenderFingerprint(spec: GraphSpec): string {
-	const copy = structuredClone(spec) as GraphSpec;
+	const copy = structuredClone(spec);
 	if (copy.size) {
 		delete copy.size.displayScale;
 	}
@@ -18,7 +19,7 @@ export function renderCacheKey(fingerprint: string, mode: RenderMode, isDark: bo
 
 export function applyDisplayScaleToRoot(root: HTMLElement, spec: GraphSpec, svgText?: string): void {
 	const container = root.querySelector('.mathgraph-rendered-container');
-	if (container instanceof HTMLElement) {
+	if (isHTMLElement(container)) {
 		applyRenderedGraphLayoutScale(container, spec, { svgText });
 	}
 }

@@ -52,21 +52,21 @@ export function spawnOctaveWithTimeout(
 			stderr += chunk.toString();
 		});
 
-		const timer = setTimeout(() => {
+		const timer = window.setTimeout(() => {
 			timedOut = true;
 			child.kill('SIGKILL');
 			reject(new RenderTimeoutError(timeoutMs));
 		}, timeoutMs);
 
 		child.on('error', err => {
-			clearTimeout(timer);
+			window.clearTimeout(timer);
 			if (!timedOut) {
 				reject(err);
 			}
 		});
 
 		child.on('close', code => {
-			clearTimeout(timer);
+			window.clearTimeout(timer);
 			if (timedOut) {
 				return;
 			}

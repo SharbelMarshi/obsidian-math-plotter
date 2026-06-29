@@ -54,14 +54,14 @@ async function loadTex2Svg(pluginBaseDir: string): Promise<Tex2SvgFn> {
 		return tex2svgModule;
 	}
 
-	if (!loadPromise) {
+	if (loadPromise === null) {
 		loadPromise = (async () => {
 			const modulePath = resolveTikzJaxModulePath(pluginBaseDir);
 			if (!modulePath) {
 				throw new Error(missingAssetsMessage(pluginBaseDir));
 			}
 
-			// eslint-disable-next-line @typescript-eslint/no-require-imports
+			// eslint-disable-next-line @typescript-eslint/no-require-imports -- TikZJax ships as a CommonJS bundle loaded from the plugin asset folder at runtime.
 			const mod = require(modulePath) as { default?: Tex2SvgFn; load?: () => Promise<void> };
 			if (typeof mod.load === 'function') {
 				await mod.load();

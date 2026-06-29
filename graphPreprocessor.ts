@@ -582,10 +582,6 @@ function parseBracedArgument(text: string, start: number): ParsedBraces | null {
 	return findBracedArgument(text, start);
 }
 
-function isNumericRange(value: string): boolean {
-	return NUMERIC_RANGE_PATTERN.test(value.trim());
-}
-
 function parseNumericRange(value: string): NumericRange | null {
 	const match = value.trim().match(NUMERIC_RANGE_PATTERN);
 	if (!match) {

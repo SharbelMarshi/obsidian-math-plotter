@@ -3,6 +3,7 @@ import type MathGraphStudioPlugin from '../main';
 import { clearGraphRenderCache } from './graphRenderCache';
 import { captureScrollPosition, restoreScrollPosition } from './scrollPreserve';
 import { getCurrentTheme } from './graphThemeColors';
+import { isHTMLElement } from './domUtils';
 
 export interface GraphRerenderOptions {
 	preserveScale?: boolean;
@@ -24,7 +25,7 @@ export function rerenderGraphContainer(
 	options?: GraphRerenderOptions,
 ): void {
 	const root = container.closest('.mathgraph-processor-root');
-	if (root instanceof HTMLElement) {
+	if (isHTMLElement(root)) {
 		graphRerenderHandlers.get(root)?.(options);
 	}
 }
@@ -40,7 +41,7 @@ function findMountedGraphRoots(app: App): HTMLElement[] {
 		}
 
 		for (const root of Array.from(container.querySelectorAll('.mathgraph-processor-root'))) {
-			if (!(root instanceof HTMLElement)) {
+			if (!isHTMLElement(root)) {
 				continue;
 			}
 			if (!root.isConnected || !root.querySelector('.mathgraph-rendered-container')) {
@@ -76,6 +77,7 @@ export function createThemeWatcher(plugin: MathGraphStudioPlugin): {
 } {
 	let currentTheme = getCurrentTheme();
 	let refreshTimer: number | null = null;
+	const doc = plugin.app.workspace.containerEl.ownerDocument;
 
 	const scheduleRefresh = () => {
 		if (refreshTimer !== null) {
@@ -101,7 +103,7 @@ export function createThemeWatcher(plugin: MathGraphStudioPlugin): {
 	};
 
 	const observer = new MutationObserver(onMutation);
-	const targets = [document.body, document.documentElement];
+	const targets = [doc.body, doc.documentElement];
 	for (const target of targets) {
 		observer.observe(target, { attributes: true, attributeFilter: ['class'] });
 	}

@@ -30,6 +30,7 @@ import { captureScrollPosition, restoreScrollPosition } from './scrollPreserve';
 import { decorateMathGraphRoot } from './uiStyle';
 import { isObsidianDarkTheme } from './graphThemeColors';
 import { registerGraphRerenderHandler } from './graphThemeWatcher';
+import { isHTMLElement } from './domUtils';
 
 const DISPLAY_SCALE_SAVE_DELAY_MS = 500;
 const RENDER_DEBOUNCE_MS = 500;
@@ -112,6 +113,14 @@ async function renderEmptyBlock(
 	}
 
 	renderInlineGraphBuilder(el, { plugin, ctx, location });
+	hideAdjacentSourceEmbed(el);
+}
+
+function hideAdjacentSourceEmbed(el: HTMLElement): void {
+	const prev = el.previousElementSibling;
+	if (prev?.classList.contains('cm-embed-block')) {
+		prev.addClass('mathgraph-hidden-embed');
+	}
 }
 
 function renderValidBlock(
@@ -121,9 +130,12 @@ function renderValidBlock(
 	source: string,
 	spec: GraphSpec,
 ): void {
+	el.addClass('mathgraph-has-rendered-graph');
+	hideAdjacentSourceEmbed(el);
+
 	const ensureLoading = (text = 'Drawing graph…'): HTMLElement => {
 		const existing = el.querySelector('.mathgraph-loading');
-		if (existing instanceof HTMLElement) {
+		if (isHTMLElement(existing)) {
 			existing.setText(text);
 			return existing;
 		}
@@ -396,7 +408,7 @@ async function setupGraphView(
 			spec.size = size;
 
 			const container = el.querySelector('.mathgraph-rendered-container');
-			if (container instanceof HTMLElement) {
+			if (isHTMLElement(container)) {
 				applyRenderedGraphDisplayScale(container, spec, result.svgText);
 			}
 

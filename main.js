@@ -209,1614 +209,6 @@ function formatExecError(err) {
   return String(err);
 }
 
-// node_modules/expr-eval/dist/index.mjs
-var INUMBER = "INUMBER";
-var IOP1 = "IOP1";
-var IOP2 = "IOP2";
-var IOP3 = "IOP3";
-var IVAR = "IVAR";
-var IVARNAME = "IVARNAME";
-var IFUNCALL = "IFUNCALL";
-var IFUNDEF = "IFUNDEF";
-var IEXPR = "IEXPR";
-var IEXPREVAL = "IEXPREVAL";
-var IMEMBER = "IMEMBER";
-var IENDSTATEMENT = "IENDSTATEMENT";
-var IARRAY = "IARRAY";
-function Instruction(type, value) {
-  this.type = type;
-  this.value = value !== void 0 && value !== null ? value : 0;
-}
-Instruction.prototype.toString = function() {
-  switch (this.type) {
-    case INUMBER:
-    case IOP1:
-    case IOP2:
-    case IOP3:
-    case IVAR:
-    case IVARNAME:
-    case IENDSTATEMENT:
-      return this.value;
-    case IFUNCALL:
-      return "CALL " + this.value;
-    case IFUNDEF:
-      return "DEF " + this.value;
-    case IARRAY:
-      return "ARRAY " + this.value;
-    case IMEMBER:
-      return "." + this.value;
-    default:
-      return "Invalid Instruction";
-  }
-};
-function unaryInstruction(value) {
-  return new Instruction(IOP1, value);
-}
-function binaryInstruction(value) {
-  return new Instruction(IOP2, value);
-}
-function ternaryInstruction(value) {
-  return new Instruction(IOP3, value);
-}
-function simplify(tokens, unaryOps, binaryOps, ternaryOps, values) {
-  var nstack = [];
-  var newexpression = [];
-  var n1, n2, n3;
-  var f;
-  for (var i = 0; i < tokens.length; i++) {
-    var item = tokens[i];
-    var type = item.type;
-    if (type === INUMBER || type === IVARNAME) {
-      if (Array.isArray(item.value)) {
-        nstack.push.apply(nstack, simplify(item.value.map(function(x) {
-          return new Instruction(INUMBER, x);
-        }).concat(new Instruction(IARRAY, item.value.length)), unaryOps, binaryOps, ternaryOps, values));
-      } else {
-        nstack.push(item);
-      }
-    } else if (type === IVAR && values.hasOwnProperty(item.value)) {
-      item = new Instruction(INUMBER, values[item.value]);
-      nstack.push(item);
-    } else if (type === IOP2 && nstack.length > 1) {
-      n2 = nstack.pop();
-      n1 = nstack.pop();
-      f = binaryOps[item.value];
-      item = new Instruction(INUMBER, f(n1.value, n2.value));
-      nstack.push(item);
-    } else if (type === IOP3 && nstack.length > 2) {
-      n3 = nstack.pop();
-      n2 = nstack.pop();
-      n1 = nstack.pop();
-      if (item.value === "?") {
-        nstack.push(n1.value ? n2.value : n3.value);
-      } else {
-        f = ternaryOps[item.value];
-        item = new Instruction(INUMBER, f(n1.value, n2.value, n3.value));
-        nstack.push(item);
-      }
-    } else if (type === IOP1 && nstack.length > 0) {
-      n1 = nstack.pop();
-      f = unaryOps[item.value];
-      item = new Instruction(INUMBER, f(n1.value));
-      nstack.push(item);
-    } else if (type === IEXPR) {
-      while (nstack.length > 0) {
-        newexpression.push(nstack.shift());
-      }
-      newexpression.push(new Instruction(IEXPR, simplify(item.value, unaryOps, binaryOps, ternaryOps, values)));
-    } else if (type === IMEMBER && nstack.length > 0) {
-      n1 = nstack.pop();
-      nstack.push(new Instruction(INUMBER, n1.value[item.value]));
-    } else {
-      while (nstack.length > 0) {
-        newexpression.push(nstack.shift());
-      }
-      newexpression.push(item);
-    }
-  }
-  while (nstack.length > 0) {
-    newexpression.push(nstack.shift());
-  }
-  return newexpression;
-}
-function substitute(tokens, variable, expr) {
-  var newexpression = [];
-  for (var i = 0; i < tokens.length; i++) {
-    var item = tokens[i];
-    var type = item.type;
-    if (type === IVAR && item.value === variable) {
-      for (var j = 0; j < expr.tokens.length; j++) {
-        var expritem = expr.tokens[j];
-        var replitem;
-        if (expritem.type === IOP1) {
-          replitem = unaryInstruction(expritem.value);
-        } else if (expritem.type === IOP2) {
-          replitem = binaryInstruction(expritem.value);
-        } else if (expritem.type === IOP3) {
-          replitem = ternaryInstruction(expritem.value);
-        } else {
-          replitem = new Instruction(expritem.type, expritem.value);
-        }
-        newexpression.push(replitem);
-      }
-    } else if (type === IEXPR) {
-      newexpression.push(new Instruction(IEXPR, substitute(item.value, variable, expr)));
-    } else {
-      newexpression.push(item);
-    }
-  }
-  return newexpression;
-}
-function evaluate(tokens, expr, values) {
-  var nstack = [];
-  var n1, n2, n3;
-  var f, args, argCount;
-  if (isExpressionEvaluator(tokens)) {
-    return resolveExpression(tokens, values);
-  }
-  var numTokens = tokens.length;
-  for (var i = 0; i < numTokens; i++) {
-    var item = tokens[i];
-    var type = item.type;
-    if (type === INUMBER || type === IVARNAME) {
-      nstack.push(item.value);
-    } else if (type === IOP2) {
-      n2 = nstack.pop();
-      n1 = nstack.pop();
-      if (item.value === "and") {
-        nstack.push(n1 ? !!evaluate(n2, expr, values) : false);
-      } else if (item.value === "or") {
-        nstack.push(n1 ? true : !!evaluate(n2, expr, values));
-      } else if (item.value === "=") {
-        f = expr.binaryOps[item.value];
-        nstack.push(f(n1, evaluate(n2, expr, values), values));
-      } else {
-        f = expr.binaryOps[item.value];
-        nstack.push(f(resolveExpression(n1, values), resolveExpression(n2, values)));
-      }
-    } else if (type === IOP3) {
-      n3 = nstack.pop();
-      n2 = nstack.pop();
-      n1 = nstack.pop();
-      if (item.value === "?") {
-        nstack.push(evaluate(n1 ? n2 : n3, expr, values));
-      } else {
-        f = expr.ternaryOps[item.value];
-        nstack.push(f(resolveExpression(n1, values), resolveExpression(n2, values), resolveExpression(n3, values)));
-      }
-    } else if (type === IVAR) {
-      if (item.value in expr.functions) {
-        nstack.push(expr.functions[item.value]);
-      } else if (item.value in expr.unaryOps && expr.parser.isOperatorEnabled(item.value)) {
-        nstack.push(expr.unaryOps[item.value]);
-      } else {
-        var v = values[item.value];
-        if (v !== void 0) {
-          nstack.push(v);
-        } else {
-          throw new Error("undefined variable: " + item.value);
-        }
-      }
-    } else if (type === IOP1) {
-      n1 = nstack.pop();
-      f = expr.unaryOps[item.value];
-      nstack.push(f(resolveExpression(n1, values)));
-    } else if (type === IFUNCALL) {
-      argCount = item.value;
-      args = [];
-      while (argCount-- > 0) {
-        args.unshift(resolveExpression(nstack.pop(), values));
-      }
-      f = nstack.pop();
-      if (f.apply && f.call) {
-        nstack.push(f.apply(void 0, args));
-      } else {
-        throw new Error(f + " is not a function");
-      }
-    } else if (type === IFUNDEF) {
-      nstack.push(function() {
-        var n22 = nstack.pop();
-        var args2 = [];
-        var argCount2 = item.value;
-        while (argCount2-- > 0) {
-          args2.unshift(nstack.pop());
-        }
-        var n12 = nstack.pop();
-        var f2 = function() {
-          var scope = Object.assign({}, values);
-          for (var i2 = 0, len = args2.length; i2 < len; i2++) {
-            scope[args2[i2]] = arguments[i2];
-          }
-          return evaluate(n22, expr, scope);
-        };
-        Object.defineProperty(f2, "name", {
-          value: n12,
-          writable: false
-        });
-        values[n12] = f2;
-        return f2;
-      }());
-    } else if (type === IEXPR) {
-      nstack.push(createExpressionEvaluator(item, expr));
-    } else if (type === IEXPREVAL) {
-      nstack.push(item);
-    } else if (type === IMEMBER) {
-      n1 = nstack.pop();
-      nstack.push(n1[item.value]);
-    } else if (type === IENDSTATEMENT) {
-      nstack.pop();
-    } else if (type === IARRAY) {
-      argCount = item.value;
-      args = [];
-      while (argCount-- > 0) {
-        args.unshift(nstack.pop());
-      }
-      nstack.push(args);
-    } else {
-      throw new Error("invalid Expression");
-    }
-  }
-  if (nstack.length > 1) {
-    throw new Error("invalid Expression (parity)");
-  }
-  return nstack[0] === 0 ? 0 : resolveExpression(nstack[0], values);
-}
-function createExpressionEvaluator(token, expr, values) {
-  if (isExpressionEvaluator(token))
-    return token;
-  return {
-    type: IEXPREVAL,
-    value: function(scope) {
-      return evaluate(token.value, expr, scope);
-    }
-  };
-}
-function isExpressionEvaluator(n) {
-  return n && n.type === IEXPREVAL;
-}
-function resolveExpression(n, values) {
-  return isExpressionEvaluator(n) ? n.value(values) : n;
-}
-function expressionToString(tokens, toJS) {
-  var nstack = [];
-  var n1, n2, n3;
-  var f, args, argCount;
-  for (var i = 0; i < tokens.length; i++) {
-    var item = tokens[i];
-    var type = item.type;
-    if (type === INUMBER) {
-      if (typeof item.value === "number" && item.value < 0) {
-        nstack.push("(" + item.value + ")");
-      } else if (Array.isArray(item.value)) {
-        nstack.push("[" + item.value.map(escapeValue).join(", ") + "]");
-      } else {
-        nstack.push(escapeValue(item.value));
-      }
-    } else if (type === IOP2) {
-      n2 = nstack.pop();
-      n1 = nstack.pop();
-      f = item.value;
-      if (toJS) {
-        if (f === "^") {
-          nstack.push("Math.pow(" + n1 + ", " + n2 + ")");
-        } else if (f === "and") {
-          nstack.push("(!!" + n1 + " && !!" + n2 + ")");
-        } else if (f === "or") {
-          nstack.push("(!!" + n1 + " || !!" + n2 + ")");
-        } else if (f === "||") {
-          nstack.push("(function(a,b){ return Array.isArray(a) && Array.isArray(b) ? a.concat(b) : String(a) + String(b); }((" + n1 + "),(" + n2 + ")))");
-        } else if (f === "==") {
-          nstack.push("(" + n1 + " === " + n2 + ")");
-        } else if (f === "!=") {
-          nstack.push("(" + n1 + " !== " + n2 + ")");
-        } else if (f === "[") {
-          nstack.push(n1 + "[(" + n2 + ") | 0]");
-        } else {
-          nstack.push("(" + n1 + " " + f + " " + n2 + ")");
-        }
-      } else {
-        if (f === "[") {
-          nstack.push(n1 + "[" + n2 + "]");
-        } else {
-          nstack.push("(" + n1 + " " + f + " " + n2 + ")");
-        }
-      }
-    } else if (type === IOP3) {
-      n3 = nstack.pop();
-      n2 = nstack.pop();
-      n1 = nstack.pop();
-      f = item.value;
-      if (f === "?") {
-        nstack.push("(" + n1 + " ? " + n2 + " : " + n3 + ")");
-      } else {
-        throw new Error("invalid Expression");
-      }
-    } else if (type === IVAR || type === IVARNAME) {
-      nstack.push(item.value);
-    } else if (type === IOP1) {
-      n1 = nstack.pop();
-      f = item.value;
-      if (f === "-" || f === "+") {
-        nstack.push("(" + f + n1 + ")");
-      } else if (toJS) {
-        if (f === "not") {
-          nstack.push("(!" + n1 + ")");
-        } else if (f === "!") {
-          nstack.push("fac(" + n1 + ")");
-        } else {
-          nstack.push(f + "(" + n1 + ")");
-        }
-      } else if (f === "!") {
-        nstack.push("(" + n1 + "!)");
-      } else {
-        nstack.push("(" + f + " " + n1 + ")");
-      }
-    } else if (type === IFUNCALL) {
-      argCount = item.value;
-      args = [];
-      while (argCount-- > 0) {
-        args.unshift(nstack.pop());
-      }
-      f = nstack.pop();
-      nstack.push(f + "(" + args.join(", ") + ")");
-    } else if (type === IFUNDEF) {
-      n2 = nstack.pop();
-      argCount = item.value;
-      args = [];
-      while (argCount-- > 0) {
-        args.unshift(nstack.pop());
-      }
-      n1 = nstack.pop();
-      if (toJS) {
-        nstack.push("(" + n1 + " = function(" + args.join(", ") + ") { return " + n2 + " })");
-      } else {
-        nstack.push("(" + n1 + "(" + args.join(", ") + ") = " + n2 + ")");
-      }
-    } else if (type === IMEMBER) {
-      n1 = nstack.pop();
-      nstack.push(n1 + "." + item.value);
-    } else if (type === IARRAY) {
-      argCount = item.value;
-      args = [];
-      while (argCount-- > 0) {
-        args.unshift(nstack.pop());
-      }
-      nstack.push("[" + args.join(", ") + "]");
-    } else if (type === IEXPR) {
-      nstack.push("(" + expressionToString(item.value, toJS) + ")");
-    } else if (type === IENDSTATEMENT)
-      ;
-    else {
-      throw new Error("invalid Expression");
-    }
-  }
-  if (nstack.length > 1) {
-    if (toJS) {
-      nstack = [nstack.join(",")];
-    } else {
-      nstack = [nstack.join(";")];
-    }
-  }
-  return String(nstack[0]);
-}
-function escapeValue(v) {
-  if (typeof v === "string") {
-    return JSON.stringify(v).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-  }
-  return v;
-}
-function contains(array, obj) {
-  for (var i = 0; i < array.length; i++) {
-    if (array[i] === obj) {
-      return true;
-    }
-  }
-  return false;
-}
-function getSymbols(tokens, symbols, options) {
-  options = options || {};
-  var withMembers = !!options.withMembers;
-  var prevVar = null;
-  for (var i = 0; i < tokens.length; i++) {
-    var item = tokens[i];
-    if (item.type === IVAR || item.type === IVARNAME) {
-      if (!withMembers && !contains(symbols, item.value)) {
-        symbols.push(item.value);
-      } else if (prevVar !== null) {
-        if (!contains(symbols, prevVar)) {
-          symbols.push(prevVar);
-        }
-        prevVar = item.value;
-      } else {
-        prevVar = item.value;
-      }
-    } else if (item.type === IMEMBER && withMembers && prevVar !== null) {
-      prevVar += "." + item.value;
-    } else if (item.type === IEXPR) {
-      getSymbols(item.value, symbols, options);
-    } else if (prevVar !== null) {
-      if (!contains(symbols, prevVar)) {
-        symbols.push(prevVar);
-      }
-      prevVar = null;
-    }
-  }
-  if (prevVar !== null && !contains(symbols, prevVar)) {
-    symbols.push(prevVar);
-  }
-}
-function Expression(tokens, parser2) {
-  this.tokens = tokens;
-  this.parser = parser2;
-  this.unaryOps = parser2.unaryOps;
-  this.binaryOps = parser2.binaryOps;
-  this.ternaryOps = parser2.ternaryOps;
-  this.functions = parser2.functions;
-}
-Expression.prototype.simplify = function(values) {
-  values = values || {};
-  return new Expression(simplify(this.tokens, this.unaryOps, this.binaryOps, this.ternaryOps, values), this.parser);
-};
-Expression.prototype.substitute = function(variable, expr) {
-  if (!(expr instanceof Expression)) {
-    expr = this.parser.parse(String(expr));
-  }
-  return new Expression(substitute(this.tokens, variable, expr), this.parser);
-};
-Expression.prototype.evaluate = function(values) {
-  values = values || {};
-  return evaluate(this.tokens, this, values);
-};
-Expression.prototype.toString = function() {
-  return expressionToString(this.tokens, false);
-};
-Expression.prototype.symbols = function(options) {
-  options = options || {};
-  var vars = [];
-  getSymbols(this.tokens, vars, options);
-  return vars;
-};
-Expression.prototype.variables = function(options) {
-  options = options || {};
-  var vars = [];
-  getSymbols(this.tokens, vars, options);
-  var functions = this.functions;
-  return vars.filter(function(name) {
-    return !(name in functions);
-  });
-};
-Expression.prototype.toJSFunction = function(param, variables) {
-  var expr = this;
-  var f = new Function(param, "with(this.functions) with (this.ternaryOps) with (this.binaryOps) with (this.unaryOps) { return " + expressionToString(this.simplify(variables).tokens, true) + "; }");
-  return function() {
-    return f.apply(expr, arguments);
-  };
-};
-var TEOF = "TEOF";
-var TOP = "TOP";
-var TNUMBER = "TNUMBER";
-var TSTRING = "TSTRING";
-var TPAREN = "TPAREN";
-var TBRACKET = "TBRACKET";
-var TCOMMA = "TCOMMA";
-var TNAME = "TNAME";
-var TSEMICOLON = "TSEMICOLON";
-function Token(type, value, index) {
-  this.type = type;
-  this.value = value;
-  this.index = index;
-}
-Token.prototype.toString = function() {
-  return this.type + ": " + this.value;
-};
-function TokenStream(parser2, expression) {
-  this.pos = 0;
-  this.current = null;
-  this.unaryOps = parser2.unaryOps;
-  this.binaryOps = parser2.binaryOps;
-  this.ternaryOps = parser2.ternaryOps;
-  this.consts = parser2.consts;
-  this.expression = expression;
-  this.savedPosition = 0;
-  this.savedCurrent = null;
-  this.options = parser2.options;
-  this.parser = parser2;
-}
-TokenStream.prototype.newToken = function(type, value, pos) {
-  return new Token(type, value, pos != null ? pos : this.pos);
-};
-TokenStream.prototype.save = function() {
-  this.savedPosition = this.pos;
-  this.savedCurrent = this.current;
-};
-TokenStream.prototype.restore = function() {
-  this.pos = this.savedPosition;
-  this.current = this.savedCurrent;
-};
-TokenStream.prototype.next = function() {
-  if (this.pos >= this.expression.length) {
-    return this.newToken(TEOF, "EOF");
-  }
-  if (this.isWhitespace() || this.isComment()) {
-    return this.next();
-  } else if (this.isRadixInteger() || this.isNumber() || this.isOperator() || this.isString() || this.isParen() || this.isBracket() || this.isComma() || this.isSemicolon() || this.isNamedOp() || this.isConst() || this.isName()) {
-    return this.current;
-  } else {
-    this.parseError('Unknown character "' + this.expression.charAt(this.pos) + '"');
-  }
-};
-TokenStream.prototype.isString = function() {
-  var r = false;
-  var startPos = this.pos;
-  var quote = this.expression.charAt(startPos);
-  if (quote === "'" || quote === '"') {
-    var index = this.expression.indexOf(quote, startPos + 1);
-    while (index >= 0 && this.pos < this.expression.length) {
-      this.pos = index + 1;
-      if (this.expression.charAt(index - 1) !== "\\") {
-        var rawString = this.expression.substring(startPos + 1, index);
-        this.current = this.newToken(TSTRING, this.unescape(rawString), startPos);
-        r = true;
-        break;
-      }
-      index = this.expression.indexOf(quote, index + 1);
-    }
-  }
-  return r;
-};
-TokenStream.prototype.isParen = function() {
-  var c = this.expression.charAt(this.pos);
-  if (c === "(" || c === ")") {
-    this.current = this.newToken(TPAREN, c);
-    this.pos++;
-    return true;
-  }
-  return false;
-};
-TokenStream.prototype.isBracket = function() {
-  var c = this.expression.charAt(this.pos);
-  if ((c === "[" || c === "]") && this.isOperatorEnabled("[")) {
-    this.current = this.newToken(TBRACKET, c);
-    this.pos++;
-    return true;
-  }
-  return false;
-};
-TokenStream.prototype.isComma = function() {
-  var c = this.expression.charAt(this.pos);
-  if (c === ",") {
-    this.current = this.newToken(TCOMMA, ",");
-    this.pos++;
-    return true;
-  }
-  return false;
-};
-TokenStream.prototype.isSemicolon = function() {
-  var c = this.expression.charAt(this.pos);
-  if (c === ";") {
-    this.current = this.newToken(TSEMICOLON, ";");
-    this.pos++;
-    return true;
-  }
-  return false;
-};
-TokenStream.prototype.isConst = function() {
-  var startPos = this.pos;
-  var i = startPos;
-  for (; i < this.expression.length; i++) {
-    var c = this.expression.charAt(i);
-    if (c.toUpperCase() === c.toLowerCase()) {
-      if (i === this.pos || c !== "_" && c !== "." && (c < "0" || c > "9")) {
-        break;
-      }
-    }
-  }
-  if (i > startPos) {
-    var str = this.expression.substring(startPos, i);
-    if (str in this.consts) {
-      this.current = this.newToken(TNUMBER, this.consts[str]);
-      this.pos += str.length;
-      return true;
-    }
-  }
-  return false;
-};
-TokenStream.prototype.isNamedOp = function() {
-  var startPos = this.pos;
-  var i = startPos;
-  for (; i < this.expression.length; i++) {
-    var c = this.expression.charAt(i);
-    if (c.toUpperCase() === c.toLowerCase()) {
-      if (i === this.pos || c !== "_" && (c < "0" || c > "9")) {
-        break;
-      }
-    }
-  }
-  if (i > startPos) {
-    var str = this.expression.substring(startPos, i);
-    if (this.isOperatorEnabled(str) && (str in this.binaryOps || str in this.unaryOps || str in this.ternaryOps)) {
-      this.current = this.newToken(TOP, str);
-      this.pos += str.length;
-      return true;
-    }
-  }
-  return false;
-};
-TokenStream.prototype.isName = function() {
-  var startPos = this.pos;
-  var i = startPos;
-  var hasLetter = false;
-  for (; i < this.expression.length; i++) {
-    var c = this.expression.charAt(i);
-    if (c.toUpperCase() === c.toLowerCase()) {
-      if (i === this.pos && (c === "$" || c === "_")) {
-        if (c === "_") {
-          hasLetter = true;
-        }
-        continue;
-      } else if (i === this.pos || !hasLetter || c !== "_" && (c < "0" || c > "9")) {
-        break;
-      }
-    } else {
-      hasLetter = true;
-    }
-  }
-  if (hasLetter) {
-    var str = this.expression.substring(startPos, i);
-    this.current = this.newToken(TNAME, str);
-    this.pos += str.length;
-    return true;
-  }
-  return false;
-};
-TokenStream.prototype.isWhitespace = function() {
-  var r = false;
-  var c = this.expression.charAt(this.pos);
-  while (c === " " || c === "	" || c === "\n" || c === "\r") {
-    r = true;
-    this.pos++;
-    if (this.pos >= this.expression.length) {
-      break;
-    }
-    c = this.expression.charAt(this.pos);
-  }
-  return r;
-};
-var codePointPattern = /^[0-9a-f]{4}$/i;
-TokenStream.prototype.unescape = function(v) {
-  var index = v.indexOf("\\");
-  if (index < 0) {
-    return v;
-  }
-  var buffer = v.substring(0, index);
-  while (index >= 0) {
-    var c = v.charAt(++index);
-    switch (c) {
-      case "'":
-        buffer += "'";
-        break;
-      case '"':
-        buffer += '"';
-        break;
-      case "\\":
-        buffer += "\\";
-        break;
-      case "/":
-        buffer += "/";
-        break;
-      case "b":
-        buffer += "\b";
-        break;
-      case "f":
-        buffer += "\f";
-        break;
-      case "n":
-        buffer += "\n";
-        break;
-      case "r":
-        buffer += "\r";
-        break;
-      case "t":
-        buffer += "	";
-        break;
-      case "u":
-        var codePoint = v.substring(index + 1, index + 5);
-        if (!codePointPattern.test(codePoint)) {
-          this.parseError("Illegal escape sequence: \\u" + codePoint);
-        }
-        buffer += String.fromCharCode(parseInt(codePoint, 16));
-        index += 4;
-        break;
-      default:
-        throw this.parseError('Illegal escape sequence: "\\' + c + '"');
-    }
-    ++index;
-    var backslash = v.indexOf("\\", index);
-    buffer += v.substring(index, backslash < 0 ? v.length : backslash);
-    index = backslash;
-  }
-  return buffer;
-};
-TokenStream.prototype.isComment = function() {
-  var c = this.expression.charAt(this.pos);
-  if (c === "/" && this.expression.charAt(this.pos + 1) === "*") {
-    this.pos = this.expression.indexOf("*/", this.pos) + 2;
-    if (this.pos === 1) {
-      this.pos = this.expression.length;
-    }
-    return true;
-  }
-  return false;
-};
-TokenStream.prototype.isRadixInteger = function() {
-  var pos = this.pos;
-  if (pos >= this.expression.length - 2 || this.expression.charAt(pos) !== "0") {
-    return false;
-  }
-  ++pos;
-  var radix;
-  var validDigit;
-  if (this.expression.charAt(pos) === "x") {
-    radix = 16;
-    validDigit = /^[0-9a-f]$/i;
-    ++pos;
-  } else if (this.expression.charAt(pos) === "b") {
-    radix = 2;
-    validDigit = /^[01]$/i;
-    ++pos;
-  } else {
-    return false;
-  }
-  var valid = false;
-  var startPos = pos;
-  while (pos < this.expression.length) {
-    var c = this.expression.charAt(pos);
-    if (validDigit.test(c)) {
-      pos++;
-      valid = true;
-    } else {
-      break;
-    }
-  }
-  if (valid) {
-    this.current = this.newToken(TNUMBER, parseInt(this.expression.substring(startPos, pos), radix));
-    this.pos = pos;
-  }
-  return valid;
-};
-TokenStream.prototype.isNumber = function() {
-  var valid = false;
-  var pos = this.pos;
-  var startPos = pos;
-  var resetPos = pos;
-  var foundDot = false;
-  var foundDigits = false;
-  var c;
-  while (pos < this.expression.length) {
-    c = this.expression.charAt(pos);
-    if (c >= "0" && c <= "9" || !foundDot && c === ".") {
-      if (c === ".") {
-        foundDot = true;
-      } else {
-        foundDigits = true;
-      }
-      pos++;
-      valid = foundDigits;
-    } else {
-      break;
-    }
-  }
-  if (valid) {
-    resetPos = pos;
-  }
-  if (c === "e" || c === "E") {
-    pos++;
-    var acceptSign = true;
-    var validExponent = false;
-    while (pos < this.expression.length) {
-      c = this.expression.charAt(pos);
-      if (acceptSign && (c === "+" || c === "-")) {
-        acceptSign = false;
-      } else if (c >= "0" && c <= "9") {
-        validExponent = true;
-        acceptSign = false;
-      } else {
-        break;
-      }
-      pos++;
-    }
-    if (!validExponent) {
-      pos = resetPos;
-    }
-  }
-  if (valid) {
-    this.current = this.newToken(TNUMBER, parseFloat(this.expression.substring(startPos, pos)));
-    this.pos = pos;
-  } else {
-    this.pos = resetPos;
-  }
-  return valid;
-};
-TokenStream.prototype.isOperator = function() {
-  var startPos = this.pos;
-  var c = this.expression.charAt(this.pos);
-  if (c === "+" || c === "-" || c === "*" || c === "/" || c === "%" || c === "^" || c === "?" || c === ":" || c === ".") {
-    this.current = this.newToken(TOP, c);
-  } else if (c === "\u2219" || c === "\u2022") {
-    this.current = this.newToken(TOP, "*");
-  } else if (c === ">") {
-    if (this.expression.charAt(this.pos + 1) === "=") {
-      this.current = this.newToken(TOP, ">=");
-      this.pos++;
-    } else {
-      this.current = this.newToken(TOP, ">");
-    }
-  } else if (c === "<") {
-    if (this.expression.charAt(this.pos + 1) === "=") {
-      this.current = this.newToken(TOP, "<=");
-      this.pos++;
-    } else {
-      this.current = this.newToken(TOP, "<");
-    }
-  } else if (c === "|") {
-    if (this.expression.charAt(this.pos + 1) === "|") {
-      this.current = this.newToken(TOP, "||");
-      this.pos++;
-    } else {
-      return false;
-    }
-  } else if (c === "=") {
-    if (this.expression.charAt(this.pos + 1) === "=") {
-      this.current = this.newToken(TOP, "==");
-      this.pos++;
-    } else {
-      this.current = this.newToken(TOP, c);
-    }
-  } else if (c === "!") {
-    if (this.expression.charAt(this.pos + 1) === "=") {
-      this.current = this.newToken(TOP, "!=");
-      this.pos++;
-    } else {
-      this.current = this.newToken(TOP, c);
-    }
-  } else {
-    return false;
-  }
-  this.pos++;
-  if (this.isOperatorEnabled(this.current.value)) {
-    return true;
-  } else {
-    this.pos = startPos;
-    return false;
-  }
-};
-TokenStream.prototype.isOperatorEnabled = function(op) {
-  return this.parser.isOperatorEnabled(op);
-};
-TokenStream.prototype.getCoordinates = function() {
-  var line = 0;
-  var column;
-  var newline = -1;
-  do {
-    line++;
-    column = this.pos - newline;
-    newline = this.expression.indexOf("\n", newline + 1);
-  } while (newline >= 0 && newline < this.pos);
-  return {
-    line,
-    column
-  };
-};
-TokenStream.prototype.parseError = function(msg) {
-  var coords = this.getCoordinates();
-  throw new Error("parse error [" + coords.line + ":" + coords.column + "]: " + msg);
-};
-function ParserState(parser2, tokenStream, options) {
-  this.parser = parser2;
-  this.tokens = tokenStream;
-  this.current = null;
-  this.nextToken = null;
-  this.next();
-  this.savedCurrent = null;
-  this.savedNextToken = null;
-  this.allowMemberAccess = options.allowMemberAccess !== false;
-}
-ParserState.prototype.next = function() {
-  this.current = this.nextToken;
-  return this.nextToken = this.tokens.next();
-};
-ParserState.prototype.tokenMatches = function(token, value) {
-  if (typeof value === "undefined") {
-    return true;
-  } else if (Array.isArray(value)) {
-    return contains(value, token.value);
-  } else if (typeof value === "function") {
-    return value(token);
-  } else {
-    return token.value === value;
-  }
-};
-ParserState.prototype.save = function() {
-  this.savedCurrent = this.current;
-  this.savedNextToken = this.nextToken;
-  this.tokens.save();
-};
-ParserState.prototype.restore = function() {
-  this.tokens.restore();
-  this.current = this.savedCurrent;
-  this.nextToken = this.savedNextToken;
-};
-ParserState.prototype.accept = function(type, value) {
-  if (this.nextToken.type === type && this.tokenMatches(this.nextToken, value)) {
-    this.next();
-    return true;
-  }
-  return false;
-};
-ParserState.prototype.expect = function(type, value) {
-  if (!this.accept(type, value)) {
-    var coords = this.tokens.getCoordinates();
-    throw new Error("parse error [" + coords.line + ":" + coords.column + "]: Expected " + (value || type));
-  }
-};
-ParserState.prototype.parseAtom = function(instr) {
-  var unaryOps = this.tokens.unaryOps;
-  function isPrefixOperator(token) {
-    return token.value in unaryOps;
-  }
-  if (this.accept(TNAME) || this.accept(TOP, isPrefixOperator)) {
-    instr.push(new Instruction(IVAR, this.current.value));
-  } else if (this.accept(TNUMBER)) {
-    instr.push(new Instruction(INUMBER, this.current.value));
-  } else if (this.accept(TSTRING)) {
-    instr.push(new Instruction(INUMBER, this.current.value));
-  } else if (this.accept(TPAREN, "(")) {
-    this.parseExpression(instr);
-    this.expect(TPAREN, ")");
-  } else if (this.accept(TBRACKET, "[")) {
-    if (this.accept(TBRACKET, "]")) {
-      instr.push(new Instruction(IARRAY, 0));
-    } else {
-      var argCount = this.parseArrayList(instr);
-      instr.push(new Instruction(IARRAY, argCount));
-    }
-  } else {
-    throw new Error("unexpected " + this.nextToken);
-  }
-};
-ParserState.prototype.parseExpression = function(instr) {
-  var exprInstr = [];
-  if (this.parseUntilEndStatement(instr, exprInstr)) {
-    return;
-  }
-  this.parseVariableAssignmentExpression(exprInstr);
-  if (this.parseUntilEndStatement(instr, exprInstr)) {
-    return;
-  }
-  this.pushExpression(instr, exprInstr);
-};
-ParserState.prototype.pushExpression = function(instr, exprInstr) {
-  for (var i = 0, len = exprInstr.length; i < len; i++) {
-    instr.push(exprInstr[i]);
-  }
-};
-ParserState.prototype.parseUntilEndStatement = function(instr, exprInstr) {
-  if (!this.accept(TSEMICOLON))
-    return false;
-  if (this.nextToken && this.nextToken.type !== TEOF && !(this.nextToken.type === TPAREN && this.nextToken.value === ")")) {
-    exprInstr.push(new Instruction(IENDSTATEMENT));
-  }
-  if (this.nextToken.type !== TEOF) {
-    this.parseExpression(exprInstr);
-  }
-  instr.push(new Instruction(IEXPR, exprInstr));
-  return true;
-};
-ParserState.prototype.parseArrayList = function(instr) {
-  var argCount = 0;
-  while (!this.accept(TBRACKET, "]")) {
-    this.parseExpression(instr);
-    ++argCount;
-    while (this.accept(TCOMMA)) {
-      this.parseExpression(instr);
-      ++argCount;
-    }
-  }
-  return argCount;
-};
-ParserState.prototype.parseVariableAssignmentExpression = function(instr) {
-  this.parseConditionalExpression(instr);
-  while (this.accept(TOP, "=")) {
-    var varName = instr.pop();
-    var varValue = [];
-    var lastInstrIndex = instr.length - 1;
-    if (varName.type === IFUNCALL) {
-      if (!this.tokens.isOperatorEnabled("()=")) {
-        throw new Error("function definition is not permitted");
-      }
-      for (var i = 0, len = varName.value + 1; i < len; i++) {
-        var index = lastInstrIndex - i;
-        if (instr[index].type === IVAR) {
-          instr[index] = new Instruction(IVARNAME, instr[index].value);
-        }
-      }
-      this.parseVariableAssignmentExpression(varValue);
-      instr.push(new Instruction(IEXPR, varValue));
-      instr.push(new Instruction(IFUNDEF, varName.value));
-      continue;
-    }
-    if (varName.type !== IVAR && varName.type !== IMEMBER) {
-      throw new Error("expected variable for assignment");
-    }
-    this.parseVariableAssignmentExpression(varValue);
-    instr.push(new Instruction(IVARNAME, varName.value));
-    instr.push(new Instruction(IEXPR, varValue));
-    instr.push(binaryInstruction("="));
-  }
-};
-ParserState.prototype.parseConditionalExpression = function(instr) {
-  this.parseOrExpression(instr);
-  while (this.accept(TOP, "?")) {
-    var trueBranch = [];
-    var falseBranch = [];
-    this.parseConditionalExpression(trueBranch);
-    this.expect(TOP, ":");
-    this.parseConditionalExpression(falseBranch);
-    instr.push(new Instruction(IEXPR, trueBranch));
-    instr.push(new Instruction(IEXPR, falseBranch));
-    instr.push(ternaryInstruction("?"));
-  }
-};
-ParserState.prototype.parseOrExpression = function(instr) {
-  this.parseAndExpression(instr);
-  while (this.accept(TOP, "or")) {
-    var falseBranch = [];
-    this.parseAndExpression(falseBranch);
-    instr.push(new Instruction(IEXPR, falseBranch));
-    instr.push(binaryInstruction("or"));
-  }
-};
-ParserState.prototype.parseAndExpression = function(instr) {
-  this.parseComparison(instr);
-  while (this.accept(TOP, "and")) {
-    var trueBranch = [];
-    this.parseComparison(trueBranch);
-    instr.push(new Instruction(IEXPR, trueBranch));
-    instr.push(binaryInstruction("and"));
-  }
-};
-var COMPARISON_OPERATORS = ["==", "!=", "<", "<=", ">=", ">", "in"];
-ParserState.prototype.parseComparison = function(instr) {
-  this.parseAddSub(instr);
-  while (this.accept(TOP, COMPARISON_OPERATORS)) {
-    var op = this.current;
-    this.parseAddSub(instr);
-    instr.push(binaryInstruction(op.value));
-  }
-};
-var ADD_SUB_OPERATORS = ["+", "-", "||"];
-ParserState.prototype.parseAddSub = function(instr) {
-  this.parseTerm(instr);
-  while (this.accept(TOP, ADD_SUB_OPERATORS)) {
-    var op = this.current;
-    this.parseTerm(instr);
-    instr.push(binaryInstruction(op.value));
-  }
-};
-var TERM_OPERATORS = ["*", "/", "%"];
-ParserState.prototype.parseTerm = function(instr) {
-  this.parseFactor(instr);
-  while (this.accept(TOP, TERM_OPERATORS)) {
-    var op = this.current;
-    this.parseFactor(instr);
-    instr.push(binaryInstruction(op.value));
-  }
-};
-ParserState.prototype.parseFactor = function(instr) {
-  var unaryOps = this.tokens.unaryOps;
-  function isPrefixOperator(token) {
-    return token.value in unaryOps;
-  }
-  this.save();
-  if (this.accept(TOP, isPrefixOperator)) {
-    if (this.current.value !== "-" && this.current.value !== "+") {
-      if (this.nextToken.type === TPAREN && this.nextToken.value === "(") {
-        this.restore();
-        this.parseExponential(instr);
-        return;
-      } else if (this.nextToken.type === TSEMICOLON || this.nextToken.type === TCOMMA || this.nextToken.type === TEOF || this.nextToken.type === TPAREN && this.nextToken.value === ")") {
-        this.restore();
-        this.parseAtom(instr);
-        return;
-      }
-    }
-    var op = this.current;
-    this.parseFactor(instr);
-    instr.push(unaryInstruction(op.value));
-  } else {
-    this.parseExponential(instr);
-  }
-};
-ParserState.prototype.parseExponential = function(instr) {
-  this.parsePostfixExpression(instr);
-  while (this.accept(TOP, "^")) {
-    this.parseFactor(instr);
-    instr.push(binaryInstruction("^"));
-  }
-};
-ParserState.prototype.parsePostfixExpression = function(instr) {
-  this.parseFunctionCall(instr);
-  while (this.accept(TOP, "!")) {
-    instr.push(unaryInstruction("!"));
-  }
-};
-ParserState.prototype.parseFunctionCall = function(instr) {
-  var unaryOps = this.tokens.unaryOps;
-  function isPrefixOperator(token) {
-    return token.value in unaryOps;
-  }
-  if (this.accept(TOP, isPrefixOperator)) {
-    var op = this.current;
-    this.parseAtom(instr);
-    instr.push(unaryInstruction(op.value));
-  } else {
-    this.parseMemberExpression(instr);
-    while (this.accept(TPAREN, "(")) {
-      if (this.accept(TPAREN, ")")) {
-        instr.push(new Instruction(IFUNCALL, 0));
-      } else {
-        var argCount = this.parseArgumentList(instr);
-        instr.push(new Instruction(IFUNCALL, argCount));
-      }
-    }
-  }
-};
-ParserState.prototype.parseArgumentList = function(instr) {
-  var argCount = 0;
-  while (!this.accept(TPAREN, ")")) {
-    this.parseExpression(instr);
-    ++argCount;
-    while (this.accept(TCOMMA)) {
-      this.parseExpression(instr);
-      ++argCount;
-    }
-  }
-  return argCount;
-};
-ParserState.prototype.parseMemberExpression = function(instr) {
-  this.parseAtom(instr);
-  while (this.accept(TOP, ".") || this.accept(TBRACKET, "[")) {
-    var op = this.current;
-    if (op.value === ".") {
-      if (!this.allowMemberAccess) {
-        throw new Error('unexpected ".", member access is not permitted');
-      }
-      this.expect(TNAME);
-      instr.push(new Instruction(IMEMBER, this.current.value));
-    } else if (op.value === "[") {
-      if (!this.tokens.isOperatorEnabled("[")) {
-        throw new Error('unexpected "[]", arrays are disabled');
-      }
-      this.parseExpression(instr);
-      this.expect(TBRACKET, "]");
-      instr.push(binaryInstruction("["));
-    } else {
-      throw new Error("unexpected symbol: " + op.value);
-    }
-  }
-};
-function add(a, b) {
-  return Number(a) + Number(b);
-}
-function sub(a, b) {
-  return a - b;
-}
-function mul(a, b) {
-  return a * b;
-}
-function div(a, b) {
-  return a / b;
-}
-function mod(a, b) {
-  return a % b;
-}
-function concat(a, b) {
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return a.concat(b);
-  }
-  return "" + a + b;
-}
-function equal(a, b) {
-  return a === b;
-}
-function notEqual(a, b) {
-  return a !== b;
-}
-function greaterThan(a, b) {
-  return a > b;
-}
-function lessThan(a, b) {
-  return a < b;
-}
-function greaterThanEqual(a, b) {
-  return a >= b;
-}
-function lessThanEqual(a, b) {
-  return a <= b;
-}
-function andOperator(a, b) {
-  return Boolean(a && b);
-}
-function orOperator(a, b) {
-  return Boolean(a || b);
-}
-function inOperator(a, b) {
-  return contains(b, a);
-}
-function sinh(a) {
-  return (Math.exp(a) - Math.exp(-a)) / 2;
-}
-function cosh(a) {
-  return (Math.exp(a) + Math.exp(-a)) / 2;
-}
-function tanh(a) {
-  if (a === Infinity)
-    return 1;
-  if (a === -Infinity)
-    return -1;
-  return (Math.exp(a) - Math.exp(-a)) / (Math.exp(a) + Math.exp(-a));
-}
-function asinh(a) {
-  if (a === -Infinity)
-    return a;
-  return Math.log(a + Math.sqrt(a * a + 1));
-}
-function acosh(a) {
-  return Math.log(a + Math.sqrt(a * a - 1));
-}
-function atanh(a) {
-  return Math.log((1 + a) / (1 - a)) / 2;
-}
-function log10(a) {
-  return Math.log(a) * Math.LOG10E;
-}
-function neg(a) {
-  return -a;
-}
-function not(a) {
-  return !a;
-}
-function trunc(a) {
-  return a < 0 ? Math.ceil(a) : Math.floor(a);
-}
-function random(a) {
-  return Math.random() * (a || 1);
-}
-function factorial(a) {
-  return gamma(a + 1);
-}
-function isInteger(value) {
-  return isFinite(value) && value === Math.round(value);
-}
-var GAMMA_G = 4.7421875;
-var GAMMA_P = [
-  0.9999999999999971,
-  57.15623566586292,
-  -59.59796035547549,
-  14.136097974741746,
-  -0.4919138160976202,
-  3399464998481189e-20,
-  4652362892704858e-20,
-  -9837447530487956e-20,
-  1580887032249125e-19,
-  -21026444172410488e-20,
-  21743961811521265e-20,
-  -1643181065367639e-19,
-  8441822398385275e-20,
-  -26190838401581408e-21,
-  36899182659531625e-22
-];
-function gamma(n) {
-  var t, x;
-  if (isInteger(n)) {
-    if (n <= 0) {
-      return isFinite(n) ? Infinity : NaN;
-    }
-    if (n > 171) {
-      return Infinity;
-    }
-    var value = n - 2;
-    var res = n - 1;
-    while (value > 1) {
-      res *= value;
-      value--;
-    }
-    if (res === 0) {
-      res = 1;
-    }
-    return res;
-  }
-  if (n < 0.5) {
-    return Math.PI / (Math.sin(Math.PI * n) * gamma(1 - n));
-  }
-  if (n >= 171.35) {
-    return Infinity;
-  }
-  if (n > 85) {
-    var twoN = n * n;
-    var threeN = twoN * n;
-    var fourN = threeN * n;
-    var fiveN = fourN * n;
-    return Math.sqrt(2 * Math.PI / n) * Math.pow(n / Math.E, n) * (1 + 1 / (12 * n) + 1 / (288 * twoN) - 139 / (51840 * threeN) - 571 / (2488320 * fourN) + 163879 / (209018880 * fiveN) + 5246819 / (75246796800 * fiveN * n));
-  }
-  --n;
-  x = GAMMA_P[0];
-  for (var i = 1; i < GAMMA_P.length; ++i) {
-    x += GAMMA_P[i] / (n + i);
-  }
-  t = n + GAMMA_G + 0.5;
-  return Math.sqrt(2 * Math.PI) * Math.pow(t, n + 0.5) * Math.exp(-t) * x;
-}
-function stringOrArrayLength(s) {
-  if (Array.isArray(s)) {
-    return s.length;
-  }
-  return String(s).length;
-}
-function hypot() {
-  var sum = 0;
-  var larg = 0;
-  for (var i = 0; i < arguments.length; i++) {
-    var arg = Math.abs(arguments[i]);
-    var div2;
-    if (larg < arg) {
-      div2 = larg / arg;
-      sum = sum * div2 * div2 + 1;
-      larg = arg;
-    } else if (arg > 0) {
-      div2 = arg / larg;
-      sum += div2 * div2;
-    } else {
-      sum += arg;
-    }
-  }
-  return larg === Infinity ? Infinity : larg * Math.sqrt(sum);
-}
-function condition(cond, yep, nope) {
-  return cond ? yep : nope;
-}
-function roundTo(value, exp) {
-  if (typeof exp === "undefined" || +exp === 0) {
-    return Math.round(value);
-  }
-  value = +value;
-  exp = -+exp;
-  if (isNaN(value) || !(typeof exp === "number" && exp % 1 === 0)) {
-    return NaN;
-  }
-  value = value.toString().split("e");
-  value = Math.round(+(value[0] + "e" + (value[1] ? +value[1] - exp : -exp)));
-  value = value.toString().split("e");
-  return +(value[0] + "e" + (value[1] ? +value[1] + exp : exp));
-}
-function setVar(name, value, variables) {
-  if (variables)
-    variables[name] = value;
-  return value;
-}
-function arrayIndex(array, index) {
-  return array[index | 0];
-}
-function max(array) {
-  if (arguments.length === 1 && Array.isArray(array)) {
-    return Math.max.apply(Math, array);
-  } else {
-    return Math.max.apply(Math, arguments);
-  }
-}
-function min(array) {
-  if (arguments.length === 1 && Array.isArray(array)) {
-    return Math.min.apply(Math, array);
-  } else {
-    return Math.min.apply(Math, arguments);
-  }
-}
-function arrayMap(f, a) {
-  if (typeof f !== "function") {
-    throw new Error("First argument to map is not a function");
-  }
-  if (!Array.isArray(a)) {
-    throw new Error("Second argument to map is not an array");
-  }
-  return a.map(function(x, i) {
-    return f(x, i);
-  });
-}
-function arrayFold(f, init, a) {
-  if (typeof f !== "function") {
-    throw new Error("First argument to fold is not a function");
-  }
-  if (!Array.isArray(a)) {
-    throw new Error("Second argument to fold is not an array");
-  }
-  return a.reduce(function(acc, x, i) {
-    return f(acc, x, i);
-  }, init);
-}
-function arrayFilter(f, a) {
-  if (typeof f !== "function") {
-    throw new Error("First argument to filter is not a function");
-  }
-  if (!Array.isArray(a)) {
-    throw new Error("Second argument to filter is not an array");
-  }
-  return a.filter(function(x, i) {
-    return f(x, i);
-  });
-}
-function stringOrArrayIndexOf(target, s) {
-  if (!(Array.isArray(s) || typeof s === "string")) {
-    throw new Error("Second argument to indexOf is not a string or array");
-  }
-  return s.indexOf(target);
-}
-function arrayJoin(sep, a) {
-  if (!Array.isArray(a)) {
-    throw new Error("Second argument to join is not an array");
-  }
-  return a.join(sep);
-}
-function sign(x) {
-  return (x > 0) - (x < 0) || +x;
-}
-var ONE_THIRD = 1 / 3;
-function cbrt(x) {
-  return x < 0 ? -Math.pow(-x, ONE_THIRD) : Math.pow(x, ONE_THIRD);
-}
-function expm1(x) {
-  return Math.exp(x) - 1;
-}
-function log1p(x) {
-  return Math.log(1 + x);
-}
-function log2(x) {
-  return Math.log(x) / Math.LN2;
-}
-function Parser(options) {
-  this.options = options || {};
-  this.unaryOps = {
-    sin: Math.sin,
-    cos: Math.cos,
-    tan: Math.tan,
-    asin: Math.asin,
-    acos: Math.acos,
-    atan: Math.atan,
-    sinh: Math.sinh || sinh,
-    cosh: Math.cosh || cosh,
-    tanh: Math.tanh || tanh,
-    asinh: Math.asinh || asinh,
-    acosh: Math.acosh || acosh,
-    atanh: Math.atanh || atanh,
-    sqrt: Math.sqrt,
-    cbrt: Math.cbrt || cbrt,
-    log: Math.log,
-    log2: Math.log2 || log2,
-    ln: Math.log,
-    lg: Math.log10 || log10,
-    log10: Math.log10 || log10,
-    expm1: Math.expm1 || expm1,
-    log1p: Math.log1p || log1p,
-    abs: Math.abs,
-    ceil: Math.ceil,
-    floor: Math.floor,
-    round: Math.round,
-    trunc: Math.trunc || trunc,
-    "-": neg,
-    "+": Number,
-    exp: Math.exp,
-    not,
-    length: stringOrArrayLength,
-    "!": factorial,
-    sign: Math.sign || sign
-  };
-  this.binaryOps = {
-    "+": add,
-    "-": sub,
-    "*": mul,
-    "/": div,
-    "%": mod,
-    "^": Math.pow,
-    "||": concat,
-    "==": equal,
-    "!=": notEqual,
-    ">": greaterThan,
-    "<": lessThan,
-    ">=": greaterThanEqual,
-    "<=": lessThanEqual,
-    and: andOperator,
-    or: orOperator,
-    "in": inOperator,
-    "=": setVar,
-    "[": arrayIndex
-  };
-  this.ternaryOps = {
-    "?": condition
-  };
-  this.functions = {
-    random,
-    fac: factorial,
-    min,
-    max,
-    hypot: Math.hypot || hypot,
-    pyt: Math.hypot || hypot,
-    pow: Math.pow,
-    atan2: Math.atan2,
-    "if": condition,
-    gamma,
-    roundTo,
-    map: arrayMap,
-    fold: arrayFold,
-    filter: arrayFilter,
-    indexOf: stringOrArrayIndexOf,
-    join: arrayJoin
-  };
-  this.consts = {
-    E: Math.E,
-    PI: Math.PI,
-    "true": true,
-    "false": false
-  };
-}
-Parser.prototype.parse = function(expr) {
-  var instr = [];
-  var parserState = new ParserState(this, new TokenStream(this, expr), { allowMemberAccess: this.options.allowMemberAccess });
-  parserState.parseExpression(instr);
-  parserState.expect(TEOF, "EOF");
-  return new Expression(instr, this);
-};
-Parser.prototype.evaluate = function(expr, variables) {
-  return this.parse(expr).evaluate(variables);
-};
-var sharedParser = new Parser();
-Parser.parse = function(expr) {
-  return sharedParser.parse(expr);
-};
-Parser.evaluate = function(expr, variables) {
-  return sharedParser.parse(expr).evaluate(variables);
-};
-var optionNameMap = {
-  "+": "add",
-  "-": "subtract",
-  "*": "multiply",
-  "/": "divide",
-  "%": "remainder",
-  "^": "power",
-  "!": "factorial",
-  "<": "comparison",
-  ">": "comparison",
-  "<=": "comparison",
-  ">=": "comparison",
-  "==": "comparison",
-  "!=": "comparison",
-  "||": "concatenate",
-  "and": "logical",
-  "or": "logical",
-  "not": "logical",
-  "?": "conditional",
-  ":": "conditional",
-  "=": "assignment",
-  "[": "array",
-  "()=": "fndef"
-};
-function getOptionName(op) {
-  return optionNameMap.hasOwnProperty(op) ? optionNameMap[op] : op;
-}
-Parser.prototype.isOperatorEnabled = function(op) {
-  var optionName = getOptionName(op);
-  var operators = this.options.operators || {};
-  return !(optionName in operators) || !!operators[optionName];
-};
-
 // graphSyntax.ts
 var INVALID_SYNTAX_MESSAGE = "Invalid function syntax. Use simple syntax such as sin^2(x), x^2, exp(-x), or sqrt(x^2+y^2).";
 var GraphExpressionSyntaxError = class extends Error {
@@ -1852,18 +244,18 @@ function wrapTrigArgument(argument) {
   return `deg(${trimmed})`;
 }
 var TokenType;
-(function(TokenType2) {
-  TokenType2[TokenType2["Number"] = 0] = "Number";
-  TokenType2[TokenType2["Identifier"] = 1] = "Identifier";
-  TokenType2[TokenType2["Plus"] = 2] = "Plus";
-  TokenType2[TokenType2["Minus"] = 3] = "Minus";
-  TokenType2[TokenType2["Star"] = 4] = "Star";
-  TokenType2[TokenType2["Slash"] = 5] = "Slash";
-  TokenType2[TokenType2["Caret"] = 6] = "Caret";
-  TokenType2[TokenType2["LParen"] = 7] = "LParen";
-  TokenType2[TokenType2["RParen"] = 8] = "RParen";
-  TokenType2[TokenType2["Comma"] = 9] = "Comma";
-  TokenType2[TokenType2["Eof"] = 10] = "Eof";
+(function(TokenType3) {
+  TokenType3[TokenType3["Number"] = 0] = "Number";
+  TokenType3[TokenType3["Identifier"] = 1] = "Identifier";
+  TokenType3[TokenType3["Plus"] = 2] = "Plus";
+  TokenType3[TokenType3["Minus"] = 3] = "Minus";
+  TokenType3[TokenType3["Star"] = 4] = "Star";
+  TokenType3[TokenType3["Slash"] = 5] = "Slash";
+  TokenType3[TokenType3["Caret"] = 6] = "Caret";
+  TokenType3[TokenType3["LParen"] = 7] = "LParen";
+  TokenType3[TokenType3["RParen"] = 8] = "RParen";
+  TokenType3[TokenType3["Comma"] = 9] = "Comma";
+  TokenType3[TokenType3["Eof"] = 10] = "Eof";
 })(TokenType || (TokenType = {}));
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -2196,8 +588,8 @@ function compileExpression(input, context, target) {
     ...parameterNames
   ]);
   try {
-    const parser2 = new ExpressionParser(tokenize(prepared), variableSet, target);
-    return parser2.parse();
+    const parser = new ExpressionParser(tokenize(prepared), variableSet, target);
+    return parser.parse();
   } catch (err) {
     if (err instanceof GraphExpressionSyntaxError) {
       throw err;
@@ -2320,8 +712,8 @@ function graphUses2dAspectRatio(spec) {
 function resolveAspectMode(size) {
   return (size == null ? void 0 : size.aspectMode) === "fixed" ? "fixed" : "auto";
 }
-function clamp(value, min2, max2) {
-  return Math.max(min2, Math.min(max2, value));
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 function rangeSpan(range, fallbackSpan = 10) {
   var _a, _b;
@@ -2952,6 +1344,402 @@ function serializeGraphSpec(spec) {
   return JSON.stringify(stored, null, 2);
 }
 
+// src/safeMathEvaluator.ts
+var SafeMathSyntaxError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "SafeMathSyntaxError";
+  }
+};
+var MATH_FUNCTIONS = new Set([
+  "sin",
+  "cos",
+  "tan",
+  "asin",
+  "acos",
+  "atan",
+  "sinh",
+  "cosh",
+  "tanh",
+  "sqrt",
+  "abs",
+  "log",
+  "ln",
+  "log10",
+  "exp",
+  "floor",
+  "ceil",
+  "round",
+  "min",
+  "max",
+  "pow",
+  "deg"
+]);
+var CONSTANTS = {
+  pi: Math.PI,
+  e: Math.E
+};
+var JS_KEYWORDS = new Set([
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "function",
+  "if",
+  "import",
+  "in",
+  "instanceof",
+  "let",
+  "new",
+  "null",
+  "return",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "typeof",
+  "undefined",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield"
+]);
+var TokenType2;
+(function(TokenType3) {
+  TokenType3[TokenType3["Number"] = 0] = "Number";
+  TokenType3[TokenType3["Identifier"] = 1] = "Identifier";
+  TokenType3[TokenType3["Plus"] = 2] = "Plus";
+  TokenType3[TokenType3["Minus"] = 3] = "Minus";
+  TokenType3[TokenType3["Star"] = 4] = "Star";
+  TokenType3[TokenType3["Slash"] = 5] = "Slash";
+  TokenType3[TokenType3["Caret"] = 6] = "Caret";
+  TokenType3[TokenType3["LParen"] = 7] = "LParen";
+  TokenType3[TokenType3["RParen"] = 8] = "RParen";
+  TokenType3[TokenType3["Comma"] = 9] = "Comma";
+  TokenType3[TokenType3["Eof"] = 10] = "Eof";
+})(TokenType2 || (TokenType2 = {}));
+var DISALLOWED_CHARS = /[;\[\]`'"=<>!&|?{}\\@#$%]/;
+function tokenize2(input) {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    throw new SafeMathSyntaxError("Expression is empty.");
+  }
+  if (DISALLOWED_CHARS.test(trimmed)) {
+    throw new SafeMathSyntaxError("Expression contains disallowed characters.");
+  }
+  const tokens = [];
+  let index = 0;
+  while (index < trimmed.length) {
+    const ch = trimmed[index];
+    if (/\s/.test(ch)) {
+      index++;
+      continue;
+    }
+    if (/[\d.]/.test(ch)) {
+      let end = index;
+      while (end < trimmed.length) {
+        const current = trimmed[end];
+        if (/[\d.]/.test(current)) {
+          end++;
+          continue;
+        }
+        if ((current === "e" || current === "E") && end + 1 < trimmed.length) {
+          end++;
+          if (trimmed[end] === "+" || trimmed[end] === "-") {
+            end++;
+          }
+          while (end < trimmed.length && /\d/.test(trimmed[end])) {
+            end++;
+          }
+          continue;
+        }
+        break;
+      }
+      const value = trimmed.slice(index, end);
+      if (!Number.isFinite(Number.parseFloat(value))) {
+        throw new SafeMathSyntaxError(`Invalid number: ${value}`);
+      }
+      tokens.push({ type: 0, value });
+      index = end;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(ch)) {
+      let end = index + 1;
+      while (end < trimmed.length && /[A-Za-z0-9_]/.test(trimmed[end])) {
+        end++;
+      }
+      tokens.push({ type: 1, value: trimmed.slice(index, end) });
+      index = end;
+      continue;
+    }
+    switch (ch) {
+      case "+":
+        tokens.push({ type: 2, value: ch });
+        break;
+      case "-":
+        tokens.push({ type: 3, value: ch });
+        break;
+      case "*":
+        tokens.push({ type: 4, value: ch });
+        break;
+      case "/":
+        tokens.push({ type: 5, value: ch });
+        break;
+      case "^":
+        tokens.push({ type: 6, value: ch });
+        break;
+      case "(":
+        tokens.push({ type: 7, value: ch });
+        break;
+      case ")":
+        tokens.push({ type: 8, value: ch });
+        break;
+      case ",":
+        tokens.push({ type: 9, value: ch });
+        break;
+      default:
+        throw new SafeMathSyntaxError(`Unexpected character: ${ch}`);
+    }
+    index++;
+  }
+  tokens.push({ type: 10, value: "" });
+  return tokens;
+}
+var Parser = class {
+  constructor(tokens, allowedVariables, options) {
+    this.tokens = tokens;
+    this.allowedVariables = allowedVariables;
+    this.options = options;
+    this.index = 0;
+  }
+  parse() {
+    const expr = this.parseExpression();
+    if (this.peek().type !== 10) {
+      throw new SafeMathSyntaxError("Unexpected trailing tokens.");
+    }
+    return (scope) => {
+      try {
+        const result = expr(scope);
+        return typeof result === "number" && Number.isFinite(result) ? result : Number.NaN;
+      } catch (e) {
+        return Number.NaN;
+      }
+    };
+  }
+  parseExpression() {
+    return this.parseAddition();
+  }
+  parseAddition() {
+    let left = this.parseMultiplication();
+    while (this.match(2, 3)) {
+      const op = this.previous().type;
+      const right = this.parseMultiplication();
+      const prevLeft = left;
+      left = (scope) => {
+        const a = prevLeft(scope);
+        const b = right(scope);
+        return op === 2 ? a + b : a - b;
+      };
+    }
+    return left;
+  }
+  parseMultiplication() {
+    let left = this.parsePower();
+    while (this.match(4, 5)) {
+      const op = this.previous().type;
+      const right = this.parsePower();
+      const prevLeft = left;
+      left = (scope) => {
+        const a = prevLeft(scope);
+        const b = right(scope);
+        return op === 4 ? a * b : a / b;
+      };
+    }
+    return left;
+  }
+  parsePower() {
+    let left = this.parseUnary();
+    if (this.match(6)) {
+      const right = this.parsePower();
+      const base = left;
+      left = (scope) => Math.pow(base(scope), right(scope));
+    }
+    return left;
+  }
+  parseUnary() {
+    if (this.match(3)) {
+      const inner = this.parseUnary();
+      return (scope) => -inner(scope);
+    }
+    if (this.match(2)) {
+      return this.parseUnary();
+    }
+    return this.parsePostfix();
+  }
+  parsePostfix() {
+    const token = this.tokens[this.index];
+    if (token.type === 1) {
+      const lower = token.value.toLowerCase();
+      if (MATH_FUNCTIONS.has(lower)) {
+        this.index++;
+        if (!this.match(7)) {
+          throw new SafeMathSyntaxError(`Function ${token.value} requires parentheses.`);
+        }
+        const args = this.parseArgumentValues();
+        if (!this.match(8)) {
+          throw new SafeMathSyntaxError("Expected closing parenthesis.");
+        }
+        return (scope) => this.invokeFunction(lower, args.map((arg) => arg(scope)), scope);
+      }
+    }
+    return this.parsePrimary();
+  }
+  parseArgumentValues() {
+    const args = [];
+    if (this.check(8)) {
+      return args;
+    }
+    do {
+      args.push(this.parseExpression());
+    } while (this.match(9));
+    return args;
+  }
+  parsePrimary() {
+    if (this.match(0)) {
+      const value = Number.parseFloat(this.previous().value);
+      return () => value;
+    }
+    if (this.match(1)) {
+      const name = this.previous().value;
+      const lower = name.toLowerCase();
+      if (JS_KEYWORDS.has(lower)) {
+        throw new SafeMathSyntaxError(`Disallowed identifier: ${name}`);
+      }
+      if (lower in CONSTANTS) {
+        return () => CONSTANTS[lower];
+      }
+      if (!this.allowedVariables.has(name)) {
+        throw new SafeMathSyntaxError(`Unknown identifier: ${name}`);
+      }
+      return (scope) => {
+        const value = scope[name];
+        return typeof value === "number" && Number.isFinite(value) ? value : Number.NaN;
+      };
+    }
+    if (this.match(7)) {
+      const inner = this.parseExpression();
+      if (!this.match(8)) {
+        throw new SafeMathSyntaxError("Expected closing parenthesis.");
+      }
+      return inner;
+    }
+    throw new SafeMathSyntaxError("Unexpected token in expression.");
+  }
+  invokeFunction(name, args, scope) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B;
+    const trig = (_a = this.options.trigDegrees) != null ? _a : false;
+    const deg = (value) => value * Math.PI / 180;
+    const rad = (value) => value;
+    switch (name) {
+      case "sin":
+        return Math.sin(trig ? deg((_b = args[0]) != null ? _b : Number.NaN) : rad((_c = args[0]) != null ? _c : Number.NaN));
+      case "cos":
+        return Math.cos(trig ? deg((_d = args[0]) != null ? _d : Number.NaN) : rad((_e = args[0]) != null ? _e : Number.NaN));
+      case "tan":
+        return Math.tan(trig ? deg((_f = args[0]) != null ? _f : Number.NaN) : rad((_g = args[0]) != null ? _g : Number.NaN));
+      case "asin":
+        return Math.asin((_h = args[0]) != null ? _h : Number.NaN);
+      case "acos":
+        return Math.acos((_i = args[0]) != null ? _i : Number.NaN);
+      case "atan":
+        return Math.atan((_j = args[0]) != null ? _j : Number.NaN);
+      case "sinh":
+        return Math.sinh((_k = args[0]) != null ? _k : Number.NaN);
+      case "cosh":
+        return Math.cosh((_l = args[0]) != null ? _l : Number.NaN);
+      case "tanh":
+        return Math.tanh((_m = args[0]) != null ? _m : Number.NaN);
+      case "sqrt":
+        return Math.sqrt((_n = args[0]) != null ? _n : Number.NaN);
+      case "abs":
+        return Math.abs((_o = args[0]) != null ? _o : Number.NaN);
+      case "log":
+      case "ln":
+        return Math.log((_p = args[0]) != null ? _p : Number.NaN);
+      case "log10":
+        return Math.log10((_q = args[0]) != null ? _q : Number.NaN);
+      case "exp":
+        return Math.exp((_r = args[0]) != null ? _r : Number.NaN);
+      case "floor":
+        return Math.floor((_s = args[0]) != null ? _s : Number.NaN);
+      case "ceil":
+        return Math.ceil((_t = args[0]) != null ? _t : Number.NaN);
+      case "round":
+        return Math.round((_u = args[0]) != null ? _u : Number.NaN);
+      case "min":
+        return Math.min((_v = args[0]) != null ? _v : Number.NaN, (_w = args[1]) != null ? _w : Number.NaN);
+      case "max":
+        return Math.max((_x = args[0]) != null ? _x : Number.NaN, (_y = args[1]) != null ? _y : Number.NaN);
+      case "pow":
+        return Math.pow((_z = args[0]) != null ? _z : Number.NaN, (_A = args[1]) != null ? _A : Number.NaN);
+      case "deg":
+        return deg((_B = args[0]) != null ? _B : Number.NaN);
+      default:
+        return Number.NaN;
+    }
+  }
+  match(...types) {
+    for (const type of types) {
+      if (this.peek().type === type) {
+        this.index++;
+        return true;
+      }
+    }
+    return false;
+  }
+  check(type) {
+    return this.peek().type === type;
+  }
+  previous() {
+    return this.tokens[this.index - 1];
+  }
+  peek() {
+    return this.tokens[this.index];
+  }
+};
+function normalizeExpressionInput(expression) {
+  return expression.replace(/\*\*/g, "^").replace(/\\pi\b/g, "pi").replace(/\\lambda\b/g, "1").replace(/π/g, "pi");
+}
+function compileSafeMathExpression(expression, allowedVariables, options = {}) {
+  const normalized = normalizeExpressionInput(expression);
+  const tokens = tokenize2(normalized);
+  const allowed = new Set(allowedVariables);
+  const parser = new Parser(tokens, allowed, options);
+  return parser.parse();
+}
+function evaluateSafeMathExpression(expression, scope, allowedVariables, options = {}) {
+  try {
+    return compileSafeMathExpression(expression, allowedVariables, options)(scope);
+  } catch (e) {
+    return Number.NaN;
+  }
+}
+
 // src/graphRangeValidation.ts
 var SURFACE_Z_CLIP_WARNING = "Most of the surface may be clipped by the selected z range.";
 var SAMPLE_GRID = 11;
@@ -2964,16 +1752,12 @@ function parseBoundToNumber(raw) {
   if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) {
     return Number.parseFloat(trimmed);
   }
-  const jsExpr = trimmed.replace(/\bpi\b/gi, "Math.PI").replace(/\^/g, "**");
-  if (!/^[\d\s+\-*/().MathPI]+$/.test(jsExpr.replace(/Math\.PI/g, ""))) {
+  const expr = trimmed.replace(/\bpi\b/gi, "pi").replace(/\^/g, "^");
+  if (!/^[\d\s+\-*/().a-zA-Z]+$/.test(expr)) {
     return null;
   }
-  try {
-    const value = Function(`"use strict"; return (${jsExpr});`)();
-    return Number.isFinite(value) ? value : null;
-  } catch (e) {
-    return null;
-  }
+  const value = evaluateSafeMathExpression(expr, {}, []);
+  return Number.isFinite(value) ? value : null;
 }
 function evaluateSurfaceZ(expr, x, y, parameters) {
   try {
@@ -3063,11 +1847,11 @@ var ExpressionEvaluationError = class extends Error {
     this.name = "ExpressionEvaluationError";
   }
 };
-var parser = new Parser();
+var DEFAULT_VARIABLES2 = ["x", "y", "z", "t", "r"];
 function stripExplicitYPrefix(expression) {
   return expression.replace(/^y\s*=\s*/i, "").trim();
 }
-function compiledOctaveToExprEval(compiled) {
+function compiledOctaveToSafeEval(compiled) {
   return compiled.replace(/\.\^/g, "^").replace(/\.\*/g, "*").replace(/\.\//g, "/");
 }
 function buildEvaluationScope(variables, parameters = {}) {
@@ -3087,14 +1871,6 @@ function buildEvaluationScope(variables, parameters = {}) {
   }
   return scope;
 }
-function parseCompiledExpression(compiled) {
-  const normalized = compiledOctaveToExprEval(compiled);
-  try {
-    return parser.parse(normalized);
-  } catch (e) {
-    throw new ExpressionEvaluationError(`Could not parse expression: ${normalized}`);
-  }
-}
 function compileUserExpression(expression, context = {}) {
   try {
     return compileExpressionForOctave(expression, context);
@@ -3105,29 +1881,43 @@ function compileUserExpression(expression, context = {}) {
     throw err;
   }
 }
-function evaluateExpression(expression, variables, parameters = {}, context) {
+function compileEvaluator(expression, context = {}) {
+  var _a, _b;
   const compiled = compileUserExpression(expression, context);
-  const parsed = parseCompiledExpression(compiled);
+  const normalized = compiledOctaveToSafeEval(compiled);
+  const allowedVariables = [
+    ...(_a = context.variables) != null ? _a : DEFAULT_VARIABLES2,
+    ...Object.keys((_b = context.parameters) != null ? _b : {})
+  ];
+  try {
+    return compileSafeMathExpression(normalized, allowedVariables);
+  } catch (err) {
+    const message = err instanceof SafeMathSyntaxError ? err.message : `Could not parse expression: ${normalized}`;
+    throw new ExpressionEvaluationError(message);
+  }
+}
+function evaluateExpression(expression, variables, parameters = {}, context) {
+  const evaluate = compileEvaluator(expression, context);
   const scope = buildEvaluationScope(variables, parameters);
-  const result = parsed.evaluate(scope);
-  if (typeof result !== "number" || !Number.isFinite(result)) {
+  const result = evaluate(scope);
+  if (!Number.isFinite(result)) {
     throw new ExpressionEvaluationError("Expression did not evaluate to a finite number.");
   }
   return result;
 }
-function linspace(min2, max2, count) {
+function linspace(min, max, count) {
   if (count <= 1) {
-    return [min2];
+    return [min];
   }
   const values = [];
   for (let i = 0; i < count; i++) {
-    values.push(min2 + (max2 - min2) * (i / (count - 1)));
+    values.push(min + (max - min) * (i / (count - 1)));
   }
   return values;
 }
 function defaultContext() {
   return {
-    variables: ["x", "y", "z", "t", "r"],
+    variables: DEFAULT_VARIABLES2,
     parameters: {}
   };
 }
@@ -3136,14 +1926,13 @@ function sampleFunction2D(expression, xMin, xMax, samples, parameters = {}) {
   const context = __spreadProps(__spreadValues({}, defaultContext()), {
     parameters
   });
-  const compiled = compileUserExpression(body, context);
-  const parsed = parseCompiledExpression(compiled);
+  const evaluate = compileEvaluator(body, context);
   const xs = linspace(xMin, xMax, samples);
   const points = [];
   for (const x of xs) {
     const scope = buildEvaluationScope({ x }, parameters);
-    const y = parsed.evaluate(scope);
-    if (typeof y !== "number" || !Number.isFinite(y)) {
+    const y = evaluate(scope);
+    if (!Number.isFinite(y)) {
       continue;
     }
     points.push({ x, y });
@@ -3158,16 +1947,15 @@ function sampleSurface3D(expression, xMin, xMax, yMin, yMax, samplesX, samplesY,
   const context = __spreadProps(__spreadValues({}, defaultContext()), {
     parameters
   });
-  const compiled = compileUserExpression(body, context);
-  const parsed = parseCompiledExpression(compiled);
+  const evaluate = compileEvaluator(body, context);
   const xs = linspace(xMin, xMax, samplesX);
   const ys = linspace(yMin, yMax, samplesY);
   const points = [];
   for (const y of ys) {
     for (const x of xs) {
       const scope = buildEvaluationScope({ x, y }, parameters);
-      const z = parsed.evaluate(scope);
-      if (typeof z !== "number" || !Number.isFinite(z)) {
+      const z = evaluate(scope);
+      if (!Number.isFinite(z)) {
         continue;
       }
       points.push({ x, y, z });
@@ -3184,14 +1972,13 @@ function samplePde2D(expression, xMin, xMax, yMin, yMax, samples, parameters = {
   const context = __spreadProps(__spreadValues({}, defaultContext()), {
     parameters
   });
-  const compiled = compileUserExpression(body, context);
-  const parsed = parseCompiledExpression(compiled);
+  const evaluate = compileEvaluator(body, context);
   const xs = linspace(xMin, xMax, samples);
   const points = [];
   for (const x of xs) {
     const scope = buildEvaluationScope({ x, y: yMid }, parameters);
-    const u = parsed.evaluate(scope);
-    if (typeof u !== "number" || !Number.isFinite(u)) {
+    const u = evaluate(scope);
+    if (!Number.isFinite(u)) {
       continue;
     }
     points.push({ x, u });
@@ -3718,20 +2505,20 @@ function svgPalette(theme) {
     point: theme.isDark ? "#fbbf24" : "#dc2626"
   };
 }
-function niceTicks(min2, max2, target = 6) {
-  if (!Number.isFinite(min2) || !Number.isFinite(max2) || min2 === max2) {
-    return [min2];
+function niceTicks(min, max, target = 6) {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
+    return [min];
   }
-  const span = max2 - min2;
+  const span = max - min;
   const raw = span / target;
   const mag = Math.pow(10, Math.floor(Math.log10(raw)));
   const step = Math.ceil(raw / mag) * mag;
-  const start = Math.ceil(min2 / step) * step;
+  const start = Math.ceil(min / step) * step;
   const ticks = [];
-  for (let v = start; v <= max2 + step * 0.01; v += step) {
+  for (let v = start; v <= max + step * 0.01; v += step) {
     ticks.push(Number.parseFloat(v.toPrecision(10)));
   }
-  return ticks.length > 0 ? ticks : [min2, max2];
+  return ticks.length > 0 ? ticks : [min, max];
 }
 function compute2DDataBounds(spec, points) {
   let bounds = plotBoundsFromSpec(spec);
@@ -4494,18 +3281,18 @@ function loadTex2Svg(pluginBaseDir) {
     if (tex2svgModule) {
       return tex2svgModule;
     }
-    if (!loadPromise) {
+    if (loadPromise === null) {
       loadPromise = (() => __async(this, null, function* () {
         var _a;
         const modulePath = resolveTikzJaxModulePath(pluginBaseDir);
         if (!modulePath) {
           throw new Error(missingAssetsMessage(pluginBaseDir));
         }
-        const mod2 = require(modulePath);
-        if (typeof mod2.load === "function") {
-          yield mod2.load();
+        const mod = require(modulePath);
+        if (typeof mod.load === "function") {
+          yield mod.load();
         }
-        const tex2svg = (_a = mod2.default) != null ? _a : mod2;
+        const tex2svg = (_a = mod.default) != null ? _a : mod;
         if (typeof tex2svg !== "function") {
           throw new Error("Bundled TikZJax module did not export tex2svg.");
         }
@@ -4829,7 +3616,7 @@ var GraphRenderer = class {
         return cached;
       }
       const pending = this.inFlight.get(key);
-      if (pending) {
+      if (pending !== void 0) {
         return pending;
       }
       const renderPromise = Promise.resolve().then(() => {
@@ -4861,7 +3648,7 @@ var GraphRenderer = class {
         return cached;
       }
       const pending = this.inFlight.get(key);
-      if (pending) {
+      if (pending !== void 0) {
         return pending;
       }
       const renderPromise = this.renderTikzWithFallback(source, options.errorContext, invertDark, key, options.assets, mode).finally(() => this.inFlight.delete(key));
@@ -5064,6 +3851,45 @@ function resolvePluginBaseDir(plugin) {
   return __dirname;
 }
 
+// src/domUtils.ts
+function asObsidianWindow(win) {
+  return win;
+}
+function activeWindowFor(el) {
+  var _a;
+  return (_a = el.ownerDocument.defaultView) != null ? _a : window;
+}
+function isHTMLElement(el, win) {
+  if (typeof el !== "object" || el === null) {
+    return false;
+  }
+  const activeWindow = asObsidianWindow(win != null ? win : el instanceof Element ? activeWindowFor(el) : window);
+  if (typeof activeWindow.instanceOf === "function") {
+    return activeWindow.instanceOf(el, HTMLElement);
+  }
+  return el instanceof HTMLElement;
+}
+function isHTMLImageElement(el, win) {
+  if (typeof el !== "object" || el === null) {
+    return false;
+  }
+  const activeWindow = asObsidianWindow(win != null ? win : el instanceof Element ? activeWindowFor(el) : window);
+  if (typeof activeWindow.instanceOf === "function") {
+    return activeWindow.instanceOf(el, HTMLImageElement);
+  }
+  return el instanceof HTMLImageElement;
+}
+function isSVGSVGElement(el, win) {
+  if (typeof el !== "object" || el === null) {
+    return false;
+  }
+  const activeWindow = asObsidianWindow(win != null ? win : el instanceof Element ? activeWindowFor(el) : window);
+  if (typeof activeWindow.instanceOf === "function") {
+    return activeWindow.instanceOf(el, SVGSVGElement);
+  }
+  return el instanceof SVGSVGElement;
+}
+
 // src/displayScaleLayout.ts
 var BASE_WIDTH_DATA_ATTR = "data-mathgraph-base-width";
 var FALLBACK_BASE_WIDTH_2D = 540;
@@ -5161,10 +3987,10 @@ function measureRenderedGraphBaseWidth(inner, spec, svgText) {
   }
   let measured = null;
   const media = inner.querySelector("img, svg");
-  if (media instanceof HTMLImageElement) {
+  if (isHTMLImageElement(media)) {
     measured = measureNaturalImageWidth(media, svgText);
   }
-  if (measured === null && media instanceof SVGSVGElement) {
+  if (measured === null && isSVGSVGElement(media)) {
     const rendered = media.getBoundingClientRect().width;
     if (rendered >= MIN_RELIABLE_IMAGE_WIDTH) {
       measured = rendered;
@@ -5177,7 +4003,7 @@ function measureRenderedGraphBaseWidth(inner, spec, svgText) {
 }
 function updateOverflowState(container, scaledWidth) {
   const scroll = container.querySelector(".mathgraph-graph-scroll");
-  if (!(scroll instanceof HTMLElement)) {
+  if (!isHTMLElement(scroll)) {
     return;
   }
   const containerWidth = scroll.clientWidth;
@@ -5191,7 +4017,7 @@ function updateScaleLabel(container, scale) {
 }
 function applyRenderedGraphLayoutScale(container, spec, options) {
   const inner = container.querySelector(".mathgraph-rendered-inner");
-  if (!(inner instanceof HTMLElement)) {
+  if (!isHTMLElement(inner)) {
     return;
   }
   const scale = resolveDisplayScale(spec);
@@ -5213,14 +4039,14 @@ function applyRenderedGraphLayoutScale(container, spec, options) {
 }
 function bindRenderedGraphLayoutScale(container, spec, svgText) {
   const inner = container.querySelector(".mathgraph-rendered-inner");
-  if (!(inner instanceof HTMLElement)) {
+  if (!isHTMLElement(inner)) {
     return;
   }
   const apply = () => {
     applyRenderedGraphLayoutScale(container, spec, { remeasure: true, svgText });
   };
   const media = inner.querySelector("img, svg");
-  if (media instanceof HTMLImageElement) {
+  if (isHTMLImageElement(media)) {
     if (media.complete) {
       apply();
     } else {
@@ -5231,7 +4057,7 @@ function bindRenderedGraphLayoutScale(container, spec, svgText) {
     apply();
   }
   const scroll = container.querySelector(".mathgraph-graph-scroll");
-  if (scroll instanceof HTMLElement && typeof ResizeObserver !== "undefined") {
+  if (isHTMLElement(scroll) && typeof ResizeObserver !== "undefined") {
     const observer = new ResizeObserver(() => {
       const stored = readStoredBaseWidth(inner);
       if (stored === null) {
@@ -5257,7 +4083,7 @@ function renderCacheKey(fingerprint, mode, isDark) {
 }
 function applyDisplayScaleToRoot(root, spec, svgText) {
   const container = root.querySelector(".mathgraph-rendered-container");
-  if (container instanceof HTMLElement) {
+  if (isHTMLElement(container)) {
     applyRenderedGraphLayoutScale(container, spec, { svgText });
   }
 }
@@ -5298,7 +4124,425 @@ function ensureTikzJaxFontsLoaded(app, plugin, doc = activeDocument) {
 }
 
 // src/GraphBlockUpdater.ts
+var import_obsidian3 = __toModule(require("obsidian"));
+
+// src/settings.ts
 var import_obsidian2 = __toModule(require("obsidian"));
+
+// octave/octaveResolver.ts
+var fs5 = __toModule(require("fs"));
+var OCTAVE_CLI_DETECT_PATHS = [
+  "/opt/homebrew/bin/octave-cli",
+  "/usr/local/bin/octave-cli",
+  "/usr/bin/octave-cli",
+  "/opt/homebrew/bin/octave",
+  "/usr/local/bin/octave",
+  "/usr/bin/octave"
+];
+var DEFAULT_OCTAVE_CLI_PATH = "/opt/homebrew/bin/octave-cli";
+function detectOctaveCli() {
+  return __async(this, null, function* () {
+    return resolveOctave("");
+  });
+}
+function resolveOctave(customPath) {
+  return __async(this, null, function* () {
+    const trimmed = customPath.trim();
+    const candidates = trimmed ? [trimmed] : [...OCTAVE_CLI_DETECT_PATHS, "octave-cli", "octave"];
+    for (const candidate of candidates) {
+      if (candidate.includes("/")) {
+        if (fs5.existsSync(candidate)) {
+          return candidate;
+        }
+        continue;
+      }
+      try {
+        const { stdout } = yield execFileWithTimeout("/usr/bin/which", [candidate], {}, 5e3);
+        const resolved = stdout.trim();
+        if (resolved && !resolved.includes("/Applications/Octave.app")) {
+          return resolved;
+        }
+      } catch (e) {
+      }
+    }
+    return null;
+  });
+}
+
+// octave/octaveRunner.ts
+var fs6 = __toModule(require("fs"));
+var os2 = __toModule(require("os"));
+var path4 = __toModule(require("path"));
+
+// octave/octaveProcess.ts
+var import_child_process2 = __toModule(require("child_process"));
+var OCTAVE_HEADLESS_FLAGS = [
+  "--quiet",
+  "--no-gui",
+  "--no-window-system",
+  "--no-history"
+];
+function buildOctaveProcessEnv() {
+  const env = __spreadProps(__spreadValues({}, process.env), {
+    OCTAVE_HISTFILE: process.platform === "win32" ? "NUL" : "/dev/null",
+    GNUTERM: "dumb"
+  });
+  if (process.platform !== "win32") {
+    env.DISPLAY = "";
+  }
+  return env;
+}
+function spawnOctaveWithTimeout(octavePath, args, options, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    var _a, _b;
+    const child = (0, import_child_process2.spawn)(octavePath, args, {
+      cwd: options.cwd,
+      env: buildOctaveProcessEnv(),
+      windowsHide: true,
+      detached: false,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    (_a = child.stdout) == null ? void 0 : _a.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    (_b = child.stderr) == null ? void 0 : _b.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    const timer = window.setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+      reject(new RenderTimeoutError(timeoutMs));
+    }, timeoutMs);
+    child.on("error", (err) => {
+      window.clearTimeout(timer);
+      if (!timedOut) {
+        reject(err);
+      }
+    });
+    child.on("close", (code) => {
+      window.clearTimeout(timer);
+      if (timedOut) {
+        return;
+      }
+      const exitCode = code != null ? code : 1;
+      if (exitCode !== 0) {
+        const err = new Error(`Octave exited with code ${exitCode}`);
+        err.stdout = stdout;
+        err.stderr = stderr;
+        err.code = exitCode;
+        reject(err);
+        return;
+      }
+      resolve({ stdout, stderr, exitCode });
+    });
+  });
+}
+function buildOctaveEvalArgs(evalScript) {
+  return [...OCTAVE_HEADLESS_FLAGS, "--eval", evalScript];
+}
+
+// octave/octaveRunner.ts
+var OCTAVE_TIMEOUT_MS = 12e4;
+var OCTAVE_TEST_TIMEOUT_MS = 3e4;
+var OctaveEngineError = class extends Error {
+  constructor(message, rawLog) {
+    super(message);
+    this.rawLog = rawLog;
+    this.name = "OctaveEngineError";
+  }
+};
+function formatOctaveDebugLog(details) {
+  return [
+    `Octave CLI path: ${details.octavePath}`,
+    details.workDir ? `Working directory: ${details.workDir}` : "",
+    details.scriptPath ? `Script path: ${details.scriptPath}` : "",
+    details.exitCode !== void 0 ? `Exit code: ${details.exitCode}` : "",
+    details.stdout ? `
+--- stdout ---
+${details.stdout.trim()}` : "",
+    details.stderr ? `
+--- stderr ---
+${details.stderr.trim()}` : ""
+  ].filter(Boolean).join("\n");
+}
+function testOctaveCli(octavePathSetting) {
+  return __async(this, null, function* () {
+    var _a, _b;
+    const octavePath = yield resolveOctave(octavePathSetting);
+    if (!octavePath) {
+      return {
+        ok: false,
+        path: "",
+        stdout: "",
+        stderr: "",
+        error: "Octave CLI not found."
+      };
+    }
+    const workDir = fs6.mkdtempSync(path4.join(os2.tmpdir(), "mathgraph-octave-test-"));
+    try {
+      const { stdout, stderr, exitCode } = yield spawnOctaveWithTimeout(octavePath, buildOctaveEvalArgs("disp(2+2);"), { cwd: workDir }, OCTAVE_TEST_TIMEOUT_MS);
+      const ok = stdout.trim().includes("4");
+      return { ok, path: octavePath, stdout, stderr, exitCode };
+    } catch (err) {
+      const execErr = err;
+      return {
+        ok: false,
+        path: octavePath,
+        stdout: (_a = execErr.stdout) != null ? _a : "",
+        stderr: (_b = execErr.stderr) != null ? _b : formatExecError(err),
+        exitCode: execErr.code,
+        error: formatExecError(err)
+      };
+    } finally {
+      try {
+        fs6.rmSync(workDir, { recursive: true, force: true });
+      } catch (e) {
+      }
+    }
+  });
+}
+function runOctaveScript(script, octavePathSetting) {
+  return __async(this, null, function* () {
+    var _a, _b;
+    const octavePath = yield resolveOctave(octavePathSetting);
+    if (!octavePath) {
+      throw new OctaveEngineError("Octave CLI not found. Install Octave or set the Octave CLI path in Math Plotter settings.");
+    }
+    if (octavePath.includes("/Applications/Octave.app")) {
+      throw new OctaveEngineError("The Octave GUI app path is not supported. Use the headless Octave CLI (octave-cli) instead.");
+    }
+    const workDir = fs6.mkdtempSync(path4.join(os2.tmpdir(), "mathgraph-octave-"));
+    const scriptPath = path4.join(workDir, "graph-sample.m");
+    const csvPath = path4.join(workDir, "graph-data.csv");
+    fs6.writeFileSync(scriptPath, script, "utf8");
+    const evalScript = `cd("${workDir.replace(/\\/g, "/")}"); source("graph-sample.m");`;
+    const args = buildOctaveEvalArgs(evalScript);
+    try {
+      const { stdout, stderr, exitCode } = yield spawnOctaveWithTimeout(octavePath, args, { cwd: workDir }, OCTAVE_TIMEOUT_MS);
+      if (!fs6.existsSync(csvPath)) {
+        throw new OctaveEngineError("Octave failed while sampling the graph. Open debug details for the Octave log.", formatOctaveDebugLog({
+          octavePath,
+          workDir,
+          scriptPath,
+          exitCode,
+          stdout,
+          stderr
+        }));
+      }
+      return {
+        workDir,
+        scriptPath,
+        csvPath,
+        csvContent: fs6.readFileSync(csvPath, "utf8"),
+        stdout,
+        stderr,
+        exitCode
+      };
+    } catch (err) {
+      if (err instanceof OctaveEngineError) {
+        throw err;
+      }
+      const timedOut = err instanceof RenderTimeoutError;
+      const execErr = err;
+      const stdout = (_a = execErr.stdout) != null ? _a : "";
+      const stderr = (_b = execErr.stderr) != null ? _b : formatExecError(err);
+      throw new OctaveEngineError(timedOut ? "Octave timed out while sampling the graph. Open debug details for the Octave log." : formatOctaveFailureMessage(stderr || formatExecError(err)), formatOctaveDebugLog({
+        octavePath,
+        workDir,
+        scriptPath,
+        exitCode: execErr.code,
+        stdout,
+        stderr
+      }));
+    }
+  });
+}
+function formatOctaveFailureMessage(raw) {
+  if (/elementwise|Use \.\^|only square matrix arguments are permitted/i.test(raw)) {
+    return "Octave could not evaluate the function. The plugin may have failed to convert the expression to elementwise form.";
+  }
+  return "Octave failed while sampling the graph. Open debug details for the Octave log.";
+}
+function cleanupOctaveWorkDir(workDir) {
+  try {
+    fs6.rmSync(workDir, { recursive: true, force: true });
+  } catch (e) {
+  }
+}
+
+// src/uiStyle.ts
+function mathgraphUiClassName() {
+  return "mathgraph-ui-glass";
+}
+function applyMathGraphUiStyle(doc) {
+  doc.body.classList.remove("mathgraph-ui-glass", "mathgraph-ui-native");
+  doc.body.classList.add(mathgraphUiClassName());
+}
+function decorateMathGraphRoot(el) {
+  el.addClass(mathgraphUiClassName());
+}
+
+// src/settings.ts
+var DEFAULT_SETTINGS = {
+  enableOctaveEngine: false,
+  octavePath: "",
+  preferOctaveFor3dSurfaces: false,
+  preferOctaveForOdePdeNumeric: false,
+  useLocalLuaLatexFallback: false,
+  lualatexPath: "",
+  renderOutputFormat: "svg",
+  debugMode: false
+};
+var MathGraphSettingTab = class extends import_obsidian2.PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.addClass("mathgraph-settings-tab", mathgraphUiClassName());
+    this.renderSection(containerEl, "Output", (section) => {
+      new import_obsidian2.Setting(section).setName("Output format").setDesc("Reading View uses SVG; PNG is used for export when selected.").addDropdown((drop) => {
+        drop.addOption("svg", "SVG");
+        drop.addOption("png", "PNG");
+        drop.setValue(this.plugin.settings.renderOutputFormat);
+        drop.onChange((value) => __async(this, null, function* () {
+          this.plugin.settings.renderOutputFormat = value;
+          yield this.plugin.saveSettings();
+        }));
+      });
+    });
+    this.renderSection(containerEl, "Advanced", (section) => {
+      new import_obsidian2.Setting(section).setName("Use local LuaLaTeX fallback").setDesc("When enabled, retry failed TikZJax renders with local LuaLaTeX if installed.").addToggle((toggle) => toggle.setValue(this.plugin.settings.useLocalLuaLatexFallback).onChange((value) => __async(this, null, function* () {
+        this.plugin.settings.useLocalLuaLatexFallback = value;
+        yield this.plugin.saveSettings();
+        this.display();
+      })));
+      if (this.plugin.settings.useLocalLuaLatexFallback) {
+        new import_obsidian2.Setting(section).setName("LuaLaTeX path").setDesc("Leave empty to auto-detect.").addText((text) => text.setPlaceholder("/Library/TeX/texbin/lualatex").setValue(this.plugin.settings.lualatexPath).onChange((value) => __async(this, null, function* () {
+          this.plugin.settings.lualatexPath = value.trim();
+          yield this.plugin.saveSettings();
+        })));
+      }
+      new import_obsidian2.Setting(section).setName("Enable Octave engine").setDesc("Optional external numerical sampler. Off by default.").addToggle((toggle) => toggle.setValue(this.plugin.settings.enableOctaveEngine).onChange((value) => __async(this, null, function* () {
+        this.plugin.settings.enableOctaveEngine = value;
+        yield this.plugin.saveSettings();
+        this.display();
+      })));
+      if (!this.plugin.settings.enableOctaveEngine) {
+        return;
+      }
+      new import_obsidian2.Setting(section).setName("Octave CLI path").setDesc("Use octave-cli if available.").addText((text) => {
+        text.setPlaceholder(DEFAULT_OCTAVE_CLI_PATH).setValue(this.plugin.settings.octavePath).onChange((value) => __async(this, null, function* () {
+          this.plugin.settings.octavePath = value.trim();
+          yield this.plugin.saveSettings();
+        }));
+      }).addButton((btn) => {
+        btn.setButtonText("Detect Octave CLI");
+        btn.onClick(() => __async(this, null, function* () {
+          const detected = yield detectOctaveCli();
+          if (detected) {
+            this.plugin.settings.octavePath = detected;
+            yield this.plugin.saveSettings();
+            new import_obsidian2.Notice(`Detected: ${detected}`);
+            this.display();
+          } else {
+            new import_obsidian2.Notice("Octave CLI not found.");
+          }
+        }));
+      });
+      new import_obsidian2.Setting(section).setName("Test Octave").setDesc("Check the configured Octave CLI.").addButton((btn) => {
+        btn.setButtonText("Test Octave");
+        btn.onClick(() => __async(this, null, function* () {
+          btn.setDisabled(true);
+          try {
+            const result = yield testOctaveCli(this.plugin.settings.octavePath);
+            if (result.ok) {
+              new import_obsidian2.Notice("Octave CLI works.");
+            } else {
+              new import_obsidian2.Notice("Octave CLI failed. Check the Octave CLI path.");
+              console.warn("[Math Plotter] Octave test failed", result);
+            }
+          } finally {
+            btn.setDisabled(false);
+          }
+        }));
+      });
+      new import_obsidian2.Setting(section).setName("Prefer Octave for 3D surfaces").setDesc("Use Octave instead of the built-in sampler when enabled.").addToggle((toggle) => toggle.setValue(this.plugin.settings.preferOctaveFor3dSurfaces).onChange((value) => __async(this, null, function* () {
+        this.plugin.settings.preferOctaveFor3dSurfaces = value;
+        yield this.plugin.saveSettings();
+      })));
+      new import_obsidian2.Setting(section).setName("Prefer Octave for ODE/PDE numeric mode").setDesc("Use Octave when numericMode is set on a graph.").addToggle((toggle) => toggle.setValue(this.plugin.settings.preferOctaveForOdePdeNumeric).onChange((value) => __async(this, null, function* () {
+        this.plugin.settings.preferOctaveForOdePdeNumeric = value;
+        yield this.plugin.saveSettings();
+      })));
+    });
+    this.renderSection(containerEl, "Debug", (section) => {
+      new import_obsidian2.Setting(section).setName("Debug mode").setDesc("Include generated TikZ in error details.").addToggle((toggle) => toggle.setValue(this.plugin.settings.debugMode).onChange((value) => __async(this, null, function* () {
+        this.plugin.settings.debugMode = value;
+        yield this.plugin.saveSettings();
+      })));
+    });
+  }
+  renderSection(parent, title, renderContent) {
+    const card = parent.createDiv({ cls: "mathgraph-settings-section" });
+    card.createDiv({ cls: "mathgraph-settings-section-title", text: title });
+    const body = card.createDiv({ cls: "mathgraph-section-body mathgraph-settings-section-body" });
+    renderContent(body);
+  }
+};
+
+// src/settingsGuards.ts
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isRenderOutputFormat(value) {
+  return value === "svg" || value === "png";
+}
+function pickValidSettings(data) {
+  const picked = {};
+  if (typeof data.enableOctaveEngine === "boolean") {
+    picked.enableOctaveEngine = data.enableOctaveEngine;
+  }
+  if (typeof data.octavePath === "string") {
+    picked.octavePath = data.octavePath;
+  }
+  if (typeof data.preferOctaveFor3dSurfaces === "boolean") {
+    picked.preferOctaveFor3dSurfaces = data.preferOctaveFor3dSurfaces;
+  }
+  if (typeof data.preferOctaveForOdePdeNumeric === "boolean") {
+    picked.preferOctaveForOdePdeNumeric = data.preferOctaveForOdePdeNumeric;
+  }
+  if (typeof data.useLocalLuaLatexFallback === "boolean") {
+    picked.useLocalLuaLatexFallback = data.useLocalLuaLatexFallback;
+  }
+  if (typeof data.lualatexPath === "string") {
+    picked.lualatexPath = data.lualatexPath;
+  }
+  if (isRenderOutputFormat(data.renderOutputFormat)) {
+    picked.renderOutputFormat = data.renderOutputFormat;
+  }
+  if (typeof data.debugMode === "boolean") {
+    picked.debugMode = data.debugMode;
+  }
+  return picked;
+}
+function mergeLoadedSettings(loaded) {
+  const data = isRecord(loaded) ? loaded : {};
+  return __spreadValues(__spreadValues({}, DEFAULT_SETTINGS), pickValidSettings(data));
+}
+
+// src/GraphBlockUpdater.ts
+function isGraphSpec(value) {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return value.version === 1 && typeof value.type === "string";
+}
 function classifyGraphBlockSource(source, settings) {
   const trimmed = source.trim();
   if (!trimmed) {
@@ -5306,11 +4550,8 @@ function classifyGraphBlockSource(source, settings) {
   }
   try {
     const parsed = JSON.parse(trimmed);
-    if (parsed.version !== 1) {
-      return { state: "invalid", error: `Unsupported graph version: ${String(parsed.version)}` };
-    }
-    if (!parsed.type) {
-      return { state: "invalid", error: 'Graph block is missing "type".' };
+    if (!isGraphSpec(parsed)) {
+      return { state: "invalid", error: "Graph block is missing required fields." };
     }
     return { state: "valid", spec: hydrateGraphSpec(parsed, settings) };
   } catch (err) {
@@ -5323,7 +4564,7 @@ function classifyGraphBlockSource(source, settings) {
 function readNoteLines(app, sourcePath) {
   return __async(this, null, function* () {
     const file = app.vault.getAbstractFileByPath(sourcePath);
-    if (!file) {
+    if (!(file instanceof import_obsidian3.TFile)) {
       return null;
     }
     const content = yield app.vault.read(file);
@@ -5388,11 +4629,10 @@ function resolveGraphBlockLocation(app, ctx, source, el) {
 function replaceGraphBlockBody(app, location, spec) {
   return __async(this, null, function* () {
     const file = app.vault.getAbstractFileByPath(location.sourcePath);
-    if (!file) {
+    if (!(file instanceof import_obsidian3.TFile)) {
       throw new Error("Note not found.");
     }
-    const tfile = file;
-    const lines = (yield app.vault.read(tfile)).split("\n");
+    const lines = (yield app.vault.read(file)).split("\n");
     const jsonLines = serializeGraphSpec(spec).split("\n");
     const replacement = ["```graph", ...jsonLines, "```"];
     const nextLines = [
@@ -5400,44 +4640,42 @@ function replaceGraphBlockBody(app, location, spec) {
       ...replacement,
       ...lines.slice(location.endLine + 1)
     ];
-    yield app.vault.modify(tfile, nextLines.join("\n"));
+    yield app.vault.modify(file, nextLines.join("\n"));
   });
 }
 function clearGraphBlockBody(app, location) {
   return __async(this, null, function* () {
     const file = app.vault.getAbstractFileByPath(location.sourcePath);
-    if (!file) {
+    if (!(file instanceof import_obsidian3.TFile)) {
       throw new Error("Note not found.");
     }
-    const tfile = file;
-    const lines = (yield app.vault.read(tfile)).split("\n");
+    const lines = (yield app.vault.read(file)).split("\n");
     const replacement = ["```graph", "```"];
     const nextLines = [
       ...lines.slice(0, location.startLine),
       ...replacement,
       ...lines.slice(location.endLine + 1)
     ];
-    yield app.vault.modify(tfile, nextLines.join("\n"));
+    yield app.vault.modify(file, nextLines.join("\n"));
   });
 }
 function removeGraphBlock(app, location) {
   return __async(this, null, function* () {
     const file = app.vault.getAbstractFileByPath(location.sourcePath);
-    if (!file) {
+    if (!(file instanceof import_obsidian3.TFile)) {
       throw new Error("Note not found.");
     }
-    const tfile = file;
-    const lines = (yield app.vault.read(tfile)).split("\n");
+    const lines = (yield app.vault.read(file)).split("\n");
     const nextLines = [
       ...lines.slice(0, location.startLine),
       ...lines.slice(location.endLine + 1)
     ];
-    yield app.vault.modify(tfile, nextLines.join("\n"));
+    yield app.vault.modify(file, nextLines.join("\n"));
   });
 }
 function insertGraphBlockAtCursor(app, spec) {
   return __async(this, null, function* () {
-    const view = app.workspace.getActiveViewOfType(import_obsidian2.MarkdownView);
+    const view = app.workspace.getActiveViewOfType(import_obsidian3.MarkdownView);
     if (!view) {
       throw new Error("Open a note to insert a graph.");
     }
@@ -5452,7 +4690,7 @@ function insertGraphBlockAtCursor(app, spec) {
 }
 
 // src/graphBuilderModal.ts
-var import_obsidian3 = __toModule(require("obsidian"));
+var import_obsidian4 = __toModule(require("obsidian"));
 
 // src/graphPointsTikz.ts
 var MARK_OPTS = "only marks, mark=*, mark size=2pt";
@@ -5505,18 +4743,6 @@ ${pointsTikz}`;
 ${tikz.slice(index)}`;
 }
 
-// src/uiStyle.ts
-function mathgraphUiClassName() {
-  return "mathgraph-ui-glass";
-}
-function applyMathGraphUiStyle(doc) {
-  doc.body.classList.remove("mathgraph-ui-glass", "mathgraph-ui-native");
-  doc.body.classList.add(mathgraphUiClassName());
-}
-function decorateMathGraphRoot(el) {
-  el.addClass(mathgraphUiClassName());
-}
-
 // src/graphBuilderModal.ts
 var BUILDER_TABS = [
   { id: "equation", label: "Equation" },
@@ -5525,7 +4751,7 @@ var BUILDER_TABS = [
   { id: "size", label: "Size" },
   { id: "points", label: "Points" }
 ];
-var GraphBuilderModal = class extends import_obsidian3.Modal {
+var GraphBuilderModal = class extends import_obsidian4.Modal {
   constructor(app, plugin, options) {
     super(app);
     this.plugin = plugin;
@@ -5860,10 +5086,10 @@ var GraphBuilderModal = class extends import_obsidian3.Modal {
     const addRange = (key, label) => {
       var _a2;
       const current = (_a2 = ranges[key]) != null ? _a2 : ["", ""];
-      this.formRangeRow(container, label, current, (min2, max2) => {
+      this.formRangeRow(container, label, current, (min, max) => {
         var _a3;
         this.spec.ranges = (_a3 = this.spec.ranges) != null ? _a3 : {};
-        this.spec.ranges[key] = [min2, max2];
+        this.spec.ranges[key] = [min, max];
       });
     };
     if (type === "parametric2d" || type === "parametric3d") {
@@ -6097,7 +5323,7 @@ var GraphBuilderModal = class extends import_obsidian3.Modal {
       var _a;
       const statusEl = wrap.querySelector(".mathgraph-point-status");
       const point = (_a = this.spec.points) == null ? void 0 : _a[index];
-      if (statusEl instanceof HTMLElement && point) {
+      if (isHTMLElement(statusEl) && point) {
         this.updatePointRowStatus(statusEl, point);
       }
     });
@@ -6158,37 +5384,37 @@ var GraphBuilderModal = class extends import_obsidian3.Modal {
     return __async(this, null, function* () {
       var _a, _b;
       const paramList = (_a = this.panels.get("equation")) == null ? void 0 : _a.querySelector(".mathgraph-param-list");
-      if (paramList instanceof HTMLElement) {
+      if (isHTMLElement(paramList)) {
         this.syncParametersFromDom(paramList);
       }
       const pointList = (_b = this.panels.get("points")) == null ? void 0 : _b.querySelector(".mathgraph-point-list");
-      if (pointList instanceof HTMLElement) {
+      if (isHTMLElement(pointList)) {
         this.syncPointsFromDom(pointList);
       }
       const sizeError = validateGraphSize(ensureGraphSize(this.spec));
       if (sizeError) {
-        new import_obsidian3.Notice(sizeError);
+        new import_obsidian4.Notice(sizeError);
         this.switchTab("size");
         return;
       }
       try {
         if (this.options.mode === "edit" && this.options.location) {
           yield replaceGraphBlockBody(this.app, this.options.location, this.spec);
-          new import_obsidian3.Notice("Graph updated.");
+          new import_obsidian4.Notice("Graph updated.");
         } else if (this.options.onInsert) {
           yield this.options.onInsert(this.spec);
-          new import_obsidian3.Notice("Graph inserted.");
+          new import_obsidian4.Notice("Graph inserted.");
         } else {
           yield this.plugin.insertGraph(this.spec);
-          new import_obsidian3.Notice("Graph inserted.");
+          new import_obsidian4.Notice("Graph inserted.");
         }
         const clipWarning = surfaceZRangeClipWarning(this.spec);
         if (clipWarning) {
-          new import_obsidian3.Notice(clipWarning);
+          new import_obsidian4.Notice(clipWarning);
         }
         this.close();
       } catch (err) {
-        new import_obsidian3.Notice(err instanceof Error ? err.message : "Could not save graph.");
+        new import_obsidian4.Notice(err instanceof Error ? err.message : "Could not save graph.");
       }
     });
   }
@@ -6199,10 +5425,10 @@ var GraphBuilderModal = class extends import_obsidian3.Modal {
 };
 
 // src/graphProcessor.ts
-var import_obsidian6 = __toModule(require("obsidian"));
+var import_obsidian7 = __toModule(require("obsidian"));
 
 // src/InlineGraphBuilder.ts
-var import_obsidian4 = __toModule(require("obsidian"));
+var import_obsidian5 = __toModule(require("obsidian"));
 
 // src/inlineGraphDefaults.ts
 var INLINE_GRAPH_TYPE_LABELS = {
@@ -6496,8 +5722,8 @@ function renderInlineGraphBuilder(el, options) {
     }).open();
   });
   cancelBtn.addEventListener("click", () => {
-    void removeGraphBlock(options.plugin.app, options.location).then(() => new import_obsidian4.Notice("Graph block removed.")).catch((err) => {
-      new import_obsidian4.Notice(err instanceof Error ? err.message : "Could not remove block.");
+    void removeGraphBlock(options.plugin.app, options.location).then(() => new import_obsidian5.Notice("Graph block removed.")).catch((err) => {
+      new import_obsidian5.Notice(err instanceof Error ? err.message : "Could not remove block.");
     });
   });
   function insertFromInline() {
@@ -6513,9 +5739,9 @@ function renderInlineGraphBuilder(el, options) {
       const spec = specFromInlineFields(current);
       try {
         yield replaceGraphBlockBody(options.plugin.app, options.location, spec);
-        new import_obsidian4.Notice("Graph inserted.");
+        new import_obsidian5.Notice("Graph inserted.");
       } catch (err) {
-        new import_obsidian4.Notice(err instanceof Error ? err.message : "Could not insert graph.");
+        new import_obsidian5.Notice(err instanceof Error ? err.message : "Could not insert graph.");
       }
     });
   }
@@ -6782,36 +6008,15 @@ function replaceDegCalls(expr, variable, value) {
   const pattern = new RegExp(`deg\\s*\\(\\s*${variable}\\s*\\)`, "gi");
   return expr.replace(pattern, String(value * 180 / Math.PI));
 }
-function trigReplacements(trigDegrees) {
-  if (trigDegrees) {
-    return [
-      [/\bsin\b/g, "sinDeg"],
-      [/\bcos\b/g, "cosDeg"],
-      [/\btan\b/g, "tanDeg"]
-    ];
-  }
-  return [
-    [/\bsin\b/g, "Math.sin"],
-    [/\bcos\b/g, "Math.cos"],
-    [/\btan\b/g, "Math.tan"]
-  ];
-}
 function evaluatePlotExpr(expr, variable, value, trigDegrees = false) {
-  let jsExpr = normalizePgfMath(expr).replace(/\\pi\b/g, String(Math.PI)).replace(/\\lambda\b/g, "1").replace(/\^/g, "**").replace(new RegExp(`\\b${variable}\\b`, "g"), `(${value})`);
-  jsExpr = replaceDegCalls(jsExpr, variable, value);
-  if (!AUTO_FIT_SAFE_PATTERN.test(jsExpr)) {
+  let normalized = normalizePgfMath(expr).replace(/\\lambda\b/g, "1");
+  normalized = replaceDegCalls(normalized, variable, value);
+  if (!AUTO_FIT_SAFE_PATTERN.test(normalized)) {
     return null;
   }
-  for (const [pattern, replacement] of trigReplacements(trigDegrees)) {
-    jsExpr = jsExpr.replace(pattern, replacement);
-  }
-  jsExpr = jsExpr.replace(/\bexp\b/g, "Math.exp").replace(/\blog\b/g, "Math.log").replace(/\bsqrt\b/g, "Math.sqrt").replace(/\babs\b/g, "Math.abs");
   try {
-    const sinDeg = (x) => Math.sin(x * Math.PI / 180);
-    const cosDeg = (x) => Math.cos(x * Math.PI / 180);
-    const tanDeg = (x) => Math.tan(x * Math.PI / 180);
-    const valueFn = Function("sinDeg", "cosDeg", "tanDeg", `"use strict"; return (${jsExpr});`);
-    const result = valueFn(sinDeg, cosDeg, tanDeg);
+    const evaluate = compileSafeMathExpression(normalized, [variable], { trigDegrees });
+    const result = evaluate({ [variable]: value });
     return Number.isFinite(result) ? result : null;
   } catch (e) {
     return null;
@@ -6825,10 +6030,10 @@ function isLikelyDegreeDomain(range) {
   if (span < 180 || span > 720) {
     return false;
   }
-  const min2 = range.min;
-  const max2 = range.max;
-  const nearZeroStart = Math.abs(min2) <= 1 || isNearInteger(min2 % 90);
-  const roundEnd = isNearInteger(max2) || isNearInteger(max2 % 90);
+  const min = range.min;
+  const max = range.max;
+  const nearZeroStart = Math.abs(min) <= 1 || isNearInteger(min % 90);
+  const roundEnd = isNearInteger(max) || isNearInteger(max % 90);
   const classicDegreeSpan = Math.abs(span - 360) <= 1 || Math.abs(span - 180) <= 1 || Math.abs(span - 720) <= 1;
   return classicDegreeSpan && nearZeroStart && roundEnd;
 }
@@ -6854,10 +6059,10 @@ function findBracedArgument(text, start) {
   }
   return null;
 }
-function padNumericRange(min2, max2, ratio = 0.08) {
-  const span = max2 - min2;
+function padNumericRange(min, max, ratio = 0.08) {
+  const span = max - min;
   const pad = span === 0 ? 1 : span * ratio;
-  return { min: min2 - pad, max: max2 + pad };
+  return { min: min - pad, max: max + pad };
 }
 function sampleRange(range, samples) {
   const values = [];
@@ -6984,17 +6189,17 @@ function parseSliderParamValue(raw) {
   if (!slider) {
     return trimmed;
   }
-  const min2 = Number.parseFloat(slider[1]);
-  const max2 = Number.parseFloat(slider[2]);
+  const min = Number.parseFloat(slider[1]);
+  const max = Number.parseFloat(slider[2]);
   const step = slider[3] ? Number.parseFloat(slider[3]) : null;
-  if (!Number.isFinite(min2) || !Number.isFinite(max2)) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
     return trimmed;
   }
   if (step !== null && Number.isFinite(step) && step > 0) {
-    const midpoint = min2 + Math.floor((max2 - min2) / step / 2) * step;
+    const midpoint = min + Math.floor((max - min) / step / 2) * step;
     return String(Number.parseFloat(midpoint.toFixed(6)));
   }
-  return String((min2 + max2) / 2);
+  return String((min + max) / 2);
 }
 
 // graphAnalysis.ts
@@ -7286,36 +6491,22 @@ function parseOdeExpression(body, solutionMode) {
     rhsExpr: trimmed
   };
 }
-function prepareJsExpr(expr, variables) {
-  let js = normalizePgfMath(expr).replace(/\\pi\b/g, "Math.PI").replace(/\^/g, "**");
-  const ordered = Object.entries(variables).sort((left, right) => right[0].length - left[0].length);
-  for (const [name, replacement] of ordered) {
-    js = js.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), replacement);
-  }
-  return js.replace(/\bexp\b/g, "Math.exp").replace(/\blog\b/g, "Math.log").replace(/\bsqrt\b/g, "Math.sqrt").replace(/\babs\b/g, "Math.abs").replace(/\bsin\b/g, "Math.sin").replace(/\bcos\b/g, "Math.cos").replace(/\btan\b/g, "Math.tan");
+function prepareSafeOdeExpr(expr) {
+  return normalizePgfMath(expr).replace(/y\s*''/gi, "0").replace(/y\s*'(?![a-zA-Z])/gi, "yp").replace(/\^/g, "^");
 }
 function compileFirstOrderRhs(expr) {
-  const js = prepareJsExpr(expr, {
-    "y'": "yp",
-    "y": "yVal",
-    "x": "xVal"
-  });
-  const fn = Function("xVal", "yVal", `"use strict"; return (${js});`);
+  const normalized = prepareSafeOdeExpr(expr);
+  const evaluate = compileSafeMathExpression(normalized, ["x", "y", "yp"]);
   return (x, y) => {
-    const result = fn(x, y);
+    const result = evaluate({ x, y, yp: 0 });
     return Number.isFinite(result) ? result : Number.NaN;
   };
 }
 function compileSecondOrderRhs(expr) {
-  const js = prepareJsExpr(expr, {
-    "y''": "0",
-    "y'": "ypVal",
-    "y": "yVal",
-    "x": "xVal"
-  });
-  const fn = Function("xVal", "yVal", "ypVal", `"use strict"; return (${js});`);
-  return (x, y, yp) => {
-    const result = fn(x, y, yp);
+  const normalized = prepareSafeOdeExpr(expr);
+  const evaluate = compileSafeMathExpression(normalized, ["x", "y", "yp"]);
+  return (x, y, ypVal) => {
+    const result = evaluate({ x, y, yp: ypVal });
     return Number.isFinite(result) ? result : Number.NaN;
   };
 }
@@ -7938,12 +7129,12 @@ function parseNumericRange(value) {
   if (!match) {
     return null;
   }
-  const min2 = Number.parseFloat(match[1]);
-  const max2 = Number.parseFloat(match[2]);
-  if (!Number.isFinite(min2) || !Number.isFinite(max2)) {
+  const min = Number.parseFloat(match[1]);
+  const max = Number.parseFloat(match[2]);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
     return null;
   }
-  return min2 <= max2 ? { min: min2, max: max2 } : { min: max2, max: min2 };
+  return min <= max ? { min, max } : { min: max, max: min };
 }
 function isSizeValue(value) {
   const trimmed = value.trim();
@@ -8064,10 +7255,10 @@ function extractAxisLimitsFromOptions(options) {
   const domain = extractOptionValue2(cleanedOptions, "domain");
   const yDomain = extractOptionValue2(cleanedOptions, "y domain");
   if (xmin !== null && xmax !== null) {
-    const min2 = Number.parseFloat(xmin);
-    const max2 = Number.parseFloat(xmax);
-    if (Number.isFinite(min2) && Number.isFinite(max2)) {
-      limits.x = min2 <= max2 ? { min: min2, max: max2 } : { min: max2, max: min2 };
+    const min = Number.parseFloat(xmin);
+    const max = Number.parseFloat(xmax);
+    if (Number.isFinite(min) && Number.isFinite(max)) {
+      limits.x = min <= max ? { min, max } : { min: max, max: min };
       limits.explicitX = true;
     }
   } else if (domain) {
@@ -8078,10 +7269,10 @@ function extractAxisLimitsFromOptions(options) {
     }
   }
   if (ymin !== null && ymax !== null) {
-    const min2 = Number.parseFloat(ymin);
-    const max2 = Number.parseFloat(ymax);
-    if (Number.isFinite(min2) && Number.isFinite(max2)) {
-      limits.y = min2 <= max2 ? { min: min2, max: max2 } : { min: max2, max: min2 };
+    const min = Number.parseFloat(ymin);
+    const max = Number.parseFloat(ymax);
+    if (Number.isFinite(min) && Number.isFinite(max)) {
+      limits.y = min <= max ? { min, max } : { min: max, max: min };
       limits.explicitY = true;
     }
   } else if (yDomain) {
@@ -8937,250 +8128,6 @@ function formatOctaveRenderDebugDetails(debug) {
   ].join("\n");
 }
 
-// octave/octaveRunner.ts
-var fs6 = __toModule(require("fs"));
-var os2 = __toModule(require("os"));
-var path4 = __toModule(require("path"));
-
-// octave/octaveProcess.ts
-var import_child_process2 = __toModule(require("child_process"));
-var OCTAVE_HEADLESS_FLAGS = [
-  "--quiet",
-  "--no-gui",
-  "--no-window-system",
-  "--no-history"
-];
-function buildOctaveProcessEnv() {
-  const env = __spreadProps(__spreadValues({}, process.env), {
-    OCTAVE_HISTFILE: process.platform === "win32" ? "NUL" : "/dev/null",
-    GNUTERM: "dumb"
-  });
-  if (process.platform !== "win32") {
-    env.DISPLAY = "";
-  }
-  return env;
-}
-function spawnOctaveWithTimeout(octavePath, args, options, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    var _a, _b;
-    const child = (0, import_child_process2.spawn)(octavePath, args, {
-      cwd: options.cwd,
-      env: buildOctaveProcessEnv(),
-      windowsHide: true,
-      detached: false,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    (_a = child.stdout) == null ? void 0 : _a.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    (_b = child.stderr) == null ? void 0 : _b.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-      reject(new RenderTimeoutError(timeoutMs));
-    }, timeoutMs);
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      if (!timedOut) {
-        reject(err);
-      }
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (timedOut) {
-        return;
-      }
-      const exitCode = code != null ? code : 1;
-      if (exitCode !== 0) {
-        const err = new Error(`Octave exited with code ${exitCode}`);
-        err.stdout = stdout;
-        err.stderr = stderr;
-        err.code = exitCode;
-        reject(err);
-        return;
-      }
-      resolve({ stdout, stderr, exitCode });
-    });
-  });
-}
-function buildOctaveEvalArgs(evalScript) {
-  return [...OCTAVE_HEADLESS_FLAGS, "--eval", evalScript];
-}
-
-// octave/octaveResolver.ts
-var fs5 = __toModule(require("fs"));
-var OCTAVE_CLI_DETECT_PATHS = [
-  "/opt/homebrew/bin/octave-cli",
-  "/usr/local/bin/octave-cli",
-  "/usr/bin/octave-cli",
-  "/opt/homebrew/bin/octave",
-  "/usr/local/bin/octave",
-  "/usr/bin/octave"
-];
-var DEFAULT_OCTAVE_CLI_PATH = "/opt/homebrew/bin/octave-cli";
-function detectOctaveCli() {
-  return __async(this, null, function* () {
-    return resolveOctave("");
-  });
-}
-function resolveOctave(customPath) {
-  return __async(this, null, function* () {
-    const trimmed = customPath.trim();
-    const candidates = trimmed ? [trimmed] : [...OCTAVE_CLI_DETECT_PATHS, "octave-cli", "octave"];
-    for (const candidate of candidates) {
-      if (candidate.includes("/")) {
-        if (fs5.existsSync(candidate)) {
-          return candidate;
-        }
-        continue;
-      }
-      try {
-        const { stdout } = yield execFileWithTimeout("/usr/bin/which", [candidate], {}, 5e3);
-        const resolved = stdout.trim();
-        if (resolved && !resolved.includes("/Applications/Octave.app")) {
-          return resolved;
-        }
-      } catch (e) {
-      }
-    }
-    return null;
-  });
-}
-
-// octave/octaveRunner.ts
-var OCTAVE_TIMEOUT_MS = 12e4;
-var OCTAVE_TEST_TIMEOUT_MS = 3e4;
-var OctaveEngineError = class extends Error {
-  constructor(message, rawLog) {
-    super(message);
-    this.rawLog = rawLog;
-    this.name = "OctaveEngineError";
-  }
-};
-function formatOctaveDebugLog(details) {
-  return [
-    `Octave CLI path: ${details.octavePath}`,
-    details.workDir ? `Working directory: ${details.workDir}` : "",
-    details.scriptPath ? `Script path: ${details.scriptPath}` : "",
-    details.exitCode !== void 0 ? `Exit code: ${details.exitCode}` : "",
-    details.stdout ? `
---- stdout ---
-${details.stdout.trim()}` : "",
-    details.stderr ? `
---- stderr ---
-${details.stderr.trim()}` : ""
-  ].filter(Boolean).join("\n");
-}
-function testOctaveCli(octavePathSetting) {
-  return __async(this, null, function* () {
-    var _a, _b;
-    const octavePath = yield resolveOctave(octavePathSetting);
-    if (!octavePath) {
-      return {
-        ok: false,
-        path: "",
-        stdout: "",
-        stderr: "",
-        error: "Octave CLI not found."
-      };
-    }
-    const workDir = fs6.mkdtempSync(path4.join(os2.tmpdir(), "mathgraph-octave-test-"));
-    try {
-      const { stdout, stderr, exitCode } = yield spawnOctaveWithTimeout(octavePath, buildOctaveEvalArgs("disp(2+2);"), { cwd: workDir }, OCTAVE_TEST_TIMEOUT_MS);
-      const ok = stdout.trim().includes("4");
-      return { ok, path: octavePath, stdout, stderr, exitCode };
-    } catch (err) {
-      const execErr = err;
-      return {
-        ok: false,
-        path: octavePath,
-        stdout: (_a = execErr.stdout) != null ? _a : "",
-        stderr: (_b = execErr.stderr) != null ? _b : formatExecError(err),
-        exitCode: execErr.code,
-        error: formatExecError(err)
-      };
-    } finally {
-      try {
-        fs6.rmSync(workDir, { recursive: true, force: true });
-      } catch (e) {
-      }
-    }
-  });
-}
-function runOctaveScript(script, octavePathSetting) {
-  return __async(this, null, function* () {
-    var _a, _b;
-    const octavePath = yield resolveOctave(octavePathSetting);
-    if (!octavePath) {
-      throw new OctaveEngineError("Octave CLI not found. Install Octave or set the Octave CLI path in Math Plotter settings.");
-    }
-    if (octavePath.includes("/Applications/Octave.app")) {
-      throw new OctaveEngineError("The Octave GUI app path is not supported. Use the headless Octave CLI (octave-cli) instead.");
-    }
-    const workDir = fs6.mkdtempSync(path4.join(os2.tmpdir(), "mathgraph-octave-"));
-    const scriptPath = path4.join(workDir, "graph-sample.m");
-    const csvPath = path4.join(workDir, "graph-data.csv");
-    fs6.writeFileSync(scriptPath, script, "utf8");
-    const evalScript = `cd("${workDir.replace(/\\/g, "/")}"); source("graph-sample.m");`;
-    const args = buildOctaveEvalArgs(evalScript);
-    try {
-      const { stdout, stderr, exitCode } = yield spawnOctaveWithTimeout(octavePath, args, { cwd: workDir }, OCTAVE_TIMEOUT_MS);
-      if (!fs6.existsSync(csvPath)) {
-        throw new OctaveEngineError("Octave failed while sampling the graph. Open debug details for the Octave log.", formatOctaveDebugLog({
-          octavePath,
-          workDir,
-          scriptPath,
-          exitCode,
-          stdout,
-          stderr
-        }));
-      }
-      return {
-        workDir,
-        scriptPath,
-        csvPath,
-        csvContent: fs6.readFileSync(csvPath, "utf8"),
-        stdout,
-        stderr,
-        exitCode
-      };
-    } catch (err) {
-      if (err instanceof OctaveEngineError) {
-        throw err;
-      }
-      const timedOut = err instanceof RenderTimeoutError;
-      const execErr = err;
-      const stdout = (_a = execErr.stdout) != null ? _a : "";
-      const stderr = (_b = execErr.stderr) != null ? _b : formatExecError(err);
-      throw new OctaveEngineError(timedOut ? "Octave timed out while sampling the graph. Open debug details for the Octave log." : formatOctaveFailureMessage(stderr || formatExecError(err)), formatOctaveDebugLog({
-        octavePath,
-        workDir,
-        scriptPath,
-        exitCode: execErr.code,
-        stdout,
-        stderr
-      }));
-    }
-  });
-}
-function formatOctaveFailureMessage(raw) {
-  if (/elementwise|Use \.\^|only square matrix arguments are permitted/i.test(raw)) {
-    return "Octave could not evaluate the function. The plugin may have failed to convert the expression to elementwise form.";
-  }
-  return "Octave failed while sampling the graph. Open debug details for the Octave log.";
-}
-function cleanupOctaveWorkDir(workDir) {
-  try {
-    fs6.rmSync(workDir, { recursive: true, force: true });
-  } catch (e) {
-  }
-}
-
 // octave/expressionToOctave.ts
 function expressionToOctave(input, context = {}) {
   return compileExpressionForOctave(input, context);
@@ -9657,7 +8604,7 @@ function buildExplicitSolutionPlot(spec, styleOpts) {
   return `\\function[${plotOpts}]{${body}}`;
 }
 function buildParametric3dTikz(spec, styleOpts, settings) {
-  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+  var _a, _b, _c, _d, _e, _f, _g, _h;
   const xExpr = (_a = spec.xExpression) == null ? void 0 : _a.trim();
   const yExpr = (_b = spec.yExpression) == null ? void 0 : _b.trim();
   const zExpr = (_c = spec.zExpression) == null ? void 0 : _c.trim();
@@ -9665,10 +8612,6 @@ function buildParametric3dTikz(spec, styleOpts, settings) {
     throw new Error("Parametric 3D requires x, y, and z expressions.");
   }
   const tDomain = (_e = rangeToDomain((_d = spec.ranges) == null ? void 0 : _d.t)) != null ? _e : "0:6.28318";
-  const labels = (_f = spec.labels) != null ? _f : {};
-  const { width, height } = resolveLatexGraphDimensions(spec);
-  const xDomain = rangeToDomain((_g = spec.ranges) == null ? void 0 : _g.x);
-  const yDomain = rangeToDomain((_h = spec.ranges) == null ? void 0 : _h.y);
   const axisOpts = pgfplots3dAxisOptions(spec);
   const plotOpts = joinOptions4([
     styleOpts,
@@ -9677,15 +8620,15 @@ function buildParametric3dTikz(spec, styleOpts, settings) {
   ]);
   const xPlot = compileExpressionForPgfplots(xExpr, {
     variables: ["x", "y", "z", "t"],
-    parameters: (_i = spec.parameters) != null ? _i : {}
+    parameters: (_f = spec.parameters) != null ? _f : {}
   });
   const yPlot = compileExpressionForPgfplots(yExpr, {
     variables: ["x", "y", "z", "t"],
-    parameters: (_j = spec.parameters) != null ? _j : {}
+    parameters: (_g = spec.parameters) != null ? _g : {}
   });
   const zPlot = compileExpressionForPgfplots(zExpr, {
     variables: ["x", "y", "z", "t"],
-    parameters: (_k = spec.parameters) != null ? _k : {}
+    parameters: (_h = spec.parameters) != null ? _h : {}
   });
   return [
     "\\begin{tikzpicture}",
@@ -9791,7 +8734,7 @@ function buildGraphRenderBundle(_0, _1) {
 }
 
 // src/graphView.ts
-var import_obsidian5 = __toModule(require("obsidian"));
+var import_obsidian6 = __toModule(require("obsidian"));
 function downloadBlob(blob, filename, doc) {
   const url = URL.createObjectURL(blob);
   const link = doc.createElement("a");
@@ -9806,7 +8749,7 @@ function downloadSvg(svgText, doc, filename = "math-graph.svg") {
   const blob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
   downloadBlob(blob, filename, doc);
 }
-function svgToPng(svgText) {
+function svgToPng(svgText, doc) {
   return __async(this, null, function* () {
     const svgBlob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(svgBlob);
@@ -9817,7 +8760,7 @@ function svgToPng(svgText) {
         img.onload = () => resolve();
         img.onerror = () => reject(new Error("Could not load SVG image."));
       });
-      const canvas = document.createElement("canvas");
+      const canvas = doc.createElement("canvas");
       canvas.width = img.naturalWidth || 800;
       canvas.height = img.naturalHeight || 600;
       const ctx = canvas.getContext("2d");
@@ -9981,21 +8924,21 @@ function renderGraphView(el, spec, result, tikzSource, actions = {}) {
   }
   makeButton("Export", () => {
     downloadSvg(svgText, el.ownerDocument, `${spec.title || "math-graph"}.svg`);
-    new import_obsidian5.Notice("SVG exported.");
+    new import_obsidian6.Notice("SVG exported.");
   });
   makeButton("Export PNG", () => {
-    void svgToPng(svgText).then((blob) => {
+    void svgToPng(svgText, el.ownerDocument).then((blob) => {
       downloadBlob(blob, `${spec.title || "math-graph"}.png`, el.ownerDocument);
-      new import_obsidian5.Notice("PNG exported.");
+      new import_obsidian6.Notice("PNG exported.");
     }).catch((err) => {
-      new import_obsidian5.Notice(err instanceof Error ? err.message : "PNG export failed.");
+      new import_obsidian6.Notice(err instanceof Error ? err.message : "PNG export failed.");
     });
   });
   makeButton("Copy TikZ", () => {
     void navigator.clipboard.writeText(tikzSource).then(() => {
-      new import_obsidian5.Notice("TikZ copied.");
+      new import_obsidian6.Notice("TikZ copied.");
     }).catch(() => {
-      new import_obsidian5.Notice("Could not copy TikZ.");
+      new import_obsidian6.Notice("Could not copy TikZ.");
     });
   });
   const scroll = block.createDiv({ cls: "mathgraph-graph-scroll" });
@@ -10029,25 +8972,29 @@ function scrollContainerCandidates(doc) {
   return results;
 }
 function captureScrollPosition(app) {
-  var _a, _b;
+  var _a, _b, _c;
   const leaf = app.workspace.getMostRecentLeaf();
-  const doc = (_b = (_a = leaf == null ? void 0 : leaf.view) == null ? void 0 : _a.containerEl.ownerDocument) != null ? _b : document;
+  const doc = (_b = (_a = leaf == null ? void 0 : leaf.view) == null ? void 0 : _a.containerEl.ownerDocument) != null ? _b : app.workspace.containerEl.ownerDocument;
+  const activeWindow = (_c = doc.defaultView) != null ? _c : window;
   const containers = scrollContainerCandidates(doc).filter((element) => element.scrollHeight > element.clientHeight + 1).map((element) => ({ element, top: element.scrollTop }));
   return {
-    windowY: window.scrollY,
+    windowY: activeWindow.scrollY,
     containers
   };
 }
-function restoreScrollPosition(_app, snapshot) {
+function restoreScrollPosition(app, snapshot) {
+  var _a;
+  const doc = app.workspace.containerEl.ownerDocument;
+  const activeWindow = (_a = doc.defaultView) != null ? _a : window;
   const apply = () => {
-    window.scrollTo({ top: snapshot.windowY });
+    activeWindow.scrollTo({ top: snapshot.windowY });
     for (const { element, top } of snapshot.containers) {
       element.scrollTop = top;
     }
   };
-  requestAnimationFrame(() => {
+  activeWindow.requestAnimationFrame(() => {
     apply();
-    requestAnimationFrame(apply);
+    activeWindow.requestAnimationFrame(apply);
   });
 }
 
@@ -10060,7 +9007,7 @@ function registerGraphRerenderHandler(el, handler) {
 function rerenderGraphContainer(container, options) {
   var _a;
   const root = container.closest(".mathgraph-processor-root");
-  if (root instanceof HTMLElement) {
+  if (isHTMLElement(root)) {
     (_a = graphRerenderHandlers.get(root)) == null ? void 0 : _a(options);
   }
 }
@@ -10074,7 +9021,7 @@ function findMountedGraphRoots(app) {
       return;
     }
     for (const root of Array.from(container.querySelectorAll(".mathgraph-processor-root"))) {
-      if (!(root instanceof HTMLElement)) {
+      if (!isHTMLElement(root)) {
         continue;
       }
       if (!root.isConnected || !root.querySelector(".mathgraph-rendered-container")) {
@@ -10104,6 +9051,7 @@ function refreshVisibleGraphsForThemeChange(app) {
 function createThemeWatcher(plugin) {
   let currentTheme = getCurrentTheme();
   let refreshTimer = null;
+  const doc = plugin.app.workspace.containerEl.ownerDocument;
   const scheduleRefresh = () => {
     if (refreshTimer !== null) {
       window.clearTimeout(refreshTimer);
@@ -10126,7 +9074,7 @@ function createThemeWatcher(plugin) {
     scheduleRefresh();
   };
   const observer = new MutationObserver(onMutation);
-  const targets = [document.body, document.documentElement];
+  const targets = [doc.body, doc.documentElement];
   for (const target of targets) {
     observer.observe(target, { attributes: true, attributeFilter: ["class"] });
   }
@@ -10202,13 +9150,22 @@ function renderEmptyBlock(plugin, el, ctx, source) {
       return;
     }
     renderInlineGraphBuilder(el, { plugin, ctx, location });
+    hideAdjacentSourceEmbed(el);
   });
+}
+function hideAdjacentSourceEmbed(el) {
+  const prev = el.previousElementSibling;
+  if (prev == null ? void 0 : prev.classList.contains("cm-embed-block")) {
+    prev.addClass("mathgraph-hidden-embed");
+  }
 }
 function renderValidBlock(plugin, el, ctx, source, spec) {
   var _a;
+  el.addClass("mathgraph-has-rendered-graph");
+  hideAdjacentSourceEmbed(el);
   const ensureLoading = (text = "Drawing graph\u2026") => {
     const existing = el.querySelector(".mathgraph-loading");
-    if (existing instanceof HTMLElement) {
+    if (isHTMLElement(existing)) {
       existing.setText(text);
       return existing;
     }
@@ -10419,14 +9376,14 @@ function setupGraphView(el, plugin, ctx, source, spec, result, tikz, rerender, i
       },
       onDisplayScaleChange: (newScale) => {
         if (!location) {
-          new import_obsidian6.Notice("Could not locate graph block to save size.");
+          new import_obsidian7.Notice("Could not locate graph block to save size.");
           return;
         }
         const size = ensureGraphSize(spec);
         size.displayScale = clampDisplayScale(newScale);
         spec.size = size;
         const container = el.querySelector(".mathgraph-rendered-container");
-        if (container instanceof HTMLElement) {
+        if (isHTMLElement(container)) {
           applyRenderedGraphDisplayScale(container, spec, result.svgText);
         }
         scheduleDisplayScaleSave(plugin, location, spec);
@@ -10463,7 +9420,7 @@ function openEditModal(plugin, spec, source, ctx, el) {
   return __async(this, null, function* () {
     const location = yield resolveGraphBlockLocation(plugin.app, ctx, source, el);
     if (!location) {
-      new import_obsidian6.Notice("Could not locate graph block in note.");
+      new import_obsidian7.Notice("Could not locate graph block in note.");
       return;
     }
     new GraphBuilderModal(plugin.app, plugin, {
@@ -10478,7 +9435,7 @@ function openInvalidEditModal(plugin, source, ctx, el) {
     var _a;
     const location = yield resolveGraphBlockLocation(plugin.app, ctx, source, el);
     if (!location) {
-      new import_obsidian6.Notice("Could not locate graph block in note.");
+      new import_obsidian7.Notice("Could not locate graph block in note.");
       return;
     }
     let seed = defaultGraphSpec("function2d", plugin.settings);
@@ -10500,129 +9457,17 @@ function resetBlock(plugin, source, ctx, el) {
   return __async(this, null, function* () {
     const location = yield resolveGraphBlockLocation(plugin.app, ctx, source, el);
     if (!location) {
-      new import_obsidian6.Notice("Could not locate graph block in note.");
+      new import_obsidian7.Notice("Could not locate graph block in note.");
       return;
     }
     try {
       yield clearGraphBlockBody(plugin.app, location);
-      new import_obsidian6.Notice("Graph block reset.");
+      new import_obsidian7.Notice("Graph block reset.");
     } catch (err) {
-      new import_obsidian6.Notice(err instanceof Error ? err.message : "Could not reset block.");
+      new import_obsidian7.Notice(err instanceof Error ? err.message : "Could not reset block.");
     }
   });
 }
-
-// src/settings.ts
-var import_obsidian7 = __toModule(require("obsidian"));
-var DEFAULT_SETTINGS = {
-  enableOctaveEngine: false,
-  octavePath: "",
-  preferOctaveFor3dSurfaces: false,
-  preferOctaveForOdePdeNumeric: false,
-  useLocalLuaLatexFallback: false,
-  lualatexPath: "",
-  renderOutputFormat: "svg",
-  debugMode: false
-};
-var MathGraphSettingTab = class extends import_obsidian7.PluginSettingTab {
-  constructor(app, plugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-  }
-  display() {
-    const { containerEl } = this;
-    containerEl.empty();
-    containerEl.addClass("mathgraph-settings-tab", mathgraphUiClassName());
-    this.renderSection(containerEl, "Output", (section) => {
-      new import_obsidian7.Setting(section).setName("Output format").setDesc("Reading View uses SVG; PNG is used for export when selected.").addDropdown((drop) => {
-        drop.addOption("svg", "SVG");
-        drop.addOption("png", "PNG");
-        drop.setValue(this.plugin.settings.renderOutputFormat);
-        drop.onChange((value) => __async(this, null, function* () {
-          this.plugin.settings.renderOutputFormat = value;
-          yield this.plugin.saveSettings();
-        }));
-      });
-    });
-    this.renderSection(containerEl, "Advanced", (section) => {
-      new import_obsidian7.Setting(section).setName("Use local LuaLaTeX fallback").setDesc("When enabled, retry failed TikZJax renders with local LuaLaTeX if installed.").addToggle((toggle) => toggle.setValue(this.plugin.settings.useLocalLuaLatexFallback).onChange((value) => __async(this, null, function* () {
-        this.plugin.settings.useLocalLuaLatexFallback = value;
-        yield this.plugin.saveSettings();
-        this.display();
-      })));
-      if (this.plugin.settings.useLocalLuaLatexFallback) {
-        new import_obsidian7.Setting(section).setName("LuaLaTeX path").setDesc("Leave empty to auto-detect.").addText((text) => text.setPlaceholder("/Library/TeX/texbin/lualatex").setValue(this.plugin.settings.lualatexPath).onChange((value) => __async(this, null, function* () {
-          this.plugin.settings.lualatexPath = value.trim();
-          yield this.plugin.saveSettings();
-        })));
-      }
-      new import_obsidian7.Setting(section).setName("Enable Octave engine").setDesc("Optional external numerical sampler. Off by default.").addToggle((toggle) => toggle.setValue(this.plugin.settings.enableOctaveEngine).onChange((value) => __async(this, null, function* () {
-        this.plugin.settings.enableOctaveEngine = value;
-        yield this.plugin.saveSettings();
-        this.display();
-      })));
-      if (!this.plugin.settings.enableOctaveEngine) {
-        return;
-      }
-      new import_obsidian7.Setting(section).setName("Octave CLI path").setDesc("Use octave-cli if available.").addText((text) => {
-        text.setPlaceholder(DEFAULT_OCTAVE_CLI_PATH).setValue(this.plugin.settings.octavePath).onChange((value) => __async(this, null, function* () {
-          this.plugin.settings.octavePath = value.trim();
-          yield this.plugin.saveSettings();
-        }));
-      }).addButton((btn) => {
-        btn.setButtonText("Detect Octave CLI");
-        btn.onClick(() => __async(this, null, function* () {
-          const detected = yield detectOctaveCli();
-          if (detected) {
-            this.plugin.settings.octavePath = detected;
-            yield this.plugin.saveSettings();
-            new import_obsidian7.Notice(`Detected: ${detected}`);
-            this.display();
-          } else {
-            new import_obsidian7.Notice("Octave CLI not found.");
-          }
-        }));
-      });
-      new import_obsidian7.Setting(section).setName("Test Octave").setDesc("Check the configured Octave CLI.").addButton((btn) => {
-        btn.setButtonText("Test Octave");
-        btn.onClick(() => __async(this, null, function* () {
-          btn.setDisabled(true);
-          try {
-            const result = yield testOctaveCli(this.plugin.settings.octavePath);
-            if (result.ok) {
-              new import_obsidian7.Notice("Octave CLI works.");
-            } else {
-              new import_obsidian7.Notice("Octave CLI failed. Check the Octave CLI path.");
-              console.warn("[Math Plotter] Octave test failed", result);
-            }
-          } finally {
-            btn.setDisabled(false);
-          }
-        }));
-      });
-      new import_obsidian7.Setting(section).setName("Prefer Octave for 3D surfaces").setDesc("Use Octave instead of the built-in sampler when enabled.").addToggle((toggle) => toggle.setValue(this.plugin.settings.preferOctaveFor3dSurfaces).onChange((value) => __async(this, null, function* () {
-        this.plugin.settings.preferOctaveFor3dSurfaces = value;
-        yield this.plugin.saveSettings();
-      })));
-      new import_obsidian7.Setting(section).setName("Prefer Octave for ODE/PDE numeric mode").setDesc("Use Octave when numericMode is set on a graph.").addToggle((toggle) => toggle.setValue(this.plugin.settings.preferOctaveForOdePdeNumeric).onChange((value) => __async(this, null, function* () {
-        this.plugin.settings.preferOctaveForOdePdeNumeric = value;
-        yield this.plugin.saveSettings();
-      })));
-    });
-    this.renderSection(containerEl, "Debug", (section) => {
-      new import_obsidian7.Setting(section).setName("Debug mode").setDesc("Include generated TikZ in error details.").addToggle((toggle) => toggle.setValue(this.plugin.settings.debugMode).onChange((value) => __async(this, null, function* () {
-        this.plugin.settings.debugMode = value;
-        yield this.plugin.saveSettings();
-      })));
-    });
-  }
-  renderSection(parent, title, renderContent) {
-    const card = parent.createDiv({ cls: "mathgraph-settings-section" });
-    card.createDiv({ cls: "mathgraph-settings-section-title", text: title });
-    const body = card.createDiv({ cls: "mathgraph-section-body mathgraph-settings-section-body" });
-    renderContent(body);
-  }
-};
 
 // main.ts
 var MathGraphStudioPlugin = class extends import_obsidian8.Plugin {
@@ -10641,7 +9486,7 @@ var MathGraphStudioPlugin = class extends import_obsidian8.Plugin {
       if (!GraphRenderer.tikzJaxAssetsPresent(pluginBaseDir)) {
         console.warn("[Math Plotter] TikZJax assets missing. Run `npm install && npm run build` in the plugin folder.", pluginBaseDir);
       }
-      this.renderer = new GraphRenderer(() => activeDocument.body.classList.contains("theme-dark"), () => ({
+      this.renderer = new GraphRenderer(() => this.app.workspace.containerEl.ownerDocument.body.classList.contains("theme-dark"), () => ({
         lualatexPath: this.settings.lualatexPath,
         useLocalLuaLatexFallback: this.settings.useLocalLuaLatexFallback
       }), pluginBaseDir, () => ensureTikzJaxFontsLoaded(this.app, this));
@@ -10697,18 +9542,7 @@ var MathGraphStudioPlugin = class extends import_obsidian8.Plugin {
   loadSettings() {
     return __async(this, null, function* () {
       const saved = yield this.loadData();
-      if (saved && typeof saved === "object") {
-        delete saved.renderTimeoutSeconds;
-        delete saved.renderCacheEnabled;
-        delete saved.renderTimeout;
-        delete saved.timeoutSeconds;
-        delete saved.cacheEnabled;
-        delete saved.renderCache;
-        delete saved.uiStyle;
-        delete saved.themeStyle;
-        delete saved.glassMode;
-      }
-      this.settings = Object.assign({}, DEFAULT_SETTINGS, saved != null ? saved : {});
+      this.settings = mergeLoadedSettings(saved);
     });
   }
   saveSettings() {
@@ -10720,7 +9554,7 @@ var MathGraphStudioPlugin = class extends import_obsidian8.Plugin {
     });
   }
   applyUiStyle() {
-    applyMathGraphUiStyle(activeDocument);
+    applyMathGraphUiStyle(this.app.workspace.containerEl.ownerDocument);
   }
   openInsertModal() {
     const view = this.app.workspace.getActiveViewOfType(import_obsidian8.MarkdownView);
@@ -10739,13 +9573,3 @@ var MathGraphStudioPlugin = class extends import_obsidian8.Plugin {
     });
   }
 };
-/*!
- Based on ndef.parser, by Raphael Graf(r@undefined.ch)
- http://www.undefined.ch/mparser/index.html
-
- Ported to JavaScript and modified by Matthew Crumley (email@matthewcrumley.com, http://silentmatt.com/)
-
- You are free to use and modify this code in anyway you find useful. Please leave this comment in the code
- to acknowledge its original source. If you feel like it, I enjoy hearing about projects that use my code,
- but don't feel like you have to let me know or ask permission.
-*/

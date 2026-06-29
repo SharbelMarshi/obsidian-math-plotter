@@ -1,10 +1,14 @@
-import { Parser } from 'expr-eval';
 import {
 	compileExpressionForOctave,
 	GraphExpressionSyntaxError,
 	type GraphExpressionContext,
 } from '../graphSyntax';
 import { parseBoundToNumber } from './graphRangeValidation';
+import {
+	compileSafeMathExpression,
+	type MathScope,
+	SafeMathSyntaxError,
+} from './safeMathEvaluator';
 
 export class ExpressionEvaluationError extends Error {
 	constructor(message: string) {
@@ -12,8 +16,6 @@ export class ExpressionEvaluationError extends Error {
 		this.name = 'ExpressionEvaluationError';
 	}
 }
-
-const parser = new Parser();
 
 export interface SamplePoint2D {
 	x: number;
@@ -28,11 +30,13 @@ export interface SamplePoint3D {
 	[key: string]: number;
 }
 
+const DEFAULT_VARIABLES = ['x', 'y', 'z', 't', 'r'];
+
 function stripExplicitYPrefix(expression: string): string {
 	return expression.replace(/^y\s*=\s*/i, '').trim();
 }
 
-function compiledOctaveToExprEval(compiled: string): string {
+function compiledOctaveToSafeEval(compiled: string): string {
 	return compiled
 		.replace(/\.\^/g, '^')
 		.replace(/\.\*/g, '*')
@@ -42,8 +46,8 @@ function compiledOctaveToExprEval(compiled: string): string {
 function buildEvaluationScope(
 	variables: Record<string, number>,
 	parameters: Record<string, string> = {},
-): Record<string, number> {
-	const scope: Record<string, number> = {
+): MathScope {
+	const scope: MathScope = {
 		...variables,
 		PI: Math.PI,
 		pi: Math.PI,
@@ -63,17 +67,6 @@ function buildEvaluationScope(
 	return scope;
 }
 
-function parseCompiledExpression(compiled: string) {
-	const normalized = compiledOctaveToExprEval(compiled);
-	try {
-		return parser.parse(normalized);
-	} catch {
-		throw new ExpressionEvaluationError(
-			`Could not parse expression: ${normalized}`,
-		);
-	}
-}
-
 function compileUserExpression(
 	expression: string,
 	context: GraphExpressionContext = {},
@@ -88,17 +81,36 @@ function compileUserExpression(
 	}
 }
 
+function compileEvaluator(
+	expression: string,
+	context: GraphExpressionContext = {},
+): (scope: MathScope) => number {
+	const compiled = compileUserExpression(expression, context);
+	const normalized = compiledOctaveToSafeEval(compiled);
+	const allowedVariables = [
+		...(context.variables ?? DEFAULT_VARIABLES),
+		...Object.keys(context.parameters ?? {}),
+	];
+	try {
+		return compileSafeMathExpression(normalized, allowedVariables);
+	} catch (err) {
+		const message = err instanceof SafeMathSyntaxError
+			? err.message
+			: `Could not parse expression: ${normalized}`;
+		throw new ExpressionEvaluationError(message);
+	}
+}
+
 export function evaluateExpression(
 	expression: string,
 	variables: Record<string, number>,
 	parameters: Record<string, string> = {},
 	context?: GraphExpressionContext,
 ): number {
-	const compiled = compileUserExpression(expression, context);
-	const parsed = parseCompiledExpression(compiled);
+	const evaluate = compileEvaluator(expression, context);
 	const scope = buildEvaluationScope(variables, parameters);
-	const result = parsed.evaluate(scope);
-	if (typeof result !== 'number' || !Number.isFinite(result)) {
+	const result = evaluate(scope);
+	if (!Number.isFinite(result)) {
 		throw new ExpressionEvaluationError('Expression did not evaluate to a finite number.');
 	}
 	return result;
@@ -117,7 +129,7 @@ function linspace(min: number, max: number, count: number): number[] {
 
 function defaultContext(): GraphExpressionContext {
 	return {
-		variables: ['x', 'y', 'z', 't', 'r'],
+		variables: DEFAULT_VARIABLES,
 		parameters: {},
 	};
 }
@@ -134,15 +146,14 @@ export function sampleFunction2D(
 		...defaultContext(),
 		parameters,
 	};
-	const compiled = compileUserExpression(body, context);
-	const parsed = parseCompiledExpression(compiled);
+	const evaluate = compileEvaluator(body, context);
 	const xs = linspace(xMin, xMax, samples);
 	const points: SamplePoint2D[] = [];
 
 	for (const x of xs) {
 		const scope = buildEvaluationScope({ x }, parameters);
-		const y = parsed.evaluate(scope);
-		if (typeof y !== 'number' || !Number.isFinite(y)) {
+		const y = evaluate(scope);
+		if (!Number.isFinite(y)) {
 			continue;
 		}
 		points.push({ x, y });
@@ -170,8 +181,7 @@ export function sampleSurface3D(
 		...defaultContext(),
 		parameters,
 	};
-	const compiled = compileUserExpression(body, context);
-	const parsed = parseCompiledExpression(compiled);
+	const evaluate = compileEvaluator(body, context);
 	const xs = linspace(xMin, xMax, samplesX);
 	const ys = linspace(yMin, yMax, samplesY);
 	const points: SamplePoint3D[] = [];
@@ -179,8 +189,8 @@ export function sampleSurface3D(
 	for (const y of ys) {
 		for (const x of xs) {
 			const scope = buildEvaluationScope({ x, y }, parameters);
-			const z = parsed.evaluate(scope);
-			if (typeof z !== 'number' || !Number.isFinite(z)) {
+			const z = evaluate(scope);
+			if (!Number.isFinite(z)) {
 				continue;
 			}
 			points.push({ x, y, z });
@@ -209,15 +219,14 @@ export function samplePde2D(
 		...defaultContext(),
 		parameters,
 	};
-	const compiled = compileUserExpression(body, context);
-	const parsed = parseCompiledExpression(compiled);
+	const evaluate = compileEvaluator(body, context);
 	const xs = linspace(xMin, xMax, samples);
 	const points: Array<{ x: number; u: number }> = [];
 
 	for (const x of xs) {
 		const scope = buildEvaluationScope({ x, y: yMid }, parameters);
-		const u = parsed.evaluate(scope);
-		if (typeof u !== 'number' || !Number.isFinite(u)) {
+		const u = evaluate(scope);
+		if (!Number.isFinite(u)) {
 			continue;
 		}
 		points.push({ x, u });
