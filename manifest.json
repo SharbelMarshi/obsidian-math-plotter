@@ -1,0 +1,10 @@
+{
+	"id": "mathgraph-studio",
+	"name": "MathGraph Studio",
+	"version": "0.1.0",
+	"minAppVersion": "1.5.0",
+	"description": "GUI-first math graphing for Obsidian. Insert graphs via forms — never write plot code.",
+	"author": "Sharbel Marshi",
+	"authorUrl": "",
+	"isDesktopOnly": true
+}

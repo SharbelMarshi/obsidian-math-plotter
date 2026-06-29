@@ -1,0 +1,23 @@
+{
+	"name": "mathgraph-studio",
+	"version": "0.1.0",
+	"description": "GUI-first math graphing for Obsidian",
+	"main": "main.js",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"test:syntax": "esbuild scripts/test-graphSyntax.ts --bundle --platform=node --outfile=/tmp/test-graphSyntax.js && node /tmp/test-graphSyntax.js",
+		"test:octave-csv": "esbuild scripts/test-octaveCsv.ts --bundle --platform=node --outfile=/tmp/test-octaveCsv.js && node /tmp/test-octaveCsv.js",
+		"test:range": "esbuild scripts/test-graphRangeValidation.ts --bundle --platform=node --outfile=/tmp/test-graphRangeValidation.js && node /tmp/test-graphRangeValidation.js"
+	},
+	"keywords": [],
+	"author": "Sharbel Marshi",
+	"license": "MIT",
+	"devDependencies": {
+		"@types/node": "^16.11.6",
+		"esbuild": "0.13.12",
+		"obsidian": "latest",
+		"tslib": "2.3.1",
+		"typescript": "^5.0.0"
+	}
+}
