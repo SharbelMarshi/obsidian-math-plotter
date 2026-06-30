@@ -16,7 +16,8 @@ import {
 	type InlineGraphType,
 } from './inlineGraphDefaults';
 import { placeholderForGraphType } from './functionPlaceholders';
-import { INLINE_SIZE_PRESET_LABELS } from './graphSize';
+import { INLINE_SIZE_PRESET_LABELS, type InlineSizePreset } from './graphSize';
+import { isHTMLElement } from './domUtils';
 
 export interface InlineGraphBuilderOptions {
 	plugin: MathGraphStudioPlugin;
@@ -53,8 +54,8 @@ export function renderInlineGraphBuilder(
 	const sizeRow = grid.createDiv({ cls: 'mathgraph-field' });
 	sizeRow.createEl('label', { text: 'Graph size (LaTeX)', cls: 'mathgraph-label' });
 	const sizeSelect = sizeRow.createEl('select', { cls: 'mathgraph-select' });
-	for (const [value, label] of Object.entries(INLINE_SIZE_PRESET_LABELS) as [string, string][]) {
-		sizeSelect.createEl('option', { text: label, value });
+	for (const value of Object.keys(INLINE_SIZE_PRESET_LABELS) as InlineSizePreset[]) {
+		sizeSelect.createEl('option', { text: INLINE_SIZE_PRESET_LABELS[value], value });
 	}
 	sizeSelect.value = fields.sizePreset;
 
@@ -102,8 +103,10 @@ export function renderInlineGraphBuilder(
 	const errorEl = card.createDiv({ cls: 'mathgraph-inline-error' });
 	errorEl.hide();
 
-	const zMinWrap = zMinInput.closest('.mathgraph-field') as HTMLElement;
-	const zMaxWrap = zMaxInput.closest('.mathgraph-field') as HTMLElement;
+	const zMinParent = zMinInput.closest('.mathgraph-field');
+	const zMaxParent = zMaxInput.closest('.mathgraph-field');
+	const zMinWrap = isHTMLElement(zMinParent) ? zMinParent : null;
+	const zMaxWrap = isHTMLElement(zMaxParent) ? zMaxParent : null;
 
 	function applyTypeDefaults(type: InlineGraphType): void {
 		const defaults = defaultInlineFields(type);
@@ -125,8 +128,8 @@ export function renderInlineGraphBuilder(
 
 	function updateVisibility(type: InlineGraphType): void {
 		const show3d = type === 'surface3d' || type === 'pde';
-		zMinWrap.toggleVisibility(show3d);
-		zMaxWrap.toggleVisibility(show3d);
+		zMinWrap?.toggleVisibility(show3d);
+		zMaxWrap?.toggleVisibility(show3d);
 		paramRow.toggleVisibility(type === 'pde');
 		gridRow.toggleVisibility(type === 'function2d');
 	}

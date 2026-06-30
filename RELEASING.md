@@ -53,11 +53,19 @@ The repo root must contain:
 3. GitHub Actions (`.github/workflows/release.yml`) will:
    - Validate release metadata
    - Build the plugin and TikZJax assets
+   - Attest `main.js`, `manifest.json`, and `styles.css`
    - Create a **draft** release with:
      - `main.js`
      - `manifest.json`
      - `styles.css`
-     - `math-plotter-full.zip` (full folder for manual install, includes TikZJax assets)
+
+   For manual installs with bundled TikZJax assets, run locally:
+
+   ```bash
+   npm run release:package
+   ```
+
+   This creates `math-plotter-full.zip` (not uploaded to GitHub releases).
 
 4. Review the draft release on GitHub and publish it when ready.
 

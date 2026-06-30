@@ -154,16 +154,24 @@ export class GraphBuilderModal extends Modal {
 		}
 	}
 
+	private getPanel(tab: BuilderTab): HTMLElement {
+		const panel = this.panels.get(tab);
+		if (!panel) {
+			throw new Error(`Missing builder panel: ${tab}`);
+		}
+		return panel;
+	}
+
 	private renderForm(): void {
 		for (const panel of this.panels.values()) {
 			panel.empty();
 		}
 
-		this.renderEquationPanel(this.panels.get('equation')!);
-		this.renderRangesPanel(this.panels.get('ranges')!);
-		this.renderStylePanel(this.panels.get('style')!);
-		this.renderSizePanel(this.panels.get('size')!);
-		this.renderPointsPanel(this.panels.get('points')!);
+		this.renderEquationPanel(this.getPanel('equation'));
+		this.renderRangesPanel(this.getPanel('ranges'));
+		this.renderStylePanel(this.getPanel('style'));
+		this.renderSizePanel(this.getPanel('size'));
+		this.renderPointsPanel(this.getPanel('points'));
 		this.updateNavVisibility();
 	}
 

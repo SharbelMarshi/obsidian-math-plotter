@@ -508,7 +508,7 @@ export function normalizeExpressionForPgfplots(
 	variables: string[] = DEFAULT_VARIABLES,
 	parameters: Record<string, string> = {},
 ): string {
-	return normalizeUserExpressionForPgfplots(input, { variables, parameters });
+	return compileExpressionForPgfplots(input, { variables, parameters });
 }
 
 export function graphParametersToRecord(

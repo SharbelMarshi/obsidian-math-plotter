@@ -1,4 +1,4 @@
-import { resolveGraphDimensions } from './graphSize';
+import { resolveLatexGraphDimensions } from './graphSize';
 import type { GraphSpec } from './graphSpec';
 import { pgfplotsTextSafeTickOptions } from './pgfplotsTickStyle';
 
@@ -20,7 +20,7 @@ export function pgfplotsThemeAxisStyleOptions(): string {
 /** PGFPlots axis options tuned for readable 3D surface graphs. */
 export function pgfplots3dAxisOptions(spec: GraphSpec): string {
 	const labels = spec.labels ?? {};
-	const { width, height } = resolveGraphDimensions(spec);
+	const { width, height } = resolveLatexGraphDimensions(spec);
 	const xRange = spec.ranges?.x;
 	const yRange = spec.ranges?.y;
 

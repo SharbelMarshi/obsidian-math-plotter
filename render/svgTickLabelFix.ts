@@ -28,8 +28,13 @@ function parseTextNodes(inner: string): ParsedTextNode[] {
 	const re = /<text\b([^>]*)>([^<]*)<\/text>/g;
 	for (const match of inner.matchAll(re)) {
 		const attrs = match[1];
-		const family = attrs.match(/font-family="([^"]+)"/)?.[1] ?? '';
-		nodes.push({ family, content: match[2], attrs });
+		const content = match[2];
+		if (attrs === undefined || content === undefined) {
+			continue;
+		}
+		const familyMatch = attrs.match(/font-family="([^"]+)"/);
+		const family = familyMatch?.[1] ?? '';
+		nodes.push({ family, content, attrs });
 	}
 	return nodes;
 }
@@ -64,7 +69,15 @@ function fixTickLabelGroup(inner: string): string | null {
 function fixAdjacentMinusTexts(svg: string): string {
 	return svg.replace(
 		/<text([^>]*)font-family="cmsy10"([^>]*)>([^<]*)<\/text>\s*<text([^>]*)font-family="cmr10"([^>]*)>([^<]*)<\/text>/g,
-		(full, a1, b1, minusText, a2, b2, digitText) => {
+		(
+			full: string,
+			a1: string,
+			b1: string,
+			minusText: string,
+			a2: string,
+			b2: string,
+			digitText: string,
+		) => {
 			if (!isTexMinusGlyph(minusText)) {
 				return full;
 			}
@@ -82,19 +95,22 @@ function fixAdjacentMinusTexts(svg: string): string {
 }
 
 function normalizeUnicodeMinusInText(svg: string): string {
-	return svg.replace(/(<text\b[^>]*>)([^<]*)(<\/text>)/g, (full, open, content, close) => {
-		if (!content.includes('\u2212') && !content.includes('−')) {
-			return full;
-		}
-		return `${open}${content.replace(/\u2212/g, '-').replace(/−/g, '-')}${close}`;
-	});
+	return svg.replace(
+		/(<text\b[^>]*>)([^<]*)(<\/text>)/g,
+		(full: string, open: string, content: string, close: string) => {
+			if (!content.includes('\u2212') && !content.includes('−')) {
+				return full;
+			}
+			return `${open}${content.replace(/\u2212/g, '-').replace(/−/g, '-')}${close}`;
+		},
+	);
 }
 
 /** Repair TikZJax/PGFPlots tick labels that split minus into unavailable TeX fonts. */
 export function fixTikzJaxSvgTickLabels(svg: string): string {
 	let result = svg.replace(
 		/<g\b([^>]*\bstroke="none"[^>]*)>([\s\S]*?)<\/g>/g,
-		(full, _gAttrs, inner) => {
+		(full: string, _gAttrs: string, inner: string) => {
 			if (!inner.includes('font-family="cmsy10"')) {
 				return full;
 			}

@@ -260,8 +260,8 @@ function convertPointToPlot(
 
 	const lines = [`\\addplot[${plotOpts}] coordinates {(${x}, ${y})};`];
 	appendLegend(lines, style.legendLabel);
-	if (extractOptionValue(options, 'label')) {
-		const label = extractOptionValue(options, 'label')!;
+	const label = extractOptionValue(options, 'label');
+	if (label) {
 		const labelText = label.replace(/^\{|\}$/g, '').trim();
 		lines.push(`\\node[pin=90:{${labelText}}] at (axis cs:${x}, ${y}) {};`);
 	}

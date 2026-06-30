@@ -49,7 +49,7 @@ interface Token {
 	value: string;
 }
 
-const DISALLOWED_CHARS = /[;\[\]`'"=<>!&|?{}\\@#$%]/;
+const DISALLOWED_CHARS = /[;[\]`'"=<>!&|?{}\\@#$%]/;
 
 function tokenize(input: string): Token[] {
 	const trimmed = input.trim();

@@ -937,16 +937,16 @@
 
 /* ── Rendered graph (academic / transparent by default) ───────────────────── */
 
-.mathgraph-rendered-container {
+.mathgraph-root .mathgraph-rendered-container {
 	position: relative;
 	width: 100%;
 	margin: 0.6em 0;
 	padding: 0;
 	color: var(--text-normal);
-	border: none !important;
-	background: transparent !important;
-	box-shadow: none !important;
-	border-radius: 0 !important;
+	border: none;
+	background: transparent;
+	box-shadow: none;
+	border-radius: 0;
 	overflow: visible;
 }
 
@@ -1067,11 +1067,11 @@
 	pointer-events: auto;
 }
 
-.mathgraph-toolbar button,
-.mathgraph-toolbar .mathgraph-button,
-.mathgraph-toolbar .mathgraph-btn,
-.mathgraph-toolbar .mathgraph-scale-btn,
-.mathgraph-toolbar .mathgraph-scale-label {
+.mathgraph-root .mathgraph-toolbar button,
+.mathgraph-root .mathgraph-toolbar .mathgraph-button,
+.mathgraph-root .mathgraph-toolbar .mathgraph-btn,
+.mathgraph-root .mathgraph-toolbar .mathgraph-scale-btn,
+.mathgraph-root .mathgraph-toolbar .mathgraph-scale-label {
 	appearance: none;
 	-webkit-appearance: none;
 	flex: 0 0 auto;
@@ -1086,7 +1086,7 @@
 	border: 1px solid var(--background-modifier-border);
 	background: var(--background-primary);
 	color: var(--text-normal);
-	box-shadow: none !important;
+	box-shadow: none;
 	outline: none;
 	font-size: 0.78em;
 	font-weight: 500;
@@ -1096,10 +1096,10 @@
 	transform: none;
 }
 
-.mathgraph-toolbar .mathgraph-button-secondary {
+.mathgraph-root .mathgraph-toolbar .mathgraph-button-secondary {
 	background: var(--background-primary);
 	border: 1px solid var(--background-modifier-border);
-	box-shadow: none !important;
+	box-shadow: none;
 }
 
 .mathgraph-toolbar button::before,
@@ -1110,20 +1110,20 @@
 	content: none;
 }
 
-.mathgraph-toolbar button:hover,
-.mathgraph-toolbar .mathgraph-button:hover {
+.mathgraph-root .mathgraph-toolbar button:hover,
+.mathgraph-root .mathgraph-toolbar .mathgraph-button:hover {
 	background: var(--background-secondary);
 	border-color: var(--interactive-accent);
-	box-shadow: none !important;
+	box-shadow: none;
 }
 
-.mathgraph-toolbar button:focus,
-.mathgraph-toolbar button:focus-visible,
-.mathgraph-toolbar .mathgraph-button:focus,
-.mathgraph-toolbar .mathgraph-button:focus-visible {
+.mathgraph-root .mathgraph-toolbar button:focus,
+.mathgraph-root .mathgraph-toolbar button:focus-visible,
+.mathgraph-root .mathgraph-toolbar .mathgraph-button:focus,
+.mathgraph-root .mathgraph-toolbar .mathgraph-button:focus-visible {
 	outline: 2px solid color-mix(in srgb, var(--interactive-accent) 55%, transparent);
 	outline-offset: 2px;
-	box-shadow: none !important;
+	box-shadow: none;
 }
 
 .mathgraph-toolbar .mathgraph-scale-btn {
@@ -1310,11 +1310,11 @@
 	gap: 0;
 }
 
-.mathgraph-settings-section .setting-item,
-.mathgraph-settings-section .mathgraph-setting-item,
-.mathgraph-settings-section-body .setting-item {
-	background: transparent !important;
-	box-shadow: none !important;
+.mathgraph-ui-native .mathgraph-settings-tab .mathgraph-settings-section .setting-item,
+.mathgraph-ui-native .mathgraph-settings-tab .mathgraph-settings-section .mathgraph-setting-item,
+.mathgraph-ui-native .mathgraph-settings-tab .mathgraph-settings-section-body .setting-item {
+	background: transparent;
+	box-shadow: none;
 	border-radius: 0;
 	padding: 12px 0;
 	border-top: none;
@@ -1344,8 +1344,8 @@
 	margin-top: 2px;
 }
 
-.mathgraph-settings-row {
-	background: transparent !important;
+.mathgraph-ui-native .mathgraph-settings-tab .mathgraph-settings-row {
+	background: transparent;
 	border-radius: 0;
 	box-shadow: none;
 	padding: 12px 0;

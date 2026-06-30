@@ -1,4 +1,4 @@
-import type { GraphSpec } from './graphSpec';
+import type { GraphSpec, GraphExportSettings } from './graphSpec';
 import {
 	graphUses2dAspectRatio,
 	resolveAspectMode,
@@ -121,6 +121,31 @@ export function defaultGraphSizeForSpec(spec: GraphSpec): GraphSizeSettings {
 	};
 }
 
+function isGraphExportSettings(value: unknown): value is GraphExportSettings {
+	if (typeof value !== 'object' || value === null) {
+		return false;
+	}
+	const record = value as Record<string, unknown>;
+	const hasWidth = typeof record.width === 'string' && record.width.length > 0;
+	const hasHeight = typeof record.height === 'string' && record.height.length > 0;
+	return hasWidth || hasHeight;
+}
+
+/** Read legacy `export` width/height from older graph blocks. */
+function readLegacyExportSize(spec: GraphSpec): GraphSizeSettings | undefined {
+	const legacyExport = (spec as unknown as Record<string, unknown>).export;
+	if (!isGraphExportSettings(legacyExport)) {
+		return undefined;
+	}
+	return {
+		preset: 'custom',
+		width: legacyExport.width ?? DEFAULT_2D_WIDTH,
+		height: legacyExport.height ?? DEFAULT_2D_HEIGHT,
+		displayScale: 1,
+		aspectMode: 'auto',
+	};
+}
+
 export function ensureGraphSize(spec: GraphSpec): GraphSizeSettings {
 	if (spec.size?.preset) {
 		return {
@@ -132,15 +157,9 @@ export function ensureGraphSize(spec: GraphSpec): GraphSizeSettings {
 		};
 	}
 
-	// Legacy export fields
-	if (spec.export?.width || spec.export?.height) {
-		return {
-			preset: 'custom',
-			width: spec.export.width ?? DEFAULT_2D_WIDTH,
-			height: spec.export.height ?? DEFAULT_2D_HEIGHT,
-			displayScale: 1,
-			aspectMode: 'auto',
-		};
+	const legacySize = readLegacyExportSize(spec);
+	if (legacySize) {
+		return legacySize;
 	}
 
 	return defaultGraphSizeForSpec(spec);

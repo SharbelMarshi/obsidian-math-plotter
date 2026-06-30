@@ -285,7 +285,7 @@ GUI expression (user syntax)
   → optional: TikZJax / LuaLaTeX for high-quality export
 ```
 
-**Refresh** re-renders the fast SVG preview. **High quality** runs TikZJax (or LuaLaTeX fallback) when you need full PGFPlots output. Display scale changes use CSS only and do not trigger recompilation.
+**Refresh** re-renders the fast SVG preview. Display scale changes use CSS only and do not trigger recompilation.
 
 Supported user syntax includes `x^2+y^2`, `sin^2(x)+cos^2(y)`, `exp(-2*t)*sin(x)*sin(y)`, `e^(-x^2-y^2)`, `sqrt(x^2+y^2)`, `ln(x)`, `log(x)`, and `pi` / `π`. You never type Octave syntax like `.^`, `.*`, or `./`.
 
@@ -293,12 +293,12 @@ Point auto-detection and “not on graph” checks use the same JavaScript engin
 
 ### Symbolic PGFPlots (parametric, data, implicit)
 
-Parametric curves, data plots, and implicit contours use the fast SVG preview when possible. Use **High quality** in the graph toolbar for full TikZJax/PGFPlots output when the fast renderer is not enough.
+Parametric curves, data plots, and implicit contours use the fast SVG preview when possible. When fast preview is unavailable, the graph shows a **High quality render** action to run TikZJax/PGFPlots output.
 
 ### TikZJax WebAssembly (optional high-quality backend)
 
 - Bundled TeX/TikZ engine compiled to WebAssembly
-- Renders generated TikZ/PGFPlots to SVG on demand (toolbar **High quality**)
+- Renders generated TikZ/PGFPlots to SVG when TikZJax is invoked (for example from error fallback actions)
 - Works offline — assets ship with the plugin under `assets/tikzjax/`
 - PGFPlots compat is capped at **1.16** in TikZJax (not full TeX Live)
 - Loaded once and queued — not run on every field change or scale adjustment
@@ -484,7 +484,7 @@ Open **Settings → Math Plotter**.
 | *(built-in)* | TikZJax WebAssembly renders TikZ/PGFPlots to SVG — no configuration needed |
 | **Output format** | SVG in Reading View; PNG available for export |
 
-Math Plotter uses an internal 15-second render timeout and keeps render caching enabled automatically.
+Math Plotter uses an internal 15-second render timeout and keeps render caching enabled automatically. Math Plotter does not read or write the system clipboard.
 
 ### Advanced (optional fallbacks)
 

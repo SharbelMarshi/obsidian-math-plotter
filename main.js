@@ -927,8 +927,31 @@ function defaultGraphSizeForSpec(spec) {
     height: DEFAULT_3D_HEIGHT
   });
 }
+function isGraphExportSettings(value) {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value;
+  const hasWidth = typeof record.width === "string" && record.width.length > 0;
+  const hasHeight = typeof record.height === "string" && record.height.length > 0;
+  return hasWidth || hasHeight;
+}
+function readLegacyExportSize(spec) {
+  var _a, _b;
+  const legacyExport = spec.export;
+  if (!isGraphExportSettings(legacyExport)) {
+    return void 0;
+  }
+  return {
+    preset: "custom",
+    width: (_a = legacyExport.width) != null ? _a : DEFAULT_2D_WIDTH,
+    height: (_b = legacyExport.height) != null ? _b : DEFAULT_2D_HEIGHT,
+    displayScale: 1,
+    aspectMode: "auto"
+  };
+}
 function ensureGraphSize(spec) {
-  var _a, _b, _c, _d, _e, _f;
+  var _a, _b;
   if ((_a = spec.size) == null ? void 0 : _a.preset) {
     return {
       preset: spec.size.preset,
@@ -938,14 +961,9 @@ function ensureGraphSize(spec) {
       aspectMode: spec.size.aspectMode === "fixed" ? "fixed" : "auto"
     };
   }
-  if (((_c = spec.export) == null ? void 0 : _c.width) || ((_d = spec.export) == null ? void 0 : _d.height)) {
-    return {
-      preset: "custom",
-      width: (_e = spec.export.width) != null ? _e : DEFAULT_2D_WIDTH,
-      height: (_f = spec.export.height) != null ? _f : DEFAULT_2D_HEIGHT,
-      displayScale: 1,
-      aspectMode: "auto"
-    };
+  const legacySize = readLegacyExportSize(spec);
+  if (legacySize) {
+    return legacySize;
   }
   return defaultGraphSizeForSpec(spec);
 }
@@ -974,9 +992,6 @@ function resolveLatexGraphDimensions(spec) {
     return resolveAutoLatex2dDimensions(spec, size);
   }
   return resolveFixedLatexGraphDimensions(spec);
-}
-function resolveGraphDimensions(spec) {
-  return resolveLatexGraphDimensions(spec);
 }
 function resolveDisplayScale(spec) {
   var _a;
@@ -1102,7 +1117,7 @@ function resolvePlotStrokeColor(spec) {
   var _a, _b;
   hydrateGraphStyle(spec);
   const color = (_b = (_a = spec.style) == null ? void 0 : _a.color) == null ? void 0 : _b.trim();
-  if (isAutoGraphColor(color)) {
+  if (!color || isAutoGraphColor(color)) {
     return "mathgraphLine";
   }
   return color;
@@ -1152,7 +1167,7 @@ function buildSampled3dPlotOptions(spec) {
 function resolveFastSvgStrokeColor(spec, themeDefaultLine) {
   var _a, _b;
   const color = (_b = (_a = spec.style) == null ? void 0 : _a.color) == null ? void 0 : _b.trim();
-  if (isAutoGraphColor(color)) {
+  if (!color || isAutoGraphColor(color)) {
     return themeDefaultLine;
   }
   return color;
@@ -1433,7 +1448,7 @@ var TokenType2;
   TokenType3[TokenType3["Comma"] = 9] = "Comma";
   TokenType3[TokenType3["Eof"] = 10] = "Eof";
 })(TokenType2 || (TokenType2 = {}));
-var DISALLOWED_CHARS = /[;\[\]`'"=<>!&|?{}\\@#$%]/;
+var DISALLOWED_CHARS = /[;[\]`'"=<>!&|?{}\\@#$%]/;
 function tokenize2(input) {
   const trimmed = input.trim();
   if (!trimmed) {
@@ -2322,8 +2337,15 @@ var DARK_FALLBACKS = {
   defaultLine: "#f2f2f2",
   defaultWireframe: "#f2f2f2"
 };
-function isObsidianDarkTheme(doc = typeof activeDocument !== "undefined" ? activeDocument : void 0) {
-  return doc.body.classList.contains("theme-dark");
+function isDocument(value) {
+  return typeof value === "object" && value !== null && "body" in value;
+}
+function isObsidianDarkTheme(doc) {
+  const activeDoc = doc != null ? doc : typeof activeDocument !== "undefined" ? activeDocument : void 0;
+  if (!activeDoc) {
+    return false;
+  }
+  return activeDoc.body.classList.contains("theme-dark");
 }
 function readCssColor(varName, fallback, doc) {
   try {
@@ -2335,7 +2357,7 @@ function readCssColor(varName, fallback, doc) {
 }
 function resolveGraphThemeColors(app) {
   let doc;
-  if (app && typeof app === "object" && "body" in app) {
+  if (isDocument(app)) {
     doc = app;
   } else if (typeof activeDocument !== "undefined") {
     doc = activeDocument;
@@ -2366,8 +2388,11 @@ function cssColorToTikzHtml(color) {
     return trimmed.slice(1).toUpperCase();
   }
   if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
-    const [, r, g, b] = trimmed.match(/^#(.)(.)(.)$/i);
-    return `${r}${r}${g}${g}${b}${b}`.toUpperCase();
+    const shortHex = trimmed.match(/^#(.)(.)(.)$/i);
+    if (shortHex) {
+      const [, r, g, b] = shortHex;
+      return `${r}${r}${g}${g}${b}${b}`.toUpperCase();
+    }
   }
   const rgbMatch = trimmed.match(/^rgba?\(\s*([\d.]+)(?:%|)\s*,\s*([\d.]+)(?:%|)\s*,\s*([\d.]+)(?:%|)/i);
   if (rgbMatch) {
@@ -3082,13 +3107,18 @@ function isTexMinusGlyph(text) {
   return trimmed.length === 1 && !/[0-9a-zA-Z.]/.test(trimmed);
 }
 function parseTextNodes(inner) {
-  var _a, _b;
+  var _a;
   const nodes = [];
   const re = /<text\b([^>]*)>([^<]*)<\/text>/g;
   for (const match of inner.matchAll(re)) {
     const attrs = match[1];
-    const family = (_b = (_a = attrs.match(/font-family="([^"]+)"/)) == null ? void 0 : _a[1]) != null ? _b : "";
-    nodes.push({ family, content: match[2], attrs });
+    const content = match[2];
+    if (attrs === void 0 || content === void 0) {
+      continue;
+    }
+    const familyMatch = attrs.match(/font-family="([^"]+)"/);
+    const family = (_a = familyMatch == null ? void 0 : familyMatch[1]) != null ? _a : "";
+    nodes.push({ family, content, attrs });
   }
   return nodes;
 }
@@ -4094,9 +4124,9 @@ function getCachedGraphRender(fingerprint, mode, isDark) {
 function setCachedGraphRender(entry) {
   renderCache.set(entry.cacheKey, entry);
   if (renderCache.size > 64) {
-    const oldest = renderCache.keys().next().value;
-    if (oldest) {
-      renderCache.delete(oldest);
+    const nextKey = renderCache.keys().next();
+    if (!nextKey.done && nextKey.value !== void 0) {
+      renderCache.delete(nextKey.value);
     }
   }
 }
@@ -4402,6 +4432,9 @@ var MathGraphSettingTab = class extends import_obsidian2.PluginSettingTab {
     this.plugin = plugin;
   }
   display() {
+    this.rerenderSettingsTab();
+  }
+  rerenderSettingsTab() {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.addClass("mathgraph-settings-tab", mathgraphUiClassName());
@@ -4420,7 +4453,7 @@ var MathGraphSettingTab = class extends import_obsidian2.PluginSettingTab {
       new import_obsidian2.Setting(section).setName("Use local LuaLaTeX fallback").setDesc("When enabled, retry failed TikZJax renders with local LuaLaTeX if installed.").addToggle((toggle) => toggle.setValue(this.plugin.settings.useLocalLuaLatexFallback).onChange((value) => __async(this, null, function* () {
         this.plugin.settings.useLocalLuaLatexFallback = value;
         yield this.plugin.saveSettings();
-        this.display();
+        this.rerenderSettingsTab();
       })));
       if (this.plugin.settings.useLocalLuaLatexFallback) {
         new import_obsidian2.Setting(section).setName("LuaLaTeX path").setDesc("Leave empty to auto-detect.").addText((text) => text.setPlaceholder("/Library/TeX/texbin/lualatex").setValue(this.plugin.settings.lualatexPath).onChange((value) => __async(this, null, function* () {
@@ -4431,7 +4464,7 @@ var MathGraphSettingTab = class extends import_obsidian2.PluginSettingTab {
       new import_obsidian2.Setting(section).setName("Enable Octave engine").setDesc("Optional external numerical sampler. Off by default.").addToggle((toggle) => toggle.setValue(this.plugin.settings.enableOctaveEngine).onChange((value) => __async(this, null, function* () {
         this.plugin.settings.enableOctaveEngine = value;
         yield this.plugin.saveSettings();
-        this.display();
+        this.rerenderSettingsTab();
       })));
       if (!this.plugin.settings.enableOctaveEngine) {
         return;
@@ -4449,7 +4482,7 @@ var MathGraphSettingTab = class extends import_obsidian2.PluginSettingTab {
             this.plugin.settings.octavePath = detected;
             yield this.plugin.saveSettings();
             new import_obsidian2.Notice(`Detected: ${detected}`);
-            this.display();
+            this.rerenderSettingsTab();
           } else {
             new import_obsidian2.Notice("Octave CLI not found.");
           }
@@ -4830,15 +4863,22 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
       this.switchTab("equation");
     }
   }
+  getPanel(tab) {
+    const panel = this.panels.get(tab);
+    if (!panel) {
+      throw new Error(`Missing builder panel: ${tab}`);
+    }
+    return panel;
+  }
   renderForm() {
     for (const panel of this.panels.values()) {
       panel.empty();
     }
-    this.renderEquationPanel(this.panels.get("equation"));
-    this.renderRangesPanel(this.panels.get("ranges"));
-    this.renderStylePanel(this.panels.get("style"));
-    this.renderSizePanel(this.panels.get("size"));
-    this.renderPointsPanel(this.panels.get("points"));
+    this.renderEquationPanel(this.getPanel("equation"));
+    this.renderRangesPanel(this.getPanel("ranges"));
+    this.renderStylePanel(this.getPanel("style"));
+    this.renderSizePanel(this.getPanel("size"));
+    this.renderPointsPanel(this.getPanel("points"));
     this.updateNavVisibility();
   }
   formGrid(parent) {
@@ -5606,8 +5646,8 @@ function renderInlineGraphBuilder(el, options) {
   const sizeRow = grid.createDiv({ cls: "mathgraph-field" });
   sizeRow.createEl("label", { text: "Graph size (LaTeX)", cls: "mathgraph-label" });
   const sizeSelect = sizeRow.createEl("select", { cls: "mathgraph-select" });
-  for (const [value, label] of Object.entries(INLINE_SIZE_PRESET_LABELS)) {
-    sizeSelect.createEl("option", { text: label, value });
+  for (const value of Object.keys(INLINE_SIZE_PRESET_LABELS)) {
+    sizeSelect.createEl("option", { text: INLINE_SIZE_PRESET_LABELS[value], value });
   }
   sizeSelect.value = fields.sizePreset;
   const exprRow = grid.createDiv({ cls: "mathgraph-field mathgraph-field-wide" });
@@ -5648,8 +5688,10 @@ function renderInlineGraphBuilder(el, options) {
   gridSelect.value = fields.grid ? "on" : "off";
   const errorEl = card.createDiv({ cls: "mathgraph-inline-error" });
   errorEl.hide();
-  const zMinWrap = zMinInput.closest(".mathgraph-field");
-  const zMaxWrap = zMaxInput.closest(".mathgraph-field");
+  const zMinParent = zMinInput.closest(".mathgraph-field");
+  const zMaxParent = zMaxInput.closest(".mathgraph-field");
+  const zMinWrap = isHTMLElement(zMinParent) ? zMinParent : null;
+  const zMaxWrap = isHTMLElement(zMaxParent) ? zMaxParent : null;
   function applyTypeDefaults(type) {
     const defaults = defaultInlineFields(type);
     exprLabel.setText(type === "pde" || type === "ode" ? "Solution" : "Function");
@@ -5669,8 +5711,8 @@ function renderInlineGraphBuilder(el, options) {
   }
   function updateVisibility(type) {
     const show3d = type === "surface3d" || type === "pde";
-    zMinWrap.toggleVisibility(show3d);
-    zMaxWrap.toggleVisibility(show3d);
+    zMinWrap == null ? void 0 : zMinWrap.toggleVisibility(show3d);
+    zMaxWrap == null ? void 0 : zMaxWrap.toggleVisibility(show3d);
     paramRow.toggleVisibility(type === "pde");
     gridRow.toggleVisibility(type === "function2d");
   }
@@ -6730,7 +6772,7 @@ function pgfplotsThemeAxisStyleOptions() {
 function pgfplots3dAxisOptions(spec) {
   var _a, _b, _c, _d;
   const labels = (_a = spec.labels) != null ? _a : {};
-  const { width, height } = resolveGraphDimensions(spec);
+  const { width, height } = resolveLatexGraphDimensions(spec);
   const xRange = (_b = spec.ranges) == null ? void 0 : _b.x;
   const yRange = (_c = spec.ranges) == null ? void 0 : _c.y;
   return joinOptions2([
@@ -6887,8 +6929,8 @@ function convertPointToPlot(options, xRaw, yRaw, parameters = [], plotIndex) {
   const plotOpts = mergePlotOptions(style.cleanedOptions, [["mark size", "2.5pt"]], ["only marks", "mark=*", ...style.extraPlotOpts]);
   const lines = [`\\addplot[${plotOpts}] coordinates {(${x}, ${y})};`];
   appendLegend(lines, style.legendLabel);
-  if (extractOptionValue2(options, "label")) {
-    const label = extractOptionValue2(options, "label");
+  const label = extractOptionValue2(options, "label");
+  if (label) {
     const labelText = label.replace(/^\{|\}$/g, "").trim();
     lines.push(`\\node[pin=90:{${labelText}}] at (axis cs:${x}, ${y}) {};`);
   }
@@ -8034,7 +8076,7 @@ function axisOptions(spec, view3d) {
     return opts;
   }
   const labels = (_b = spec.labels) != null ? _b : {};
-  const { width, height } = resolveGraphDimensions(spec);
+  const { width, height } = resolveLatexGraphDimensions(spec);
   const xRange = (_c = spec.ranges) == null ? void 0 : _c.x;
   const yRange = (_d = spec.ranges) == null ? void 0 : _d.y;
   const parts = [
@@ -8844,8 +8886,8 @@ function renderGraphView(el, spec, result, tikzSource, actions = {}) {
   }
   const block = el.createDiv({ cls: "mathgraph-rendered-container" });
   const toolbar = block.createDiv({ cls: "mathgraph-toolbar" });
-  const makeButton = (label, handler, extraClass = "") => {
-    const cls = ["mathgraph-button", "mathgraph-button-secondary", extraClass].filter(Boolean).join(" ");
+  const makeButton = (label, handler) => {
+    const cls = "mathgraph-button mathgraph-button-secondary";
     const btn = toolbar.createEl("button", { text: label, cls, type: "button" });
     btn.setAttr("tabindex", "-1");
     btn.addEventListener("mousedown", (event) => {
@@ -8859,16 +8901,12 @@ function renderGraphView(el, spec, result, tikzSource, actions = {}) {
     return btn;
   };
   if (actions.onEdit) {
-    makeButton("Edit", () => actions.onEdit());
-  }
-  if (actions.onEditSize) {
-    makeButton("Edit size", () => actions.onEditSize());
+    const onEdit = actions.onEdit;
+    makeButton("Edit", () => onEdit());
   }
   if (actions.onRefresh) {
-    makeButton("Refresh", () => actions.onRefresh());
-  }
-  if (actions.showHighQualityAction && actions.onHighQualityRender) {
-    makeButton("High quality", () => actions.onHighQualityRender(), "mathgraph-hq-btn");
+    const onRefresh = actions.onRefresh;
+    makeButton("Refresh", () => onRefresh());
   }
   if (actions.onDisplayScaleChange) {
     const minusBtn = toolbar.createEl("button", {
@@ -8907,7 +8945,10 @@ function renderGraphView(el, spec, result, tikzSource, actions = {}) {
       size.displayScale = next;
       spec.size = size;
       applyRenderedGraphDisplayScale(block, spec, svgText);
-      void Promise.resolve(actions.onDisplayScaleChange(next));
+      const onDisplayScaleChange = actions.onDisplayScaleChange;
+      if (onDisplayScaleChange) {
+        void Promise.resolve(onDisplayScaleChange(next));
+      }
     };
     const changeScale = (delta) => {
       var _a2;
@@ -8932,13 +8973,6 @@ function renderGraphView(el, spec, result, tikzSource, actions = {}) {
       new import_obsidian6.Notice("PNG exported.");
     }).catch((err) => {
       new import_obsidian6.Notice(err instanceof Error ? err.message : "PNG export failed.");
-    });
-  });
-  makeButton("Copy TikZ", () => {
-    void navigator.clipboard.writeText(tikzSource).then(() => {
-      new import_obsidian6.Notice("TikZ copied.");
-    }).catch(() => {
-      new import_obsidian6.Notice("Could not copy TikZ.");
     });
   });
   const scroll = block.createDiv({ cls: "mathgraph-graph-scroll" });
@@ -8992,9 +9026,9 @@ function restoreScrollPosition(app, snapshot) {
       element.scrollTop = top;
     }
   };
-  activeWindow.requestAnimationFrame(() => {
+  window.requestAnimationFrame(() => {
     apply();
-    activeWindow.requestAnimationFrame(apply);
+    window.requestAnimationFrame(apply);
   });
 }
 
@@ -9139,7 +9173,12 @@ function registerGraphProcessor(plugin) {
       renderInvalidBlock(plugin, el, ctx, source, (_a = classification.error) != null ? _a : "Invalid graph block.");
       return;
     }
-    renderValidBlock(plugin, el, ctx, source, classification.spec);
+    const spec = classification.spec;
+    if (!spec) {
+      renderInvalidBlock(plugin, el, ctx, source, "Invalid graph block.");
+      return;
+    }
+    renderValidBlock(plugin, el, ctx, source, spec);
   });
 }
 function renderEmptyBlock(plugin, el, ctx, source) {
@@ -9195,7 +9234,7 @@ function renderValidBlock(plugin, el, ctx, source, spec) {
       }
       el.dataset.mathgraphRenderMode = mode;
       (_a2 = el.querySelector(".mathgraph-loading")) == null ? void 0 : _a2.remove();
-      void setupGraphView(el, plugin, ctx, source, currentSpec, cached.result, (_b = cached.tikz) != null ? _b : "", () => scheduleRender("svgFast", true), mode === "svgFast");
+      void setupGraphView(el, plugin, ctx, source, currentSpec, cached.result, (_b = cached.tikz) != null ? _b : "", () => scheduleRender("svgFast", true));
       return;
     }
     let bundle;
@@ -9263,7 +9302,7 @@ function renderValidBlock(plugin, el, ctx, source, spec) {
       }
       el.dataset.mathgraphRenderMode = mode;
       (_d = el.querySelector(".mathgraph-loading")) == null ? void 0 : _d.remove();
-      void setupGraphView(el, plugin, ctx, source, currentSpec, result, tikz, () => scheduleRender("svgFast", true), mode === "svgFast");
+      void setupGraphView(el, plugin, ctx, source, currentSpec, result, tikz, () => scheduleRender("svgFast", true));
     } catch (err) {
       if (generation !== renderGeneration) {
         return;
@@ -9323,56 +9362,18 @@ ${bundle.tikz}`);
   registerGraphRerenderHandler(el, triggerThemeRerender);
   scheduleRender("svgFast", Boolean((_a = getCachedGraphRender(fingerprint, "svgFast", isObsidianDarkTheme())) == null ? void 0 : _a.result.ok));
 }
-function setupGraphView(el, plugin, ctx, source, spec, result, tikz, rerender, isFastPreview) {
+function setupGraphView(el, plugin, ctx, source, spec, result, tikz, rerender) {
   return __async(this, null, function* () {
     const location = yield resolveGraphBlockLocation(plugin.app, ctx, source, el);
     renderGraphView(el, spec, result, tikz, {
       debugSource: plugin.settings.debugMode ? tikz : void 0,
-      showHighQualityAction: isFastPreview && plugin.renderer.canRenderFast(spec),
       onEdit: () => void openEditModal(plugin, spec, source, ctx, el),
-      onEditSize: () => void openEditModal(plugin, spec, source, ctx, el),
       onRefresh: () => {
         el.empty();
         el.addClass("mathgraph-processor-root");
         decorateMathGraphRoot(el);
         el.createDiv({ cls: "mathgraph-loading", text: "Drawing graph\u2026" });
         rerender();
-      },
-      onHighQualityRender: () => {
-        el.empty();
-        el.addClass("mathgraph-processor-root");
-        decorateMathGraphRoot(el);
-        el.createDiv({ cls: "mathgraph-loading", text: "High-quality rendering\u2026" });
-        void (() => __async(this, null, function* () {
-          var _a, _b;
-          const fingerprint = specRenderFingerprint(spec);
-          const themeIsDark = isObsidianDarkTheme();
-          const cacheKey2 = renderCacheKey(fingerprint, "tikzjax", themeIsDark);
-          try {
-            const bundle = yield buildGraphRenderBundle(spec, plugin.settings, { renderMode: "tikzjax" });
-            const hqResult = yield plugin.renderer.renderGraph(spec, {
-              mode: "tikzjax",
-              tikz: bundle.tikz,
-              assets: bundle.assets,
-              specFingerprint: fingerprint
-            });
-            if (hqResult.ok && hqResult.dataUrl) {
-              setCachedGraphRender({
-                cacheKey: cacheKey2,
-                renderMode: "tikzjax",
-                result: hqResult,
-                tikz: bundle.tikz
-              });
-            }
-            (_a = el.querySelector(".mathgraph-loading")) == null ? void 0 : _a.remove();
-            void setupGraphView(el, plugin, ctx, source, spec, hqResult, bundle.tikz, rerender, false);
-          } catch (err) {
-            (_b = el.querySelector(".mathgraph-loading")) == null ? void 0 : _b.remove();
-            appendGraphError(el, err instanceof Error ? err.message : "High-quality render failed.", {
-              onRetry: () => rerender()
-            });
-          }
-        }))();
       },
       onDisplayScaleChange: (newScale) => {
         if (!location) {

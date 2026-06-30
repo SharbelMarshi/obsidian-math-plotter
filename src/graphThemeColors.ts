@@ -28,8 +28,16 @@ const DARK_FALLBACKS = {
 	defaultWireframe: '#f2f2f2',
 };
 
-export function isObsidianDarkTheme(doc: Document = typeof activeDocument !== 'undefined' ? activeDocument : undefined as unknown as Document): boolean {
-	return doc.body.classList.contains('theme-dark');
+function isDocument(value: unknown): value is Document {
+	return typeof value === 'object' && value !== null && 'body' in value;
+}
+
+export function isObsidianDarkTheme(doc?: Document): boolean {
+	const activeDoc = doc ?? (typeof activeDocument !== 'undefined' ? activeDocument : undefined);
+	if (!activeDoc) {
+		return false;
+	}
+	return activeDoc.body.classList.contains('theme-dark');
 }
 
 function readCssColor(varName: string, fallback: string, doc: Document): string {
@@ -43,8 +51,8 @@ function readCssColor(varName: string, fallback: string, doc: Document): string 
 
 export function resolveGraphThemeColors(app?: App | Document): GraphThemeColors {
 	let doc: Document | undefined;
-	if (app && typeof app === 'object' && 'body' in app) {
-		doc = app as Document;
+	if (isDocument(app)) {
+		doc = app;
 	} else if (typeof activeDocument !== 'undefined') {
 		doc = activeDocument;
 	}
@@ -81,8 +89,11 @@ export function cssColorToTikzHtml(color: string): string {
 		return trimmed.slice(1).toUpperCase();
 	}
 	if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
-		const [, r, g, b] = trimmed.match(/^#(.)(.)(.)$/i)!;
-		return `${r}${r}${g}${g}${b}${b}`.toUpperCase();
+		const shortHex = trimmed.match(/^#(.)(.)(.)$/i);
+		if (shortHex) {
+			const [, r, g, b] = shortHex;
+			return `${r}${r}${g}${g}${b}${b}`.toUpperCase();
+		}
 	}
 
 	const rgbMatch = trimmed.match(/^rgba?\(\s*([\d.]+)(?:%|)\s*,\s*([\d.]+)(?:%|)\s*,\s*([\d.]+)(?:%|)/i);

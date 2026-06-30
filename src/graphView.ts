@@ -64,10 +64,7 @@ async function svgToPng(svgText: string, doc: Document): Promise<Blob> {
 
 export interface GraphViewActions {
 	onEdit?: () => void;
-	onEditSize?: () => void;
 	onRefresh?: () => void;
-	onHighQualityRender?: () => void;
-	showHighQualityAction?: boolean;
 	onDisplayScaleChange?: (newScale: number) => void | Promise<void>;
 	/** When set, appended to render error details (debug mode). */
 	debugSource?: string;
@@ -173,9 +170,8 @@ export function renderGraphView(
 	const makeButton = (
 		label: string,
 		handler: (event: MouseEvent) => void,
-		extraClass = '',
 	) => {
-		const cls = ['mathgraph-button', 'mathgraph-button-secondary', extraClass].filter(Boolean).join(' ');
+		const cls = 'mathgraph-button mathgraph-button-secondary';
 		const btn = toolbar.createEl('button', { text: label, cls, type: 'button' });
 		btn.setAttr('tabindex', '-1');
 		btn.addEventListener('mousedown', event => {
@@ -190,16 +186,12 @@ export function renderGraphView(
 	};
 
 	if (actions.onEdit) {
-		makeButton('Edit', () => actions.onEdit!());
-	}
-	if (actions.onEditSize) {
-		makeButton('Edit size', () => actions.onEditSize!());
+		const onEdit = actions.onEdit;
+		makeButton('Edit', () => onEdit());
 	}
 	if (actions.onRefresh) {
-		makeButton('Refresh', () => actions.onRefresh!());
-	}
-	if (actions.showHighQualityAction && actions.onHighQualityRender) {
-		makeButton('High quality', () => actions.onHighQualityRender!(), 'mathgraph-hq-btn');
+		const onRefresh = actions.onRefresh;
+		makeButton('Refresh', () => onRefresh());
 	}
 
 	if (actions.onDisplayScaleChange) {
@@ -241,7 +233,10 @@ export function renderGraphView(
 			size.displayScale = next;
 			spec.size = size;
 			applyRenderedGraphDisplayScale(block, spec, svgText);
-			void Promise.resolve(actions.onDisplayScaleChange!(next));
+			const onDisplayScaleChange = actions.onDisplayScaleChange;
+			if (onDisplayScaleChange) {
+				void Promise.resolve(onDisplayScaleChange(next));
+			}
 		};
 
 		const changeScale = (delta: number) => {
@@ -269,14 +264,6 @@ export function renderGraphView(
 			new Notice('PNG exported.');
 		}).catch(err => {
 			new Notice(err instanceof Error ? err.message : 'PNG export failed.');
-		});
-	});
-
-	makeButton('Copy TikZ', () => {
-		void navigator.clipboard.writeText(tikzSource).then(() => {
-			new Notice('TikZ copied.');
-		}).catch(() => {
-			new Notice('Could not copy TikZ.');
 		});
 	});
 

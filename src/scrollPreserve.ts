@@ -50,9 +50,9 @@ export function restoreScrollPosition(app: App, snapshot: ScrollSnapshot): void 
 		}
 	};
 
-	activeWindow.requestAnimationFrame(() => {
+	window.requestAnimationFrame(() => {
 		apply();
-		activeWindow.requestAnimationFrame(apply);
+		window.requestAnimationFrame(apply);
 	});
 }
 

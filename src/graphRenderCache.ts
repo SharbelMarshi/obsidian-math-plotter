@@ -44,9 +44,9 @@ export function getCachedGraphRender(
 export function setCachedGraphRender(entry: CachedGraphRender): void {
 	renderCache.set(entry.cacheKey, entry);
 	if (renderCache.size > 64) {
-		const oldest = renderCache.keys().next().value;
-		if (oldest) {
-			renderCache.delete(oldest);
+		const nextKey = renderCache.keys().next();
+		if (!nextKey.done && nextKey.value !== undefined) {
+			renderCache.delete(nextKey.value);
 		}
 	}
 }

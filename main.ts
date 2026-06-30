@@ -108,7 +108,7 @@ export default class MathGraphStudioPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		const saved = await this.loadData();
+		const saved: unknown = await this.loadData();
 		this.settings = mergeLoadedSettings(saved);
 	}
 

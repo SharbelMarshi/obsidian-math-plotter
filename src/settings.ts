@@ -36,6 +36,10 @@ export class MathGraphSettingTab extends PluginSettingTab {
 	}
 
 	display(): void {
+		this.rerenderSettingsTab();
+	}
+
+	private rerenderSettingsTab(): void {
 		const { containerEl } = this;
 		containerEl.empty();
 		containerEl.addClass('mathgraph-settings-tab', mathgraphUiClassName());
@@ -64,7 +68,7 @@ export class MathGraphSettingTab extends PluginSettingTab {
 					.onChange(async value => {
 						this.plugin.settings.useLocalLuaLatexFallback = value;
 						await this.plugin.saveSettings();
-						this.display();
+						this.rerenderSettingsTab();
 					}));
 
 			if (this.plugin.settings.useLocalLuaLatexFallback) {
@@ -88,7 +92,7 @@ export class MathGraphSettingTab extends PluginSettingTab {
 					.onChange(async value => {
 						this.plugin.settings.enableOctaveEngine = value;
 						await this.plugin.saveSettings();
-						this.display();
+						this.rerenderSettingsTab();
 					}));
 
 			if (!this.plugin.settings.enableOctaveEngine) {
@@ -115,7 +119,7 @@ export class MathGraphSettingTab extends PluginSettingTab {
 							this.plugin.settings.octavePath = detected;
 							await this.plugin.saveSettings();
 							new Notice(`Detected: ${detected}`);
-							this.display();
+							this.rerenderSettingsTab();
 						} else {
 							new Notice('Octave CLI not found.');
 						}

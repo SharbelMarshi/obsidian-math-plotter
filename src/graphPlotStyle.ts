@@ -85,10 +85,10 @@ export function isWireframeSurfaceStyle(spec: GraphSpec): boolean {
 export function resolvePlotStrokeColor(spec: GraphSpec): string {
 	hydrateGraphStyle(spec);
 	const color = spec.style?.color?.trim();
-	if (isAutoGraphColor(color)) {
+	if (!color || isAutoGraphColor(color)) {
 		return 'mathgraphLine';
 	}
-	return color!;
+	return color;
 }
 
 export function buildSampled2dPlotOptions(spec: GraphSpec): string {
@@ -142,10 +142,10 @@ export function resolveFastSvgStrokeColor(
 	themeDefaultLine: string,
 ): string {
 	const color = spec.style?.color?.trim();
-	if (isAutoGraphColor(color)) {
+	if (!color || isAutoGraphColor(color)) {
 		return themeDefaultLine;
 	}
-	return color!;
+	return color;
 }
 
 /** Map normalized height t in [0,1] to a heat-like RGB color (blue → yellow → red). */

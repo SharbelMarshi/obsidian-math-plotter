@@ -1,4 +1,4 @@
-import { resolveGraphDimensions } from '../src/graphSize';
+import { resolveLatexGraphDimensions } from '../src/graphSize';
 import type { GraphSpec } from '../src/graphSpec';
 import { gridAxisOption } from '../src/graphGridStyle';
 import { pgfplots3dAxisOptions, pgfplotsThemeAxisStyleOptions } from '../src/pgfplots3dAxisStyle';
@@ -31,7 +31,7 @@ function axisOptions(spec: GraphSpec, view3d: boolean): string {
 	}
 
 	const labels = spec.labels ?? {};
-	const { width, height } = resolveGraphDimensions(spec);
+	const { width, height } = resolveLatexGraphDimensions(spec);
 	const xRange = spec.ranges?.x;
 	const yRange = spec.ranges?.y;
 

@@ -39,9 +39,6 @@ jobs:
           npm ci
           npm run build
 
-      - name: Package full plugin folder (manual install)
-        run: node scripts/package-release.mjs
-
       - name: Verify release artifacts exist
         run: |
           for f in main.js manifest.json styles.css; do
@@ -50,40 +47,22 @@ jobs:
               exit 1
             fi
           done
+          cat manifest.json
 
-      - name: Verify release manifest matches repository
-        run: |
-          cmp -s manifest.json <(unzip -p math-plotter-full.zip manifest.json)
-          node -e "
-            const fs = require('fs');
-            const repo = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
-            const { execSync } = require('child_process');
-            const zipManifest = JSON.parse(execSync('unzip -p math-plotter-full.zip manifest.json', { encoding: 'utf8' }));
-            for (const key of ['id', 'name', 'version', 'minAppVersion', 'description', 'author']) {
-              if (repo[key] !== zipManifest[key]) {
-                console.error('Release manifest mismatch for ' + key + ': repo=' + repo[key] + ' zip=' + zipManifest[key]);
-                process.exit(1);
-              }
-            }
-            console.log('Release manifest matches repository manifest.');
-          "
-
-      - name: Attest build provenance
+      - name: Attest release assets
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
             main.js
             manifest.json
             styles.css
-          show-summary: true
 
       - name: Create release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-          assets=(main.js manifest.json styles.css math-plotter-full.zip)
           gh release create "$tag" \
             --title="$tag" \
             --draft \
-            "${assets[@]}"
+            main.js manifest.json styles.css

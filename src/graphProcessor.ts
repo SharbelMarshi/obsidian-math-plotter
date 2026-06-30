@@ -96,7 +96,13 @@ export function registerGraphProcessor(plugin: MathGraphStudioPlugin): void {
 			return;
 		}
 
-		renderValidBlock(plugin, el, ctx, source, classification.spec!);
+		const spec = classification.spec;
+		if (!spec) {
+			renderInvalidBlock(plugin, el, ctx, source, 'Invalid graph block.');
+			return;
+		}
+
+		renderValidBlock(plugin, el, ctx, source, spec);
 	});
 }
 
@@ -178,7 +184,6 @@ function renderValidBlock(
 				cached.result,
 				cached.tikz ?? '',
 				() => scheduleRender('svgFast', true),
-				mode === 'svgFast',
 			);
 			return;
 		}
@@ -263,7 +268,6 @@ function renderValidBlock(
 				result,
 				tikz,
 				() => scheduleRender('svgFast', true),
-				mode === 'svgFast',
 			);
 		} catch (err) {
 			if (generation !== renderGeneration) {
@@ -336,66 +340,18 @@ async function setupGraphView(
 	result: Parameters<typeof renderGraphView>[2],
 	tikz: string,
 	rerender: () => void,
-	isFastPreview: boolean,
 ): Promise<void> {
 	const location = await resolveGraphBlockLocation(plugin.app, ctx, source, el);
 
 	renderGraphView(el, spec, result, tikz, {
 		debugSource: plugin.settings.debugMode ? tikz : undefined,
-		showHighQualityAction: isFastPreview && plugin.renderer.canRenderFast(spec),
 		onEdit: () => void openEditModal(plugin, spec, source, ctx, el),
-		onEditSize: () => void openEditModal(plugin, spec, source, ctx, el),
 		onRefresh: () => {
 			el.empty();
 			el.addClass('mathgraph-processor-root');
 			decorateMathGraphRoot(el);
 			el.createDiv({ cls: 'mathgraph-loading', text: 'Drawing graph…' });
 			rerender();
-		},
-		onHighQualityRender: () => {
-			el.empty();
-			el.addClass('mathgraph-processor-root');
-			decorateMathGraphRoot(el);
-			el.createDiv({ cls: 'mathgraph-loading', text: 'High-quality rendering…' });
-			void (async () => {
-				const fingerprint = specRenderFingerprint(spec);
-				const themeIsDark = isObsidianDarkTheme();
-				const cacheKey = renderCacheKey(fingerprint, 'tikzjax', themeIsDark);
-				try {
-					const bundle = await buildGraphRenderBundle(spec, plugin.settings, { renderMode: 'tikzjax' });
-					const hqResult = await plugin.renderer.renderGraph(spec, {
-						mode: 'tikzjax',
-						tikz: bundle.tikz,
-						assets: bundle.assets,
-						specFingerprint: fingerprint,
-					});
-					if (hqResult.ok && hqResult.dataUrl) {
-						setCachedGraphRender({
-							cacheKey,
-							renderMode: 'tikzjax',
-							result: hqResult,
-							tikz: bundle.tikz,
-						});
-					}
-					el.querySelector('.mathgraph-loading')?.remove();
-					void setupGraphView(
-						el,
-						plugin,
-						ctx,
-						source,
-						spec,
-						hqResult,
-						bundle.tikz,
-						rerender,
-						false,
-					);
-				} catch (err) {
-					el.querySelector('.mathgraph-loading')?.remove();
-					appendGraphError(el, err instanceof Error ? err.message : 'High-quality render failed.', {
-						onRetry: () => rerender(),
-					});
-				}
-			})();
 		},
 		onDisplayScaleChange: newScale => {
 			if (!location) {
