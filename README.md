@@ -182,19 +182,6 @@ Optional: GNU Octave CLI (`octave-cli`), LuaLaTeX + Poppler for fallbacks.
 
 ---
 
-## Development
-
-```bash
-npm install
-npm run build
-npm run release:check
-npm run dev              # watch mode
-npm run test:syntax
-npm run test:tick-labels
-```
-
-Main source areas: `src/graphBuilderModal.ts`, `src/graphProcessor.ts`, `render/`, `graphPreprocessor.ts`, `sampler/`, `octave/`.
-
 Release process: [RELEASING.md](RELEASING.md)
 
 ---
