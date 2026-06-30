@@ -2,7 +2,7 @@
 
 Insert mathematical graphs into Obsidian notes through a form. You type normal math (`sin^2(x)`, `x^2+y^2`) — not TikZ, PGFPlots, or Octave syntax. The plugin stores a small JSON block in your note and renders it as SVG in Reading View.
 
-Desktop only. Version **0.1.3**.
+Desktop only. Version **0.1.4**.
 
 ---
 
