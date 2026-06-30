@@ -1,14 +1,12 @@
 # Math Plotter
 
-Insert mathematical graphs into Obsidian notes through a form. You type normal math (`sin^2(x)`, `x^2+y^2`) — not TikZ, PGFPlots, or Octave syntax. The plugin stores a small JSON block in your note and renders it as SVG in Reading View.
-
-Desktop only. Version **0.1.4**.
+Insert mathematical graphs into Obsidian notes through a form. You type normal math (`sin^2(x)`, `x^2+y^2`), not TikZ, PGFPlots, or Octave syntax. The plugin stores a small JSON block in your note and renders it as SVG in Reading View.
 
 ---
 
 ## Sample output
 
-These SVGs were exported from Math Plotter and live in [`samples/`](samples/):
+These SVGs were exported from Math Plotter:
 
 | | | |
 |:---:|:---:|:---:|
@@ -35,23 +33,21 @@ Graphs render with a transparent background so they sit cleanly on your note.
 | **Data** | `(x, y)` pairs |
 | **Points** | Labeled points on top of any plot (Points tab in the modal) |
 
-Math Plotter does **not** symbolically solve ODEs or PDEs. You supply the solution expression.
+Math Plotter does **not** symbolically solve ODEs or PDEs. for advanced ODEs or PDEs solving enable and download octave cli through the settings tab.
 
 ---
 
 ## How to insert a graph
 
-**Ribbon** — click the line-chart icon (**Insert Function Plot**).
+**Ribbon** - click the line-chart icon (**Insert Function Plot**).
 
-**Command palette** — run **Insert Function Plot**.
+**Command palette** - run **Insert Function Plot**.
 
-**Empty code block** — type a fenced block with nothing inside:
+**Empty code block** - type a fenced block with nothing inside:
 
-````markdown
 ```graph
 
 ```
-````
 
 An inline builder appears. Use **More Options** to open the full modal with tabs for Equation, Ranges, Style, Size, and Points.
 
@@ -102,34 +98,8 @@ The plugin saves your expression as-is in the `function` field. Compilation to P
 
 ---
 
-## Installation
+After installing: enable **Settings → Community plugins → Math Plotter**, then reload Obsidian.
 
-### From source (recommended for development)
-
-```bash
-cd Vault/.obsidian/plugins/math-plotter
-npm install
-npm run build
-```
-
-Enable **Settings → Community plugins → Math Plotter**, then reload Obsidian.
-
-Deploy the whole plugin folder, not just `main.js`:
-
-```text
-main.js
-manifest.json
-styles.css
-assets/tikzjax/node/    ← needed for TikZJax high-quality rendering
-```
-
-### From GitHub releases
-
-Community installs get `main.js`, `manifest.json`, and `styles.css`. Fast SVG rendering works with those three files.
-
-For TikZJax assets, build from source or run `npm run release:package` locally to create `math-plotter-full.zip`. See [RELEASING.md](RELEASING.md).
-
----
 
 ## Settings
 
