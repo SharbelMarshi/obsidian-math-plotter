@@ -66,10 +66,10 @@
 /* ── Modal (compact graph builder) ────────────────────────────────────────── */
 
 .modal-container.mathgraph-modal-container .modal {
-	width: min(860px, 88vw);
-	max-width: 88vw;
-	height: min(620px, 82vh);
-	max-height: 82vh;
+	width: min(680px, 92vw);
+	max-width: 92vw;
+	height: min(640px, 84vh);
+	max-height: 84vh;
 	border-radius: 16px;
 	overflow: hidden;
 	padding: 0;
@@ -89,8 +89,8 @@
 	flex-direction: column;
 	width: 100%;
 	max-width: 100%;
-	height: min(620px, 82vh);
-	max-height: 82vh;
+	height: min(640px, 84vh);
+	max-height: 84vh;
 	overflow: hidden;
 	box-sizing: border-box;
 	background: var(--background-primary);
@@ -134,80 +134,44 @@
 	max-width: 56ch;
 }
 
-.mathgraph-modal-main {
-	display: grid;
-	grid-template-columns: 180px minmax(0, 1fr);
+.mathgraph-modal-body-scroll {
 	flex: 1 1 auto;
 	min-width: 0;
-	min-height: 0;
-	overflow: hidden;
-}
-
-.mathgraph-modal-nav {
-	width: 180px;
-	min-width: 0;
-	max-width: 180px;
-	padding: 10px 8px;
-	border-right: 1px solid var(--background-modifier-border);
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	overflow: hidden;
-	box-sizing: border-box;
-}
-
-.mathgraph-modal-nav-item {
-	padding: 8px 10px;
-	border-radius: 10px;
-	font-size: 0.84em;
-	font-weight: 500;
-	color: var(--text-muted);
-	cursor: pointer;
-	transition: background 120ms ease, color 120ms ease;
-	user-select: none;
-	min-width: 0;
-}
-
-.mathgraph-modal-nav-item:hover {
-	background: var(--background-modifier-hover);
-	color: var(--text-normal);
-}
-
-.mathgraph-modal-nav-item-active {
-	background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
-	color: var(--text-normal);
-	font-weight: 600;
-}
-
-.mathgraph-modal-nav-item-hidden {
-	display: none;
-}
-
-.mathgraph-modal-panel-scroll {
-	min-width: 0;
 	max-width: 100%;
 	min-height: 0;
-	overflow: hidden;
-	box-sizing: border-box;
-}
-
-.mathgraph-modal-panel {
-	display: none;
-	min-width: 0;
-	max-width: 100%;
-	height: 100%;
 	overflow-x: hidden;
 	overflow-y: auto;
 	box-sizing: border-box;
-	padding: 22px 24px;
+	padding: 20px 24px;
 	--mathgraph-rendered-width: auto;
 }
 
-.mathgraph-modal-panel-active {
-	display: block;
+.mathgraph-form-section {
+	min-width: 0;
+	max-width: 100%;
+	padding: 12px 0;
+	border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.mathgraph-modal-panel *,
+.mathgraph-form-section:first-child {
+	padding-top: 0;
+}
+
+.mathgraph-form-section:last-child {
+	border-bottom: none;
+	padding-bottom: 0;
+}
+
+.mathgraph-form-section-title {
+	font-size: 0.74em;
+	font-weight: 650;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	margin-bottom: 8px;
+}
+
+.mathgraph-modal-body-scroll *,
 .mathgraph-form-grid,
 .mathgraph-form-row,
 .mathgraph-field {
@@ -216,21 +180,82 @@
 	max-width: 100%;
 }
 
-.mathgraph-modal-panel input,
-.mathgraph-modal-panel select,
-.mathgraph-modal-panel textarea {
+.mathgraph-modal-body-scroll input,
+.mathgraph-modal-body-scroll select,
+.mathgraph-modal-body-scroll textarea {
 	width: 100%;
 	max-width: 100%;
 	min-width: 0;
 	box-sizing: border-box;
 }
 
-.mathgraph-modal-panel .dropdown,
-.mathgraph-modal-panel select,
-.mathgraph-modal-panel .mathgraph-select {
+.mathgraph-modal-body-scroll .dropdown,
+.mathgraph-modal-body-scroll select,
+.mathgraph-modal-body-scroll .mathgraph-select {
 	width: 100%;
 	max-width: 100%;
 	min-width: 0;
+}
+
+/* Function input with attached graph-type chooser */
+
+.mathgraph-fn-group {
+	display: flex;
+	align-items: stretch;
+	gap: 0;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.mathgraph-fn-group .mathgraph-fn-input {
+	flex: 1 1 auto;
+	min-width: 0;
+	border-top-right-radius: 0;
+	border-bottom-right-radius: 0;
+	border-right: none;
+}
+
+.mathgraph-type-chip {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 10px;
+	font-size: 0.8em;
+	font-weight: 500;
+	color: var(--text-muted);
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-top-right-radius: var(--radius-s, 6px);
+	border-bottom-right-radius: var(--radius-s, 6px);
+	border-top-left-radius: 0;
+	border-bottom-left-radius: 0;
+	cursor: pointer;
+	white-space: nowrap;
+	box-shadow: none;
+}
+
+.mathgraph-type-chip:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+}
+
+.mathgraph-type-chip-caret {
+	font-size: 0.85em;
+	opacity: 0.7;
+}
+
+.mathgraph-label-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+
+.mathgraph-label-row .mathgraph-type-chip {
+	border-radius: var(--radius-s, 6px);
+	padding: 4px 10px;
 }
 
 .mathgraph-modal-footer {
@@ -249,7 +274,7 @@
 .mathgraph-form-grid {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 10px 14px;
+	gap: 8px 12px;
 	width: 100%;
 	max-width: 100%;
 }
@@ -280,104 +305,66 @@
 	margin-top: -2px;
 }
 
-.mathgraph-modal-panel .mathgraph-field {
+.mathgraph-modal-body-scroll .mathgraph-field {
 	min-width: 0;
 	max-width: 100%;
 	width: 100%;
 }
 
-.mathgraph-range-pair {
+/* Ranges — every axis on a single wrapping line */
+
+.mathgraph-ranges-line {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
-	gap: 8px;
+	gap: 10px 18px;
 	min-width: 0;
 	max-width: 100%;
 }
 
-.mathgraph-range-pair .mathgraph-input {
-	flex: 1;
-	min-width: 0;
-	max-width: 100%;
-}
-
-.mathgraph-range-sep {
-	font-size: 0.78em;
-	color: var(--text-muted);
-	flex-shrink: 0;
-}
-
-.mathgraph-ranges-panel {
-	width: 100%;
-	max-width: 100%;
-	min-width: 0;
-}
-
-.mathgraph-range-row {
-	display: grid;
-	grid-template-columns: 90px minmax(0, 1fr) auto minmax(0, 1fr);
+.mathgraph-range-inline {
+	display: inline-flex;
 	align-items: center;
-	gap: 10px;
-	margin-bottom: 12px;
-	min-width: 0;
-	max-width: 100%;
+	gap: 6px;
+	flex: 0 0 auto;
+	max-width: max-content;
 }
 
-.mathgraph-range-row label,
-.mathgraph-range-label {
+.mathgraph-range-inline-label {
 	font-weight: 600;
+	font-size: 0.84em;
+	color: var(--text-normal);
 	white-space: nowrap;
-	font-size: 0.88em;
+	flex-shrink: 0;
+	min-width: max-content;
 }
 
-.mathgraph-range-row input {
-	width: 100%;
-	min-width: 0;
-	box-sizing: border-box;
+.mathgraph-modal-body-scroll .mathgraph-range-inline .mathgraph-input.mathgraph-range-inline-input {
+	width: 4.5em;
+	max-width: 4.5em;
+	min-width: 3em;
+	flex: 0 0 auto;
+	text-align: center;
+	padding-left: 4px;
+	padding-right: 4px;
 }
 
-.mathgraph-range-separator {
+.mathgraph-line-caption {
+	color: var(--text-muted);
+	font-weight: 500;
+	margin-right: 4px;
+}
+
+.mathgraph-range-inline-sep {
 	color: var(--text-muted);
 	font-weight: 500;
 	font-size: 0.82em;
 	white-space: nowrap;
 }
 
-.mathgraph-samples-row {
-	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 14px;
-	margin-top: 18px;
-	min-width: 0;
-	max-width: 100%;
-}
-
-.mathgraph-samples-row-2d {
-	grid-template-columns: minmax(0, 1fr);
-	max-width: 50%;
-}
-
-.mathgraph-sample-field {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	min-width: 0;
-}
-
-@media (max-width: 700px) {
-	.mathgraph-range-row {
-		grid-template-columns: 1fr;
-		gap: 6px;
-	}
-
-	.mathgraph-range-separator {
-		text-align: center;
-	}
-
-	.mathgraph-samples-row,
-	.mathgraph-samples-row-2d {
-		grid-template-columns: 1fr;
-		max-width: 100%;
-	}
+.mathgraph-sample-inline .mathgraph-range-inline-label {
+	color: var(--text-muted);
+	font-weight: 500;
 }
 
 .mathgraph-inline-row {
@@ -390,8 +377,18 @@
 }
 
 .mathgraph-point-row {
-	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	max-width: 100%;
 }
+
+.mathgraph-point-row .mathgraph-input {
+	flex: 1 1 0;
+	min-width: 3em;
+}
+
 
 .mathgraph-point-row-wrap {
 	min-width: 0;
@@ -462,21 +459,6 @@
 	max-width: 100%;
 }
 
-.mathgraph-modal-panel .mathgraph-size-slider {
-	flex: 1;
-	min-width: 0;
-	max-width: 100%;
-	width: auto;
-}
-
-.mathgraph-size-scale-value {
-	font-size: 0.82em;
-	font-weight: 600;
-	color: var(--text-normal);
-	min-width: 3.5em;
-	flex-shrink: 0;
-}
-
 .mathgraph-size-section.mathgraph-form-grid {
 	gap: 8px 14px;
 }
@@ -485,20 +467,49 @@
 	gap: 2px;
 }
 
-.mathgraph-size-section .mathgraph-size-scale-field {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
+/* Compact +/− percentage stepper */
+
+.mathgraph-stepper {
+	display: inline-flex;
 	align-items: stretch;
-	min-width: 0;
-	max-width: 100%;
-	width: 100%;
+	width: auto;
+	max-width: max-content;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m, 8px);
+	overflow: hidden;
+	background: var(--background-primary);
 }
 
-.mathgraph-size-section .mathgraph-size-slider {
-	width: 100%;
-	max-width: 100%;
+.mathgraph-stepper-btn {
+	width: 30px;
+	padding: 4px 0;
+	border: none;
+	border-radius: 0;
+	box-shadow: none;
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	font-weight: 600;
+	cursor: pointer;
+	flex-shrink: 0;
 }
+
+.mathgraph-stepper-btn:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.mathgraph-modal-body-scroll .mathgraph-stepper-value {
+	width: 4.5em;
+	min-width: 4.5em;
+	text-align: center;
+	border: none;
+	border-left: 1px solid var(--background-modifier-border);
+	border-right: 1px solid var(--background-modifier-border);
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
 
 .mathgraph-axis-label {
 	pointer-events: none;
@@ -509,7 +520,7 @@
 }
 
 .mathgraph-textarea {
-	min-height: 96px;
+	min-height: 76px;
 	resize: vertical;
 }
 
@@ -523,26 +534,27 @@
 @media (max-width: 720px) {
 	.modal-container.mathgraph-modal-container .modal,
 	.mathgraph-modal-shell {
-		width: min(860px, 88vw);
-		max-width: 88vw;
-	}
-
-	.mathgraph-modal-main {
-		grid-template-columns: 1fr;
-	}
-
-	.mathgraph-modal-nav {
-		width: 100%;
-		max-width: 100%;
-		flex-direction: row;
-		flex-wrap: wrap;
-		border-right: none;
-		border-bottom: 1px solid var(--background-modifier-border);
-		padding: 8px;
+		width: min(680px, 92vw);
+		max-width: 92vw;
 	}
 
 	.mathgraph-form-grid {
 		grid-template-columns: 1fr;
+	}
+
+	.mathgraph-fn-group {
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+
+	.mathgraph-fn-group .mathgraph-fn-input {
+		border-radius: var(--radius-s, 6px);
+		border-right: 1px solid var(--background-modifier-border);
+	}
+
+	.mathgraph-type-chip {
+		border-radius: var(--radius-s, 6px);
+		padding: 4px 10px;
 	}
 }
 
@@ -1132,6 +1144,37 @@
 	padding: 0;
 }
 
+.mathgraph-button-caret {
+	margin-left: 6px;
+	font-size: 0.8em;
+	opacity: 0.7;
+}
+
+.mathgraph-root .mathgraph-image.mathgraph-rotatable {
+	cursor: grab;
+	touch-action: none;
+	user-select: none;
+	-webkit-user-drag: none;
+}
+
+.mathgraph-root .mathgraph-image.mathgraph-rotatable.mathgraph-rotating {
+	cursor: grabbing;
+}
+
+.mathgraph-root .mathgraph-image.mathgraph-point-hover {
+	cursor: grab;
+	touch-action: none;
+	user-select: none;
+	-webkit-user-drag: none;
+}
+
+.mathgraph-root .mathgraph-image.mathgraph-point-dragging {
+	cursor: grabbing;
+	touch-action: none;
+	user-select: none;
+	-webkit-user-drag: none;
+}
+
 .mathgraph-toolbar .mathgraph-scale-label {
 	min-width: 3em;
 	padding: 0 8px;
@@ -1260,6 +1303,76 @@
 
 .mathgraph-invalid-source-hidden {
 	display: none;
+}
+
+.mathgraph-codeframe {
+	margin-top: 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 12px;
+	background: var(--background-primary);
+	overflow: hidden;
+	font-family: var(--font-monospace);
+	font-size: 0.8em;
+}
+
+.mathgraph-codeframe-label,
+.mathgraph-codeframe-meta {
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	color: var(--text-muted);
+}
+
+.mathgraph-codeframe-label {
+	font-weight: 600;
+	color: var(--text-normal);
+}
+
+.mathgraph-codeframe-meta {
+	font-size: 0.92em;
+}
+
+.mathgraph-codeframe-row {
+	display: grid;
+	grid-template-columns: 44px minmax(0, 1fr);
+}
+
+.mathgraph-codeframe-row.is-error-line {
+	background: color-mix(in srgb, var(--color-red, #d14343) 8%, transparent);
+}
+
+.mathgraph-codeframe-gutter {
+	padding: 3px 8px 3px 10px;
+	border-right: 1px solid var(--background-modifier-border);
+	text-align: right;
+	color: var(--text-faint);
+	user-select: none;
+}
+
+.mathgraph-codeframe-code {
+	padding: 3px 12px;
+	white-space: pre-wrap;
+	word-break: break-word;
+	color: var(--text-normal);
+}
+
+.mathgraph-codeframe-error {
+	text-decoration-line: underline;
+	text-decoration-style: wavy;
+	text-decoration-color: var(--color-red, #d14343);
+	text-decoration-thickness: 1.5px;
+	background: color-mix(in srgb, var(--color-red, #d14343) 12%, transparent);
+}
+
+.cm-mathgraph-error-line {
+	background: color-mix(in srgb, var(--color-red, #d14343) 6%, transparent);
+}
+
+.cm-mathgraph-error-zigzag {
+	background: color-mix(in srgb, var(--color-red, #d14343) 10%, transparent);
+	text-decoration-line: underline;
+	text-decoration-style: wavy;
+	text-decoration-color: var(--color-red, #d14343);
+	text-decoration-thickness: 1.5px;
 }
 
 /* ── Param / point rows ─────────────────────────────────────────────────────── */

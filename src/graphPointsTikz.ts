@@ -1,4 +1,5 @@
 import { graphUses3dPoints, resolveGraphPointCoordinates } from './graphPointResolution';
+import { parseBoundToNumber } from './graphRangeValidation';
 import type { GraphSpec } from './graphSpec';
 
 export { graphUses3dPoints } from './graphPointResolution';
@@ -50,9 +51,43 @@ export function buildGraphPointsTikz(spec: GraphSpec): string {
 		if (point.label?.trim()) {
 			lines.push(buildPointLabelNode(coords, point.label.trim(), is3d));
 		}
+
+		if (point.showValue) {
+			const valueText = formatPointValueText(coords, is3d);
+			if (valueText) {
+				const at = is3d && coords.z !== undefined
+					? `${coords.x},${coords.y},${coords.z}`
+					: `${coords.x},${coords.y}`;
+				lines.push(`\\node[anchor=north, font=\\small] at (axis cs:${at}) {${valueText}};`);
+			}
+		}
 	}
 
 	return lines.join('\n');
+}
+
+function formatCoordText(value: string): string | null {
+	const numeric = parseBoundToNumber(value);
+	if (numeric === null) {
+		return null;
+	}
+	return String(Number.parseFloat(numeric.toFixed(3)));
+}
+
+function formatPointValueText(coords: { x: string; y: string; z?: string }, is3d: boolean): string | null {
+	const x = formatCoordText(coords.x);
+	const y = formatCoordText(coords.y);
+	if (x === null || y === null) {
+		return null;
+	}
+	if (is3d && coords.z !== undefined) {
+		const z = formatCoordText(coords.z);
+		if (z === null) {
+			return null;
+		}
+		return `(${x}, ${y}, ${z})`;
+	}
+	return `(${x}, ${y})`;
 }
 
 export function appendGraphPointsToTikz(tikz: string, spec: GraphSpec): string {

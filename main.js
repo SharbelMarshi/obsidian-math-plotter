@@ -209,40 +209,94 @@ function formatExecError(err) {
   return String(err);
 }
 
-// graphSyntax.ts
-var INVALID_SYNTAX_MESSAGE = "Invalid function syntax. Use simple syntax such as sin^2(x), x^2, exp(-x), or sqrt(x^2+y^2).";
-var GraphExpressionSyntaxError = class extends Error {
-  constructor(message = INVALID_SYNTAX_MESSAGE) {
+// src/safeMathEvaluator.ts
+var SafeMathSyntaxError = class extends Error {
+  constructor(message) {
     super(message);
-    this.name = "GraphExpressionSyntaxError";
+    this.name = "SafeMathSyntaxError";
   }
 };
-var TRIG_FUNCTIONS = new Set(["sin", "cos", "tan"]);
-var HYPERBOLIC_FUNCTIONS = new Set(["sinh", "cosh", "tanh"]);
-var KNOWN_FUNCTIONS = new Set([
+var MATH_FUNCTIONS = new Set([
   "sin",
   "cos",
   "tan",
+  "sec",
+  "csc",
+  "cosec",
+  "cot",
+  "asin",
+  "acos",
+  "atan",
+  "atan2",
   "sinh",
   "cosh",
   "tanh",
-  "exp",
-  "ln",
-  "log",
+  "asinh",
+  "acosh",
+  "atanh",
   "sqrt",
   "abs",
-  "deg",
+  "log",
+  "ln",
+  "log10",
+  "log2",
+  "exp",
+  "floor",
+  "ceil",
+  "round",
+  "sign",
+  "mod",
+  "factorial",
   "min",
-  "max"
+  "max",
+  "pow",
+  "deg",
+  "rad"
 ]);
-var DEFAULT_VARIABLES = ["x", "y", "z", "t", "r"];
-function wrapTrigArgument(argument) {
-  const trimmed = argument.trim();
-  if (/^deg\s*\(/i.test(trimmed)) {
-    return trimmed;
-  }
-  return `deg(${trimmed})`;
-}
+var CONSTANTS = {
+  pi: Math.PI,
+  e: Math.E
+};
+var JS_KEYWORDS = new Set([
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "function",
+  "if",
+  "import",
+  "in",
+  "instanceof",
+  "let",
+  "new",
+  "null",
+  "return",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "typeof",
+  "undefined",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield"
+]);
 var TokenType;
 (function(TokenType3) {
   TokenType3[TokenType3["Number"] = 0] = "Number";
@@ -257,17 +311,805 @@ var TokenType;
   TokenType3[TokenType3["Comma"] = 9] = "Comma";
   TokenType3[TokenType3["Eof"] = 10] = "Eof";
 })(TokenType || (TokenType = {}));
+var DISALLOWED_CHARS = /[;[\]`'"=<>!&|?{}\\@#$%]/;
+function tokenize(input) {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    throw new SafeMathSyntaxError("Expression is empty.");
+  }
+  if (DISALLOWED_CHARS.test(trimmed)) {
+    throw new SafeMathSyntaxError("Expression contains disallowed characters.");
+  }
+  const tokens = [];
+  let index = 0;
+  while (index < trimmed.length) {
+    const ch = trimmed[index];
+    if (/\s/.test(ch)) {
+      index++;
+      continue;
+    }
+    if (/[\d.]/.test(ch)) {
+      let end = index;
+      while (end < trimmed.length) {
+        const current = trimmed[end];
+        if (/[\d.]/.test(current)) {
+          end++;
+          continue;
+        }
+        if ((current === "e" || current === "E") && end + 1 < trimmed.length) {
+          end++;
+          if (trimmed[end] === "+" || trimmed[end] === "-") {
+            end++;
+          }
+          while (end < trimmed.length && /\d/.test(trimmed[end])) {
+            end++;
+          }
+          continue;
+        }
+        break;
+      }
+      const value = trimmed.slice(index, end);
+      if (!Number.isFinite(Number.parseFloat(value))) {
+        throw new SafeMathSyntaxError(`Invalid number: ${value}`);
+      }
+      tokens.push({ type: 0, value });
+      index = end;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(ch)) {
+      let end = index + 1;
+      while (end < trimmed.length && /[A-Za-z0-9_]/.test(trimmed[end])) {
+        end++;
+      }
+      tokens.push({ type: 1, value: trimmed.slice(index, end) });
+      index = end;
+      continue;
+    }
+    switch (ch) {
+      case "+":
+        tokens.push({ type: 2, value: ch });
+        break;
+      case "-":
+        tokens.push({ type: 3, value: ch });
+        break;
+      case "*":
+        tokens.push({ type: 4, value: ch });
+        break;
+      case "/":
+        tokens.push({ type: 5, value: ch });
+        break;
+      case "^":
+        tokens.push({ type: 6, value: ch });
+        break;
+      case "(":
+        tokens.push({ type: 7, value: ch });
+        break;
+      case ")":
+        tokens.push({ type: 8, value: ch });
+        break;
+      case ",":
+        tokens.push({ type: 9, value: ch });
+        break;
+      default:
+        throw new SafeMathSyntaxError(`Unexpected character: ${ch}`);
+    }
+    index++;
+  }
+  tokens.push({ type: 10, value: "" });
+  return tokens;
+}
+var Parser = class {
+  constructor(tokens, allowedVariables, options) {
+    this.tokens = tokens;
+    this.allowedVariables = allowedVariables;
+    this.options = options;
+    this.index = 0;
+  }
+  parse() {
+    const expr = this.parseExpression();
+    if (this.peek().type !== 10) {
+      throw new SafeMathSyntaxError("Unexpected trailing tokens.");
+    }
+    return (scope) => {
+      try {
+        const result = expr(scope);
+        return typeof result === "number" && Number.isFinite(result) ? result : Number.NaN;
+      } catch (e) {
+        return Number.NaN;
+      }
+    };
+  }
+  parseExpression() {
+    return this.parseAddition();
+  }
+  parseAddition() {
+    let left = this.parseMultiplication();
+    while (this.match(2, 3)) {
+      const op = this.previous().type;
+      const right = this.parseMultiplication();
+      const prevLeft = left;
+      left = (scope) => {
+        const a = prevLeft(scope);
+        const b = right(scope);
+        return op === 2 ? a + b : a - b;
+      };
+    }
+    return left;
+  }
+  parseMultiplication() {
+    let left = this.parsePower();
+    while (this.match(4, 5)) {
+      const op = this.previous().type;
+      const right = this.parsePower();
+      const prevLeft = left;
+      left = (scope) => {
+        const a = prevLeft(scope);
+        const b = right(scope);
+        return op === 4 ? a * b : a / b;
+      };
+    }
+    return left;
+  }
+  parsePower() {
+    let left = this.parseUnary();
+    if (this.match(6)) {
+      const right = this.parsePower();
+      const base = left;
+      left = (scope) => Math.pow(base(scope), right(scope));
+    }
+    return left;
+  }
+  parseUnary() {
+    if (this.match(3)) {
+      const inner = this.parseUnary();
+      return (scope) => -inner(scope);
+    }
+    if (this.match(2)) {
+      return this.parseUnary();
+    }
+    return this.parsePostfix();
+  }
+  parsePostfix() {
+    const token = this.tokens[this.index];
+    if (token.type === 1) {
+      const lower = token.value.toLowerCase();
+      if (MATH_FUNCTIONS.has(lower)) {
+        this.index++;
+        if (!this.match(7)) {
+          throw new SafeMathSyntaxError(`Function ${token.value} requires parentheses.`);
+        }
+        const args = this.parseArgumentValues();
+        if (!this.match(8)) {
+          throw new SafeMathSyntaxError("Expected closing parenthesis.");
+        }
+        return (scope) => this.invokeFunction(lower, args.map((arg) => arg(scope)), scope);
+      }
+    }
+    return this.parsePrimary();
+  }
+  parseArgumentValues() {
+    const args = [];
+    if (this.check(8)) {
+      return args;
+    }
+    do {
+      args.push(this.parseExpression());
+    } while (this.match(9));
+    return args;
+  }
+  parsePrimary() {
+    if (this.match(0)) {
+      const value = Number.parseFloat(this.previous().value);
+      return () => value;
+    }
+    if (this.match(1)) {
+      const name = this.previous().value;
+      const lower = name.toLowerCase();
+      if (JS_KEYWORDS.has(lower)) {
+        throw new SafeMathSyntaxError(`Disallowed identifier: ${name}`);
+      }
+      if (lower in CONSTANTS) {
+        return () => CONSTANTS[lower];
+      }
+      if (!this.allowedVariables.has(name)) {
+        throw new SafeMathSyntaxError(`Unknown identifier: ${name}`);
+      }
+      return (scope) => {
+        const value = scope[name];
+        return typeof value === "number" && Number.isFinite(value) ? value : Number.NaN;
+      };
+    }
+    if (this.match(7)) {
+      const inner = this.parseExpression();
+      if (!this.match(8)) {
+        throw new SafeMathSyntaxError("Expected closing parenthesis.");
+      }
+      return inner;
+    }
+    throw new SafeMathSyntaxError("Unexpected token in expression.");
+  }
+  invokeFunction(name, args, scope) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H;
+    const trig = (_a = this.options.trigDegrees) != null ? _a : false;
+    const deg = (value) => value * Math.PI / 180;
+    const rad = (value) => value;
+    const trigArg = (value) => trig ? deg(value) : rad(value);
+    switch (name) {
+      case "sin":
+        return Math.sin(trigArg((_b = args[0]) != null ? _b : Number.NaN));
+      case "cos":
+        return Math.cos(trigArg((_c = args[0]) != null ? _c : Number.NaN));
+      case "tan":
+        return Math.tan(trigArg((_d = args[0]) != null ? _d : Number.NaN));
+      case "sec":
+        return 1 / Math.cos(trigArg((_e = args[0]) != null ? _e : Number.NaN));
+      case "csc":
+      case "cosec":
+        return 1 / Math.sin(trigArg((_f = args[0]) != null ? _f : Number.NaN));
+      case "cot":
+        return 1 / Math.tan(trigArg((_g = args[0]) != null ? _g : Number.NaN));
+      case "asin":
+        return Math.asin((_h = args[0]) != null ? _h : Number.NaN);
+      case "acos":
+        return Math.acos((_i = args[0]) != null ? _i : Number.NaN);
+      case "atan":
+        return Math.atan((_j = args[0]) != null ? _j : Number.NaN);
+      case "atan2":
+        return Math.atan2((_k = args[0]) != null ? _k : Number.NaN, (_l = args[1]) != null ? _l : Number.NaN);
+      case "sinh":
+        return Math.sinh((_m = args[0]) != null ? _m : Number.NaN);
+      case "cosh":
+        return Math.cosh((_n = args[0]) != null ? _n : Number.NaN);
+      case "tanh":
+        return Math.tanh((_o = args[0]) != null ? _o : Number.NaN);
+      case "asinh":
+        return Math.asinh((_p = args[0]) != null ? _p : Number.NaN);
+      case "acosh":
+        return Math.acosh((_q = args[0]) != null ? _q : Number.NaN);
+      case "atanh":
+        return Math.atanh((_r = args[0]) != null ? _r : Number.NaN);
+      case "sqrt":
+        return Math.sqrt((_s = args[0]) != null ? _s : Number.NaN);
+      case "abs":
+        return Math.abs((_t = args[0]) != null ? _t : Number.NaN);
+      case "log":
+      case "ln":
+        return Math.log((_u = args[0]) != null ? _u : Number.NaN);
+      case "log10":
+        return Math.log10((_v = args[0]) != null ? _v : Number.NaN);
+      case "log2":
+        return Math.log2((_w = args[0]) != null ? _w : Number.NaN);
+      case "exp":
+        return Math.exp((_x = args[0]) != null ? _x : Number.NaN);
+      case "floor":
+        return Math.floor((_y = args[0]) != null ? _y : Number.NaN);
+      case "ceil":
+        return Math.ceil((_z = args[0]) != null ? _z : Number.NaN);
+      case "round":
+        return Math.round((_A = args[0]) != null ? _A : Number.NaN);
+      case "sign":
+        return Math.sign((_B = args[0]) != null ? _B : Number.NaN);
+      case "mod": {
+        const a = (_C = args[0]) != null ? _C : Number.NaN;
+        const b = (_D = args[1]) != null ? _D : Number.NaN;
+        return a - b * Math.floor(a / b);
+      }
+      case "factorial": {
+        const n = Math.round((_E = args[0]) != null ? _E : Number.NaN);
+        if (!Number.isFinite(n) || n < 0 || n > 170) {
+          return Number.NaN;
+        }
+        let product = 1;
+        for (let i = 2; i <= n; i++) {
+          product *= i;
+        }
+        return product;
+      }
+      case "min":
+        return args.length > 0 ? Math.min(...args) : Number.NaN;
+      case "max":
+        return args.length > 0 ? Math.max(...args) : Number.NaN;
+      case "pow":
+        return Math.pow((_F = args[0]) != null ? _F : Number.NaN, (_G = args[1]) != null ? _G : Number.NaN);
+      case "deg":
+      case "rad":
+        return deg((_H = args[0]) != null ? _H : Number.NaN);
+      default:
+        return Number.NaN;
+    }
+  }
+  match(...types) {
+    for (const type of types) {
+      if (this.peek().type === type) {
+        this.index++;
+        return true;
+      }
+    }
+    return false;
+  }
+  check(type) {
+    return this.peek().type === type;
+  }
+  previous() {
+    return this.tokens[this.index - 1];
+  }
+  peek() {
+    return this.tokens[this.index];
+  }
+};
+function normalizeExpressionInput(expression) {
+  return expression.replace(/\*\*/g, "^").replace(/\\pi\b/g, "pi").replace(/\\lambda\b/g, "1").replace(/π/g, "pi");
+}
+function compileSafeMathExpression(expression, allowedVariables, options = {}) {
+  const normalized = normalizeExpressionInput(expression);
+  const tokens = tokenize(normalized);
+  const allowed = new Set(allowedVariables);
+  const parser = new Parser(tokens, allowed, options);
+  return parser.parse();
+}
+function evaluateSafeMathExpression(expression, scope, allowedVariables, options = {}) {
+  try {
+    return compileSafeMathExpression(expression, allowedVariables, options)(scope);
+  } catch (e) {
+    return Number.NaN;
+  }
+}
+
+// graphSyntax.ts
+var INVALID_SYNTAX_MESSAGE = "Invalid function syntax. Use simple syntax such as sin^2(x), x^2, exp(-x), or sqrt(x^2+y^2).";
+var GraphExpressionSyntaxError = class extends Error {
+  constructor(message = INVALID_SYNTAX_MESSAGE) {
+    super(message);
+    this.name = "GraphExpressionSyntaxError";
+  }
+};
+var TRIG_FUNCTIONS = new Set(["sin", "cos", "tan", "sec", "csc", "cosec", "cot"]);
+var INVERSE_TRIG_FUNCTIONS = new Set(["asin", "acos", "atan", "arcsin", "arccos", "arctan"]);
+var HYPERBOLIC_FUNCTIONS = new Set(["sinh", "cosh", "tanh"]);
+var INVERSE_HYPERBOLIC_FUNCTIONS = new Set(["asinh", "acosh", "atanh"]);
+var SINGLE_ARG_FUNCTIONS = new Set(["floor", "ceil", "round", "sign", "log10", "log2", "factorial"]);
+var TWO_ARG_FUNCTIONS = new Set(["mod", "atan2", "pow"]);
+var VARIADIC_FUNCTIONS = new Set(["min", "max"]);
+var KNOWN_FUNCTIONS = new Set([
+  ...TRIG_FUNCTIONS,
+  ...INVERSE_TRIG_FUNCTIONS,
+  ...HYPERBOLIC_FUNCTIONS,
+  ...INVERSE_HYPERBOLIC_FUNCTIONS,
+  ...SINGLE_ARG_FUNCTIONS,
+  ...TWO_ARG_FUNCTIONS,
+  ...VARIADIC_FUNCTIONS,
+  "exp",
+  "ln",
+  "log",
+  "sqrt",
+  "abs",
+  "deg"
+]);
+var KNOWN_FUNCTIONS_BY_LENGTH = [...KNOWN_FUNCTIONS].sort((a, b) => b.length - a.length);
+var GREEK_LETTER_COMMANDS = [
+  "varepsilon",
+  "vartheta",
+  "varphi",
+  "upsilon",
+  "Upsilon",
+  "epsilon",
+  "omicron",
+  "lambda",
+  "Lambda",
+  "alpha",
+  "gamma",
+  "Gamma",
+  "delta",
+  "Delta",
+  "theta",
+  "Theta",
+  "kappa",
+  "sigma",
+  "Sigma",
+  "omega",
+  "Omega",
+  "beta",
+  "zeta",
+  "iota",
+  "eta",
+  "rho",
+  "tau",
+  "chi",
+  "psi",
+  "Psi",
+  "phi",
+  "Phi",
+  "xi",
+  "Xi",
+  "mu",
+  "nu"
+];
+var UNICODE_GREEK = {
+  "\u03B1": "alpha",
+  "\u03B2": "beta",
+  "\u03B3": "gamma",
+  "\u03B4": "delta",
+  "\u03B5": "epsilon",
+  "\u03B6": "zeta",
+  "\u03B7": "eta",
+  "\u03B8": "theta",
+  "\u03D1": "theta",
+  "\u03B9": "iota",
+  "\u03BA": "kappa",
+  "\u03BB": "lambda",
+  "\u03BC": "mu",
+  "\u03BD": "nu",
+  "\u03BE": "xi",
+  "\u03C1": "rho",
+  "\u03C3": "sigma",
+  "\u03C4": "tau",
+  "\u03C5": "upsilon",
+  "\u03C6": "phi",
+  "\u03D5": "phi",
+  "\u03C7": "chi",
+  "\u03C8": "psi",
+  "\u03C9": "omega",
+  "\u0393": "Gamma",
+  "\u0394": "Delta",
+  "\u0398": "Theta",
+  "\u039B": "Lambda",
+  "\u039E": "Xi",
+  "\u03A3": "Sigma",
+  "\u03A6": "Phi",
+  "\u03A8": "Psi",
+  "\u03A9": "Omega"
+};
+var UNICODE_SUPERSCRIPTS = {
+  "\u2070": "0",
+  "\xB9": "1",
+  "\xB2": "2",
+  "\xB3": "3",
+  "\u2074": "4",
+  "\u2075": "5",
+  "\u2076": "6",
+  "\u2077": "7",
+  "\u2078": "8",
+  "\u2079": "9",
+  "\u207B": "-"
+};
+var DEFAULT_VARIABLES = ["x", "y", "z", "t", "r"];
+function wrapTrigArgument(argument) {
+  const trimmed = argument.trim();
+  if (/^deg\s*\(/i.test(trimmed)) {
+    return trimmed;
+  }
+  return `deg(${trimmed})`;
+}
+var TokenType2;
+(function(TokenType3) {
+  TokenType3[TokenType3["Number"] = 0] = "Number";
+  TokenType3[TokenType3["Identifier"] = 1] = "Identifier";
+  TokenType3[TokenType3["Plus"] = 2] = "Plus";
+  TokenType3[TokenType3["Minus"] = 3] = "Minus";
+  TokenType3[TokenType3["Star"] = 4] = "Star";
+  TokenType3[TokenType3["Slash"] = 5] = "Slash";
+  TokenType3[TokenType3["Caret"] = 6] = "Caret";
+  TokenType3[TokenType3["LParen"] = 7] = "LParen";
+  TokenType3[TokenType3["RParen"] = 8] = "RParen";
+  TokenType3[TokenType3["Comma"] = 9] = "Comma";
+  TokenType3[TokenType3["Bang"] = 10] = "Bang";
+  TokenType3[TokenType3["Eof"] = 11] = "Eof";
+})(TokenType2 || (TokenType2 = {}));
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-function stripLatexMathCommands(expr) {
-  let result = expr;
-  let prev = "";
-  while (result !== prev) {
-    prev = result;
-    result = result.replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, "(($1)/($2))");
+function findMatchingGroup(source, start, openChar, closeChar) {
+  if (source[start] !== openChar) {
+    return null;
   }
-  return result.replace(/\\sin\b/g, "sin").replace(/\\cos\b/g, "cos").replace(/\\tan\b/g, "tan").replace(/\\sinh\b/g, "sinh").replace(/\\cosh\b/g, "cosh").replace(/\\tanh\b/g, "tanh").replace(/\\exp\b/g, "exp").replace(/\\ln\b/g, "ln").replace(/\\log\b/g, "log").replace(/\\sqrt\b/g, "sqrt").replace(/\\abs\b/g, "abs").replace(/\\pi\b/g, "pi").replace(/π/g, "pi");
+  let depth = 0;
+  for (let i = start; i < source.length; i++) {
+    const char = source[i];
+    if (char === openChar) {
+      depth++;
+    } else if (char === closeChar) {
+      depth--;
+      if (depth === 0) {
+        return {
+          content: source.slice(start + 1, i),
+          end: i + 1
+        };
+      }
+    }
+  }
+  return null;
+}
+function normalizeFiniteLoopBound(raw, parameters, command) {
+  const prepared = stripLatexMathCommands(substituteParameterValues(raw.trim(), parameters), parameters);
+  const value = evaluateSafeMathExpression(prepared, {}, []);
+  if (!Number.isFinite(value) || !Number.isInteger(value)) {
+    throw new GraphExpressionSyntaxError(`${command} bounds must evaluate to finite integers.`);
+  }
+  return value;
+}
+function substituteLoopVariable(expr, name, value) {
+  const pattern = new RegExp(`(?<![A-Za-z0-9_])${escapeRegex(name)}(?![A-Za-z0-9_])`, "g");
+  return expr.replace(pattern, `(${value})`);
+}
+function expandFiniteLatexLoops(expr, parameters = {}) {
+  let result = expr;
+  let searchIndex = 0;
+  while (searchIndex < result.length) {
+    const sumIndex = result.indexOf("\\sum", searchIndex);
+    const prodIndex = result.indexOf("\\prod", searchIndex);
+    const candidates = [sumIndex, prodIndex].filter((index) => index !== -1);
+    if (candidates.length === 0) {
+      break;
+    }
+    const cmdIndex = Math.min(...candidates);
+    const isProduct = cmdIndex === prodIndex;
+    const command = isProduct ? "\\prod" : "\\sum";
+    const usage = `Use ${command}_{i=1}^{n}{...}.`;
+    let cursor = cmdIndex + command.length;
+    while (cursor < result.length && /\s/.test(result[cursor])) {
+      cursor++;
+    }
+    if (result[cursor] !== "_") {
+      throw new GraphExpressionSyntaxError(`Invalid ${command} syntax. ${usage}`);
+    }
+    cursor++;
+    const lowerGroup = findMatchingGroup(result, cursor, "{", "}");
+    if (!lowerGroup) {
+      throw new GraphExpressionSyntaxError(`Invalid ${command} lower bound. ${usage}`);
+    }
+    cursor = lowerGroup.end;
+    while (cursor < result.length && /\s/.test(result[cursor])) {
+      cursor++;
+    }
+    if (result[cursor] !== "^") {
+      throw new GraphExpressionSyntaxError(`Invalid ${command} upper bound. ${usage}`);
+    }
+    cursor++;
+    const upperGroup = findMatchingGroup(result, cursor, "{", "}");
+    if (!upperGroup) {
+      throw new GraphExpressionSyntaxError(`Invalid ${command} upper bound. ${usage}`);
+    }
+    cursor = upperGroup.end;
+    while (cursor < result.length && /\s/.test(result[cursor])) {
+      cursor++;
+    }
+    const bodyGroup = readFiniteLoopBody(result, cursor);
+    if (!bodyGroup) {
+      throw new GraphExpressionSyntaxError(`Invalid ${command} body. Wrap the term in braces or provide a term after the command.`);
+    }
+    cursor = bodyGroup.end;
+    const assignmentIndex = lowerGroup.content.indexOf("=");
+    if (assignmentIndex === -1) {
+      throw new GraphExpressionSyntaxError(`Invalid ${command} index. ${usage}`);
+    }
+    const loopName = lowerGroup.content.slice(0, assignmentIndex).trim();
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(loopName)) {
+      throw new GraphExpressionSyntaxError(`Invalid ${command} index variable.`);
+    }
+    const start = normalizeFiniteLoopBound(lowerGroup.content.slice(assignmentIndex + 1), parameters, command);
+    const end = normalizeFiniteLoopBound(upperGroup.content, parameters, command);
+    if (Math.abs(end - start) > 256) {
+      throw new GraphExpressionSyntaxError(`${command} range is too large to expand safely.`);
+    }
+    const expandedBody = expandFiniteLatexLoops(bodyGroup.content, parameters);
+    const parts = [];
+    if (start <= end) {
+      for (let value = start; value <= end; value++) {
+        parts.push(`(${substituteLoopVariable(expandedBody, loopName, value)})`);
+      }
+    }
+    const joiner = isProduct ? "*" : "+";
+    const emptyValue = isProduct ? "1" : "0";
+    const replacement = parts.length > 0 ? parts.join(joiner) : emptyValue;
+    result = `${result.slice(0, cmdIndex)}${replacement}${result.slice(cursor)}`;
+    searchIndex = cmdIndex + replacement.length;
+  }
+  return result;
+}
+function readFiniteLoopBody(source, start) {
+  var _a;
+  const grouped = (_a = findMatchingGroup(source, start, "{", "}")) != null ? _a : findMatchingGroup(source, start, "(", ")");
+  if (grouped) {
+    return grouped;
+  }
+  let cursor = start;
+  while (cursor < source.length && /\s/.test(source[cursor])) {
+    cursor++;
+  }
+  if (cursor >= source.length) {
+    return null;
+  }
+  let depthParen = 0;
+  let depthBrace = 0;
+  for (let i = cursor; i < source.length; i++) {
+    const char = source[i];
+    if (char === "\\") {
+      i++;
+      continue;
+    }
+    if (char === "{")
+      depthBrace++;
+    else if (char === "}") {
+      if (depthBrace === 0) {
+        return { content: source.slice(cursor, i).trim(), end: i };
+      }
+      depthBrace--;
+    } else if (char === "(")
+      depthParen++;
+    else if (char === ")") {
+      if (depthParen === 0) {
+        return { content: source.slice(cursor, i).trim(), end: i };
+      }
+      depthParen--;
+    }
+    if (depthParen === 0 && depthBrace === 0 && i > cursor && /[+\-,;\n]/.test(char)) {
+      return { content: source.slice(cursor, i).trim(), end: i };
+    }
+  }
+  return { content: source.slice(cursor).trim(), end: source.length };
+}
+function stripLatexWrappers(expr) {
+  return expr.trim().replace(/^\$\$?/, "").replace(/\$\$?$/, "").replace(/^\\\(/, "").replace(/\\\)$/, "").replace(/^\\\[/, "").replace(/\\\]$/, "").replace(/\\left\b/g, "").replace(/\\right\b/g, "").replace(/\\cdot\b/g, "*").replace(/\\times\b/g, "*").replace(/\\div\b/g, "/").replace(/\\langle\b/g, "(").replace(/\\rangle\b/g, ")").replace(/\\[,!;:]/g, "").replace(/\\operatorname\s*\{([^{}]+)\}/g, "$1").replace(/\\mathrm\s*\{([^{}]+)\}/g, "$1").replace(/\\text\s*\{([^{}]+)\}/g, "$1");
+}
+function expandLatexFractions(expr) {
+  let result = expr;
+  for (let guard = 0; guard < 64; guard++) {
+    const match = result.match(/\\[dtc]?frac\s*/);
+    if (!match || match.index === void 0) {
+      break;
+    }
+    const numerator = findMatchingGroup(result, match.index + match[0].length, "{", "}");
+    if (!numerator) {
+      break;
+    }
+    let cursor = numerator.end;
+    while (cursor < result.length && /\s/.test(result[cursor])) {
+      cursor++;
+    }
+    const denominator = findMatchingGroup(result, cursor, "{", "}");
+    if (!denominator) {
+      break;
+    }
+    result = `${result.slice(0, match.index)}((${numerator.content})/(${denominator.content}))${result.slice(denominator.end)}`;
+  }
+  return result;
+}
+function expandLatexRoots(expr) {
+  let result = expr;
+  for (let guard = 0; guard < 64; guard++) {
+    const match = result.match(/\\sqrt\s*\[/);
+    if (!match || match.index === void 0) {
+      break;
+    }
+    const bracketStart = result.indexOf("[", match.index);
+    const index = findMatchingGroup(result, bracketStart, "[", "]");
+    if (!index) {
+      break;
+    }
+    let cursor = index.end;
+    while (cursor < result.length && /\s/.test(result[cursor])) {
+      cursor++;
+    }
+    const radicand = findMatchingGroup(result, cursor, "{", "}");
+    if (!radicand) {
+      break;
+    }
+    result = `${result.slice(0, match.index)}((${radicand.content})^(1/(${index.content})))${result.slice(radicand.end)}`;
+  }
+  return result;
+}
+function replaceGreekCommands(expr) {
+  let result = expr;
+  for (const name of GREEK_LETTER_COMMANDS) {
+    result = result.replace(new RegExp(`\\\\${name}(?![A-Za-z])`, "g"), name);
+  }
+  for (const [glyph, name] of Object.entries(UNICODE_GREEK)) {
+    result = result.replaceAll(glyph, name);
+  }
+  return result;
+}
+function expandLogBases(expr) {
+  let result = expr;
+  for (let guard = 0; guard < 16 && result.includes("log_"); guard++) {
+    const next = expandLogBasesOnce(result);
+    if (next === result) {
+      break;
+    }
+    result = next;
+  }
+  return result;
+}
+function expandLogBasesOnce(expr) {
+  var _a;
+  let result = "";
+  let i = 0;
+  while (i < expr.length) {
+    const idx = expr.indexOf("log_", i);
+    if (idx === -1) {
+      result += expr.slice(i);
+      break;
+    }
+    const prev = idx > 0 ? expr[idx - 1] : "";
+    if (/[A-Za-z0-9_]/.test(prev)) {
+      result += expr.slice(i, idx + 4);
+      i = idx + 4;
+      continue;
+    }
+    let cursor = idx + "log_".length;
+    let base = null;
+    const bracedBase = findMatchingGroup(expr, cursor, "{", "}");
+    if (bracedBase) {
+      base = bracedBase.content;
+      cursor = bracedBase.end;
+    } else {
+      const token = expr.slice(cursor).match(/^[A-Za-z0-9.]+/);
+      if (token) {
+        base = token[0];
+        cursor += token[0].length;
+      }
+    }
+    while (cursor < expr.length && /\s/.test(expr[cursor])) {
+      cursor++;
+    }
+    const argGroup = (_a = findMatchingGroup(expr, cursor, "(", ")")) != null ? _a : findMatchingGroup(expr, cursor, "{", "}");
+    if (!base || !argGroup) {
+      throw new GraphExpressionSyntaxError("Invalid log base syntax. Use log_2(x) or \\log_{10}{x}.");
+    }
+    result += `${expr.slice(i, idx)}(ln(${argGroup.content})/ln(${base}))`;
+    i = argGroup.end;
+  }
+  return result;
+}
+function normalizeUnicodeMath(expr) {
+  let result = expr.replace(/×/g, "*").replace(/÷/g, "/").replace(/·/g, "*").replace(/−/g, "-").replace(/√\s*(?=\()/g, "sqrt").replace(/√\s*([A-Za-z0-9.]+)/g, "sqrt($1)");
+  result = result.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+/g, (sequence) => {
+    const digits = sequence.split("").map((char) => {
+      var _a;
+      return (_a = UNICODE_SUPERSCRIPTS[char]) != null ? _a : "";
+    }).join("");
+    return digits ? `^(${digits})` : "";
+  });
+  return result;
+}
+function convertBracesToParens(expr) {
+  return expr.replace(/[{}]/g, (char) => char === "{" ? "(" : ")");
+}
+function convertAbsoluteValueBars(expr) {
+  let result = expr;
+  for (let guard = 0; guard < 32 && result.includes("|"); guard++) {
+    const next = result.replace(/\|([^|]+)\|/, "abs($1)");
+    if (next === result) {
+      break;
+    }
+    result = next;
+  }
+  return result;
+}
+function stripLatexMathCommands(expr, parameters = {}) {
+  let result = stripLatexWrappers(expr);
+  result = expandLatexFractions(result);
+  result = expandLatexRoots(result);
+  result = expandFiniteLatexLoops(result, parameters);
+  result = result.replace(/\\arcsin\b/g, "asin").replace(/\\arccos\b/g, "acos").replace(/\\arctan\b/g, "atan").replace(/\\log_/g, "log_").replace(/\\(sinh|cosh|tanh|sin|cos|tan|sec|csc|cot|exp|ln|log|sqrt|abs|min|max|floor|ceil|round|sign)\b/g, "$1").replace(/\\lfloor/g, "floor(").replace(/\\rfloor/g, ")").replace(/\\lceil/g, "ceil(").replace(/\\rceil/g, ")").replace(/⌊/g, "floor(").replace(/⌋/g, ")").replace(/⌈/g, "ceil(").replace(/⌉/g, ")").replace(/\\pi\b/g, "pi").replace(/π/g, "pi");
+  result = replaceGreekCommands(result);
+  result = expandLogBases(result);
+  result = normalizeUnicodeMath(result);
+  result = convertBracesToParens(result);
+  result = convertAbsoluteValueBars(result);
+  return result;
+}
+function normalizeFrontendMath(expr, options = {}) {
+  var _a;
+  const parameters = (_a = options.parameters) != null ? _a : {};
+  const stripped = stripLatexMathCommands(expr.trim(), parameters);
+  if (options.substituteParameters === false) {
+    return stripped;
+  }
+  const substituted = substituteParameterValues(stripped, parameters);
+  if (substituted === stripped) {
+    return stripped;
+  }
+  return stripLatexMathCommands(substituted, parameters);
 }
 function substituteParameterValues(expr, parameters) {
   var _a, _b;
@@ -281,23 +1123,29 @@ function substituteParameterValues(expr, parameters) {
     if (!name || !value) {
       continue;
     }
+    if (KNOWN_FUNCTIONS.has(name.toLowerCase()) || name.toLowerCase() === "pi") {
+      continue;
+    }
     const pattern = new RegExp(`(?<![A-Za-z])${escapeRegex(name)}(?![A-Za-z])`, "g");
     result = result.replace(pattern, `(${value})`);
   }
   return result;
 }
 function splitIdentifierToken(value) {
-  for (const fn of KNOWN_FUNCTIONS) {
+  if (KNOWN_FUNCTIONS.has(value.toLowerCase())) {
+    return [value];
+  }
+  for (const fn of KNOWN_FUNCTIONS_BY_LENGTH) {
     if (value.length > fn.length && value.toLowerCase().endsWith(fn)) {
       const prefix = value.slice(0, -fn.length);
       if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(prefix)) {
-        return [prefix, value.slice(-fn.length)];
+        return [...splitIdentifierToken(prefix), value.slice(-fn.length)];
       }
     }
   }
   return [value];
 }
-function tokenize(source) {
+function tokenize2(source) {
   const tokens = [];
   let index = 0;
   while (index < source.length) {
@@ -306,7 +1154,7 @@ function tokenize(source) {
       index++;
       continue;
     }
-    if ("+-*/^(),".includes(char)) {
+    if ("+-*/^(),!".includes(char)) {
       const map = {
         "+": 2,
         "-": 3,
@@ -315,7 +1163,8 @@ function tokenize(source) {
         "^": 6,
         "(": 7,
         ")": 8,
-        ",": 9
+        ",": 9,
+        "!": 10
       };
       tokens.push({ type: map[char], value: char });
       index++;
@@ -360,7 +1209,7 @@ function tokenize(source) {
     }
     throw new GraphExpressionSyntaxError();
   }
-  tokens.push({ type: 10, value: "" });
+  tokens.push({ type: 11, value: "" });
   return tokens;
 }
 function wrapPowerPart(value) {
@@ -372,6 +1221,9 @@ function wrapPowerPart(value) {
   }
   return `(${value})`;
 }
+function canonicalInverseTrigName(name) {
+  return name.startsWith("arc") ? `a${name.slice(3)}` : name;
+}
 var ExpressionParser = class {
   constructor(tokens, variables, target = "pgfplots") {
     this.tokens = tokens;
@@ -381,7 +1233,7 @@ var ExpressionParser = class {
   }
   parse() {
     const result = this.parseAddition();
-    if (!this.match(10)) {
+    if (!this.match(11)) {
       throw new GraphExpressionSyntaxError();
     }
     return result;
@@ -436,7 +1288,14 @@ var ExpressionParser = class {
     if (this.match(3)) {
       return `-${this.parsePower()}`;
     }
-    return this.parsePrimary();
+    return this.parsePostfix();
+  }
+  parsePostfix() {
+    let base = this.parsePrimary();
+    while (this.match(10)) {
+      base = `factorial(${base})`;
+    }
+    return base;
   }
   parsePrimary() {
     if (this.match(0)) {
@@ -462,6 +1321,12 @@ var ExpressionParser = class {
       if (TRIG_FUNCTIONS.has(name)) {
         return this.parseTrigFunction(name);
       }
+      if (INVERSE_TRIG_FUNCTIONS.has(name)) {
+        return this.parseInverseTrigFunction(canonicalInverseTrigName(name));
+      }
+      if (INVERSE_HYPERBOLIC_FUNCTIONS.has(name)) {
+        return this.parseInverseHyperbolicFunction(name);
+      }
       if (name === "ln") {
         return this.parseNamedFunction(this.target === "octave" ? "log" : "ln");
       }
@@ -471,6 +1336,15 @@ var ExpressionParser = class {
       if (name === "log") {
         return this.parseLogFunction();
       }
+      if (SINGLE_ARG_FUNCTIONS.has(name)) {
+        return this.parseNamedFunction(name);
+      }
+      if (VARIADIC_FUNCTIONS.has(name)) {
+        return this.parseVariadicFunction(name);
+      }
+      if (name === "mod" || name === "atan2" || name === "pow") {
+        return this.parseTwoArgFunction(name);
+      }
       if (name === "deg") {
         return this.parseNamedFunction(name);
       }
@@ -478,14 +1352,21 @@ var ExpressionParser = class {
     }
     throw new GraphExpressionSyntaxError();
   }
+  trigEmitName(name) {
+    if (name === "csc" || name === "cosec") {
+      return this.target === "octave" ? "csc" : "cosec";
+    }
+    return name;
+  }
   parseTrigFunction(name) {
+    const emitName = this.trigEmitName(name);
     if (this.match(6)) {
       const exponent = this.readExponentToken();
       const argument = this.parseFunctionArgument();
       if (this.target === "octave") {
-        return `${name}(${argument}).^${exponent}`;
+        return `${emitName}(${argument}).^${exponent}`;
       }
-      return `(${name}(${wrapTrigArgument(argument)}))^${exponent}`;
+      return `(${emitName}(${wrapTrigArgument(argument)}))^${exponent}`;
     }
     if (this.match(7)) {
       const argument = this.parseAddition();
@@ -493,11 +1374,38 @@ var ExpressionParser = class {
         throw new GraphExpressionSyntaxError();
       }
       if (this.target === "octave") {
-        return `${name}(${argument})`;
+        return `${emitName}(${argument})`;
       }
-      return `${name}(${wrapTrigArgument(argument)})`;
+      return `${emitName}(${wrapTrigArgument(argument)})`;
     }
     throw new GraphExpressionSyntaxError();
+  }
+  parseInverseTrigFunction(name) {
+    let exponent = null;
+    if (this.match(6)) {
+      exponent = this.readExponentToken();
+    }
+    const argument = this.parseFunctionArgument();
+    const call = this.target === "octave" ? `${name}(${argument})` : `rad(${name}(${argument}))`;
+    if (exponent === null) {
+      return call;
+    }
+    return this.target === "octave" ? `${call}.^${exponent}` : `(${call})^${exponent}`;
+  }
+  parseInverseHyperbolicFunction(name) {
+    const argument = this.parseFunctionArgument();
+    if (this.target === "octave") {
+      return `${name}(${argument})`;
+    }
+    const a = `(${argument})`;
+    switch (name) {
+      case "asinh":
+        return `ln(${a} + sqrt(${a}^2+1))`;
+      case "acosh":
+        return `ln(${a} + sqrt(${a}^2-1))`;
+      default:
+        return `(0.5*ln((1+${a})/(1-${a})))`;
+    }
   }
   parseExponentForExp() {
     if (this.match(7)) {
@@ -510,24 +1418,65 @@ var ExpressionParser = class {
     return this.parsePower();
   }
   parseNamedFunction(name) {
-    if (!this.match(7)) {
+    const args = this.parseCallArguments();
+    if (args.length !== 1) {
       throw new GraphExpressionSyntaxError();
     }
-    const argument = this.parseAddition();
-    if (!this.match(8)) {
-      throw new GraphExpressionSyntaxError();
-    }
-    return `${name}(${argument})`;
+    return `${name}(${args[0]})`;
   }
   parseLogFunction() {
+    const args = this.parseCallArguments();
+    if (args.length === 1) {
+      return this.target === "octave" ? `log(${args[0]})` : `ln(${args[0]})`;
+    }
+    if (args.length === 2) {
+      const op = this.divideOperator();
+      return this.target === "octave" ? `(log(${args[1]})${op}log(${args[0]}))` : `(ln(${args[1]})${op}ln(${args[0]}))`;
+    }
+    throw new GraphExpressionSyntaxError();
+  }
+  parseVariadicFunction(name) {
+    const args = this.parseCallArguments();
+    if (args.length === 0) {
+      throw new GraphExpressionSyntaxError();
+    }
+    if (args.length === 1) {
+      return `(${args[0]})`;
+    }
+    let result = args[args.length - 1];
+    for (let i = args.length - 2; i >= 0; i--) {
+      result = `${name}(${args[i]}, ${result})`;
+    }
+    return result;
+  }
+  parseTwoArgFunction(name) {
+    const args = this.parseCallArguments();
+    if (args.length !== 2) {
+      throw new GraphExpressionSyntaxError();
+    }
+    if (name === "pow") {
+      return `${wrapPowerPart(`(${args[0]})`)}${this.powerOperator()}${wrapPowerPart(`(${args[1]})`)}`;
+    }
+    if (name === "atan2") {
+      return this.target === "octave" ? `atan2(${args[0]}, ${args[1]})` : `rad(atan2(${args[0]}, ${args[1]}))`;
+    }
+    return `${name}(${args[0]}, ${args[1]})`;
+  }
+  parseCallArguments() {
     if (!this.match(7)) {
       throw new GraphExpressionSyntaxError();
     }
-    const argument = this.parseAddition();
+    const args = [];
+    if (this.match(8)) {
+      return args;
+    }
+    do {
+      args.push(this.parseAddition());
+    } while (this.match(9));
     if (!this.match(8)) {
       throw new GraphExpressionSyntaxError();
     }
-    return this.target === "octave" ? `log(${argument})` : `ln(${argument})`;
+    return args;
   }
   parseFunctionArgument() {
     if (!this.match(7)) {
@@ -581,14 +1530,14 @@ function compileExpression(input, context, target) {
   const variables = (_a = context.variables) != null ? _a : DEFAULT_VARIABLES;
   const parameters = (_b = context.parameters) != null ? _b : {};
   const parameterNames = Object.keys(parameters);
-  const prepared = target === "octave" ? stripLatexMathCommands(trimmed) : stripLatexMathCommands(substituteParameterValues(trimmed, parameters));
+  const prepared = target === "octave" ? normalizeFrontendMath(trimmed, { parameters, substituteParameters: false }) : normalizeFrontendMath(trimmed, { parameters, substituteParameters: true });
   const variableSet = new Set([
     ...DEFAULT_VARIABLES,
     ...variables.map((name) => name.trim()).filter(Boolean),
     ...parameterNames
   ]);
   try {
-    const parser = new ExpressionParser(tokenize(prepared), variableSet, target);
+    const parser = new ExpressionParser(tokenize2(prepared), variableSet, target);
     return parser.parse();
   } catch (err) {
     if (err instanceof GraphExpressionSyntaxError) {
@@ -1191,25 +2140,34 @@ function heatColorFromZ(z, zMin, zMax) {
   return heatColorFromUnit((z - zMin) / span);
 }
 
-// src/functionPlaceholders.ts
-var FUNCTION_PLACEHOLDER_2D = "sin^2(x)";
-var FUNCTION_PLACEHOLDER_3D = "sin^2(x)+cos^2(y)";
-var FUNCTION_PLACEHOLDER_PDE = "exp(-2*t)*sin(x)*sin(y)";
-var FUNCTION_PLACEHOLDER_ODE = "exp(x)";
-function placeholderForGraphType(type) {
-  switch (type) {
-    case "surface3d":
-      return FUNCTION_PLACEHOLDER_3D;
-    case "pde":
-      return FUNCTION_PLACEHOLDER_PDE;
-    case "ode":
-      return FUNCTION_PLACEHOLDER_ODE;
-    default:
-      return FUNCTION_PLACEHOLDER_2D;
-  }
-}
-
 // src/graphSpec.ts
+var DEFAULT_GRAPH_ROTATION = { azimuth: 45, elevation: 28 };
+function normalizeAzimuthDeg(value) {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_GRAPH_ROTATION.azimuth;
+  }
+  let azimuth = Math.round(value) % 360;
+  if (azimuth > 180) {
+    azimuth -= 360;
+  }
+  if (azimuth < -180) {
+    azimuth += 360;
+  }
+  return azimuth;
+}
+function clampElevationDeg(value) {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_GRAPH_ROTATION.elevation;
+  }
+  return Math.min(90, Math.max(0, Math.round(value)));
+}
+function resolveGraphRotation(spec) {
+  var _a, _b, _c, _d;
+  return {
+    azimuth: normalizeAzimuthDeg((_b = (_a = spec.rotation) == null ? void 0 : _a.azimuth) != null ? _b : DEFAULT_GRAPH_ROTATION.azimuth),
+    elevation: clampElevationDeg((_d = (_c = spec.rotation) == null ? void 0 : _c.elevation) != null ? _d : DEFAULT_GRAPH_ROTATION.elevation)
+  };
+}
 function getUserFunction(spec) {
   var _a, _b, _c, _d, _e;
   if ((_a = spec.function) == null ? void 0 : _a.trim()) {
@@ -1228,6 +2186,21 @@ function setUserFunction(spec, value) {
   } else if (spec.type !== "parametric2d" && spec.type !== "parametric3d" && spec.type !== "data") {
     spec.expression = trimmed;
   }
+}
+function resetGraphMathFields(spec) {
+  spec.equation = "";
+  spec.function = "";
+  spec.expression = "";
+  spec.solution = "";
+  spec.xExpression = "";
+  spec.yExpression = "";
+  spec.zExpression = "";
+  spec.parameter = spec.type === "parametric2d" || spec.type === "parametric3d" ? "t" : spec.parameter;
+  spec.parameters = {};
+  if (spec.type === "data") {
+    spec.data = [];
+  }
+  return spec;
 }
 function hydrateGraphSpec(spec, settings) {
   var _a;
@@ -1281,60 +2254,42 @@ function defaultGraphSpec(type = "function2d", settings) {
   };
   switch (type) {
     case "function2d":
-      return setUserFunctionOnSpec(__spreadValues({}, base), FUNCTION_PLACEHOLDER_2D);
+      return resetGraphMathFields(__spreadProps(__spreadValues({}, base), {
+        ranges: { x: ["", ""], y: ["", ""] }
+      }));
     case "surface3d":
-      return setUserFunctionOnSpec(__spreadProps(__spreadValues({}, base), {
-        ranges: { x: ["-pi", "pi"], y: ["-pi", "pi"], z: ["-1", "1"] },
+      return resetGraphMathFields(__spreadProps(__spreadValues({}, base), {
+        ranges: { x: ["", ""], y: ["", ""], z: ["", ""] },
         labels: { x: "x", y: "y", z: "z" }
-      }), FUNCTION_PLACEHOLDER_3D);
+      }));
     case "parametric2d":
-      return __spreadProps(__spreadValues({}, base), {
-        xExpression: "cos(t)",
-        yExpression: "sin(t)",
+      return resetGraphMathFields(__spreadProps(__spreadValues({}, base), {
         parameter: "t",
-        ranges: { t: ["0", "2*pi"] }
-      });
+        ranges: { t: ["", ""] }
+      }));
     case "parametric3d":
-      return __spreadProps(__spreadValues({}, base), {
-        xExpression: "cos(t)",
-        yExpression: "sin(t)",
-        zExpression: "t",
+      return resetGraphMathFields(__spreadProps(__spreadValues({}, base), {
         parameter: "t",
-        ranges: { t: ["0", "2*pi"] },
+        ranges: { t: ["", ""] },
         labels: { x: "x", y: "y", z: "z" }
-      });
+      }));
     case "ode":
-      return setUserFunctionOnSpec(__spreadProps(__spreadValues({}, base), {
-        equation: "y' = y",
+      return resetGraphMathFields(__spreadProps(__spreadValues({}, base), {
         view: "2d",
-        parameters: {}
-      }), FUNCTION_PLACEHOLDER_ODE);
+        ranges: { x: ["", ""], y: ["", ""] }
+      }));
     case "pde":
-      return setUserFunctionOnSpec(__spreadProps(__spreadValues({}, base), {
+      return resetGraphMathFields(__spreadProps(__spreadValues({}, base), {
         style: { color: "auto", surfaceStyle: "colored", colormap: "heat", grid: false },
-        title: "2D Heat Equation",
-        equation: "u_t = u_xx + u_yy",
         view: "3d",
-        parameters: { t: "0.25" },
-        ranges: { x: ["0", "2*pi"], y: ["0", "2*pi"], z: ["-1", "1"] },
+        ranges: { x: ["", ""], y: ["", ""], z: ["", ""] },
         labels: { x: "x", y: "y", z: "u(x,y,t)" },
         samples: 35,
         samplesY: 35
-      }), FUNCTION_PLACEHOLDER_PDE);
+      }));
     case "data":
-      return __spreadProps(__spreadValues({}, base), {
-        data: [
-          { x: "0", y: "0" },
-          { x: "1", y: "1" },
-          { x: "2", y: "4" },
-          { x: "3", y: "9" }
-        ]
-      });
+      return resetGraphMathFields(__spreadValues({}, base));
   }
-}
-function setUserFunctionOnSpec(spec, value) {
-  setUserFunction(spec, value);
-  return spec;
 }
 function serializeGraphSpec(spec) {
   const copy = hydrateGraphSpec(structuredClone(spec));
@@ -1357,402 +2312,6 @@ function serializeGraphSpec(spec) {
   delete stored.export;
   delete stored.renderEngine;
   return JSON.stringify(stored, null, 2);
-}
-
-// src/safeMathEvaluator.ts
-var SafeMathSyntaxError = class extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "SafeMathSyntaxError";
-  }
-};
-var MATH_FUNCTIONS = new Set([
-  "sin",
-  "cos",
-  "tan",
-  "asin",
-  "acos",
-  "atan",
-  "sinh",
-  "cosh",
-  "tanh",
-  "sqrt",
-  "abs",
-  "log",
-  "ln",
-  "log10",
-  "exp",
-  "floor",
-  "ceil",
-  "round",
-  "min",
-  "max",
-  "pow",
-  "deg"
-]);
-var CONSTANTS = {
-  pi: Math.PI,
-  e: Math.E
-};
-var JS_KEYWORDS = new Set([
-  "break",
-  "case",
-  "catch",
-  "class",
-  "const",
-  "continue",
-  "debugger",
-  "default",
-  "delete",
-  "do",
-  "else",
-  "export",
-  "extends",
-  "false",
-  "finally",
-  "for",
-  "function",
-  "if",
-  "import",
-  "in",
-  "instanceof",
-  "let",
-  "new",
-  "null",
-  "return",
-  "super",
-  "switch",
-  "this",
-  "throw",
-  "true",
-  "try",
-  "typeof",
-  "undefined",
-  "var",
-  "void",
-  "while",
-  "with",
-  "yield"
-]);
-var TokenType2;
-(function(TokenType3) {
-  TokenType3[TokenType3["Number"] = 0] = "Number";
-  TokenType3[TokenType3["Identifier"] = 1] = "Identifier";
-  TokenType3[TokenType3["Plus"] = 2] = "Plus";
-  TokenType3[TokenType3["Minus"] = 3] = "Minus";
-  TokenType3[TokenType3["Star"] = 4] = "Star";
-  TokenType3[TokenType3["Slash"] = 5] = "Slash";
-  TokenType3[TokenType3["Caret"] = 6] = "Caret";
-  TokenType3[TokenType3["LParen"] = 7] = "LParen";
-  TokenType3[TokenType3["RParen"] = 8] = "RParen";
-  TokenType3[TokenType3["Comma"] = 9] = "Comma";
-  TokenType3[TokenType3["Eof"] = 10] = "Eof";
-})(TokenType2 || (TokenType2 = {}));
-var DISALLOWED_CHARS = /[;[\]`'"=<>!&|?{}\\@#$%]/;
-function tokenize2(input) {
-  const trimmed = input.trim();
-  if (!trimmed) {
-    throw new SafeMathSyntaxError("Expression is empty.");
-  }
-  if (DISALLOWED_CHARS.test(trimmed)) {
-    throw new SafeMathSyntaxError("Expression contains disallowed characters.");
-  }
-  const tokens = [];
-  let index = 0;
-  while (index < trimmed.length) {
-    const ch = trimmed[index];
-    if (/\s/.test(ch)) {
-      index++;
-      continue;
-    }
-    if (/[\d.]/.test(ch)) {
-      let end = index;
-      while (end < trimmed.length) {
-        const current = trimmed[end];
-        if (/[\d.]/.test(current)) {
-          end++;
-          continue;
-        }
-        if ((current === "e" || current === "E") && end + 1 < trimmed.length) {
-          end++;
-          if (trimmed[end] === "+" || trimmed[end] === "-") {
-            end++;
-          }
-          while (end < trimmed.length && /\d/.test(trimmed[end])) {
-            end++;
-          }
-          continue;
-        }
-        break;
-      }
-      const value = trimmed.slice(index, end);
-      if (!Number.isFinite(Number.parseFloat(value))) {
-        throw new SafeMathSyntaxError(`Invalid number: ${value}`);
-      }
-      tokens.push({ type: 0, value });
-      index = end;
-      continue;
-    }
-    if (/[A-Za-z_]/.test(ch)) {
-      let end = index + 1;
-      while (end < trimmed.length && /[A-Za-z0-9_]/.test(trimmed[end])) {
-        end++;
-      }
-      tokens.push({ type: 1, value: trimmed.slice(index, end) });
-      index = end;
-      continue;
-    }
-    switch (ch) {
-      case "+":
-        tokens.push({ type: 2, value: ch });
-        break;
-      case "-":
-        tokens.push({ type: 3, value: ch });
-        break;
-      case "*":
-        tokens.push({ type: 4, value: ch });
-        break;
-      case "/":
-        tokens.push({ type: 5, value: ch });
-        break;
-      case "^":
-        tokens.push({ type: 6, value: ch });
-        break;
-      case "(":
-        tokens.push({ type: 7, value: ch });
-        break;
-      case ")":
-        tokens.push({ type: 8, value: ch });
-        break;
-      case ",":
-        tokens.push({ type: 9, value: ch });
-        break;
-      default:
-        throw new SafeMathSyntaxError(`Unexpected character: ${ch}`);
-    }
-    index++;
-  }
-  tokens.push({ type: 10, value: "" });
-  return tokens;
-}
-var Parser = class {
-  constructor(tokens, allowedVariables, options) {
-    this.tokens = tokens;
-    this.allowedVariables = allowedVariables;
-    this.options = options;
-    this.index = 0;
-  }
-  parse() {
-    const expr = this.parseExpression();
-    if (this.peek().type !== 10) {
-      throw new SafeMathSyntaxError("Unexpected trailing tokens.");
-    }
-    return (scope) => {
-      try {
-        const result = expr(scope);
-        return typeof result === "number" && Number.isFinite(result) ? result : Number.NaN;
-      } catch (e) {
-        return Number.NaN;
-      }
-    };
-  }
-  parseExpression() {
-    return this.parseAddition();
-  }
-  parseAddition() {
-    let left = this.parseMultiplication();
-    while (this.match(2, 3)) {
-      const op = this.previous().type;
-      const right = this.parseMultiplication();
-      const prevLeft = left;
-      left = (scope) => {
-        const a = prevLeft(scope);
-        const b = right(scope);
-        return op === 2 ? a + b : a - b;
-      };
-    }
-    return left;
-  }
-  parseMultiplication() {
-    let left = this.parsePower();
-    while (this.match(4, 5)) {
-      const op = this.previous().type;
-      const right = this.parsePower();
-      const prevLeft = left;
-      left = (scope) => {
-        const a = prevLeft(scope);
-        const b = right(scope);
-        return op === 4 ? a * b : a / b;
-      };
-    }
-    return left;
-  }
-  parsePower() {
-    let left = this.parseUnary();
-    if (this.match(6)) {
-      const right = this.parsePower();
-      const base = left;
-      left = (scope) => Math.pow(base(scope), right(scope));
-    }
-    return left;
-  }
-  parseUnary() {
-    if (this.match(3)) {
-      const inner = this.parseUnary();
-      return (scope) => -inner(scope);
-    }
-    if (this.match(2)) {
-      return this.parseUnary();
-    }
-    return this.parsePostfix();
-  }
-  parsePostfix() {
-    const token = this.tokens[this.index];
-    if (token.type === 1) {
-      const lower = token.value.toLowerCase();
-      if (MATH_FUNCTIONS.has(lower)) {
-        this.index++;
-        if (!this.match(7)) {
-          throw new SafeMathSyntaxError(`Function ${token.value} requires parentheses.`);
-        }
-        const args = this.parseArgumentValues();
-        if (!this.match(8)) {
-          throw new SafeMathSyntaxError("Expected closing parenthesis.");
-        }
-        return (scope) => this.invokeFunction(lower, args.map((arg) => arg(scope)), scope);
-      }
-    }
-    return this.parsePrimary();
-  }
-  parseArgumentValues() {
-    const args = [];
-    if (this.check(8)) {
-      return args;
-    }
-    do {
-      args.push(this.parseExpression());
-    } while (this.match(9));
-    return args;
-  }
-  parsePrimary() {
-    if (this.match(0)) {
-      const value = Number.parseFloat(this.previous().value);
-      return () => value;
-    }
-    if (this.match(1)) {
-      const name = this.previous().value;
-      const lower = name.toLowerCase();
-      if (JS_KEYWORDS.has(lower)) {
-        throw new SafeMathSyntaxError(`Disallowed identifier: ${name}`);
-      }
-      if (lower in CONSTANTS) {
-        return () => CONSTANTS[lower];
-      }
-      if (!this.allowedVariables.has(name)) {
-        throw new SafeMathSyntaxError(`Unknown identifier: ${name}`);
-      }
-      return (scope) => {
-        const value = scope[name];
-        return typeof value === "number" && Number.isFinite(value) ? value : Number.NaN;
-      };
-    }
-    if (this.match(7)) {
-      const inner = this.parseExpression();
-      if (!this.match(8)) {
-        throw new SafeMathSyntaxError("Expected closing parenthesis.");
-      }
-      return inner;
-    }
-    throw new SafeMathSyntaxError("Unexpected token in expression.");
-  }
-  invokeFunction(name, args, scope) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B;
-    const trig = (_a = this.options.trigDegrees) != null ? _a : false;
-    const deg = (value) => value * Math.PI / 180;
-    const rad = (value) => value;
-    switch (name) {
-      case "sin":
-        return Math.sin(trig ? deg((_b = args[0]) != null ? _b : Number.NaN) : rad((_c = args[0]) != null ? _c : Number.NaN));
-      case "cos":
-        return Math.cos(trig ? deg((_d = args[0]) != null ? _d : Number.NaN) : rad((_e = args[0]) != null ? _e : Number.NaN));
-      case "tan":
-        return Math.tan(trig ? deg((_f = args[0]) != null ? _f : Number.NaN) : rad((_g = args[0]) != null ? _g : Number.NaN));
-      case "asin":
-        return Math.asin((_h = args[0]) != null ? _h : Number.NaN);
-      case "acos":
-        return Math.acos((_i = args[0]) != null ? _i : Number.NaN);
-      case "atan":
-        return Math.atan((_j = args[0]) != null ? _j : Number.NaN);
-      case "sinh":
-        return Math.sinh((_k = args[0]) != null ? _k : Number.NaN);
-      case "cosh":
-        return Math.cosh((_l = args[0]) != null ? _l : Number.NaN);
-      case "tanh":
-        return Math.tanh((_m = args[0]) != null ? _m : Number.NaN);
-      case "sqrt":
-        return Math.sqrt((_n = args[0]) != null ? _n : Number.NaN);
-      case "abs":
-        return Math.abs((_o = args[0]) != null ? _o : Number.NaN);
-      case "log":
-      case "ln":
-        return Math.log((_p = args[0]) != null ? _p : Number.NaN);
-      case "log10":
-        return Math.log10((_q = args[0]) != null ? _q : Number.NaN);
-      case "exp":
-        return Math.exp((_r = args[0]) != null ? _r : Number.NaN);
-      case "floor":
-        return Math.floor((_s = args[0]) != null ? _s : Number.NaN);
-      case "ceil":
-        return Math.ceil((_t = args[0]) != null ? _t : Number.NaN);
-      case "round":
-        return Math.round((_u = args[0]) != null ? _u : Number.NaN);
-      case "min":
-        return Math.min((_v = args[0]) != null ? _v : Number.NaN, (_w = args[1]) != null ? _w : Number.NaN);
-      case "max":
-        return Math.max((_x = args[0]) != null ? _x : Number.NaN, (_y = args[1]) != null ? _y : Number.NaN);
-      case "pow":
-        return Math.pow((_z = args[0]) != null ? _z : Number.NaN, (_A = args[1]) != null ? _A : Number.NaN);
-      case "deg":
-        return deg((_B = args[0]) != null ? _B : Number.NaN);
-      default:
-        return Number.NaN;
-    }
-  }
-  match(...types) {
-    for (const type of types) {
-      if (this.peek().type === type) {
-        this.index++;
-        return true;
-      }
-    }
-    return false;
-  }
-  check(type) {
-    return this.peek().type === type;
-  }
-  previous() {
-    return this.tokens[this.index - 1];
-  }
-  peek() {
-    return this.tokens[this.index];
-  }
-};
-function normalizeExpressionInput(expression) {
-  return expression.replace(/\*\*/g, "^").replace(/\\pi\b/g, "pi").replace(/\\lambda\b/g, "1").replace(/π/g, "pi");
-}
-function compileSafeMathExpression(expression, allowedVariables, options = {}) {
-  const normalized = normalizeExpressionInput(expression);
-  const tokens = tokenize2(normalized);
-  const allowed = new Set(allowedVariables);
-  const parser = new Parser(tokens, allowed, options);
-  return parser.parse();
-}
-function evaluateSafeMathExpression(expression, scope, allowedVariables, options = {}) {
-  try {
-    return compileSafeMathExpression(expression, allowedVariables, options)(scope);
-  } catch (e) {
-    return Number.NaN;
-  }
 }
 
 // src/graphRangeValidation.ts
@@ -2320,6 +2879,273 @@ function formatTickLabel(value) {
   return rounded < 0 ? `-${Math.abs(rounded)}` : `${rounded}`;
 }
 
+// src/renderStyleConfig.ts
+var DEFAULT_AXIS_LINE_WIDTH = 1.2;
+var AXIS_LINE_WIDTH_MIN = 0.5;
+var AXIS_LINE_WIDTH_MAX = 4;
+var DEFAULT_LABEL_FONT_SIZE = 16;
+var LABEL_FONT_SIZE_MIN = 8;
+var LABEL_FONT_SIZE_MAX = 32;
+function clampAxisLineWidth(width) {
+  if (!Number.isFinite(width)) {
+    return DEFAULT_AXIS_LINE_WIDTH;
+  }
+  return Math.min(AXIS_LINE_WIDTH_MAX, Math.max(AXIS_LINE_WIDTH_MIN, width));
+}
+function clampLabelFontSize(size) {
+  if (!Number.isFinite(size)) {
+    return DEFAULT_LABEL_FONT_SIZE;
+  }
+  return Math.min(LABEL_FONT_SIZE_MAX, Math.max(LABEL_FONT_SIZE_MIN, Math.round(size)));
+}
+function resolveAxisLineWidth(spec) {
+  var _a, _b;
+  return clampAxisLineWidth((_b = (_a = spec == null ? void 0 : spec.style) == null ? void 0 : _a.axisWidth) != null ? _b : DEFAULT_AXIS_LINE_WIDTH);
+}
+function resolveLabelFontSize(spec) {
+  var _a, _b;
+  return clampLabelFontSize((_b = (_a = spec == null ? void 0 : spec.style) == null ? void 0 : _a.labelFontSize) != null ? _b : DEFAULT_LABEL_FONT_SIZE);
+}
+function latexLabelFontCommand(size) {
+  if (size <= 10) {
+    return "\\small";
+  }
+  if (size <= 13) {
+    return "\\normalsize";
+  }
+  if (size <= 16) {
+    return "\\large";
+  }
+  if (size <= 20) {
+    return "\\Large";
+  }
+  if (size <= 25) {
+    return "\\LARGE";
+  }
+  return "\\huge";
+}
+
+// src/mathLabelText.ts
+var SUPERSCRIPTS = {
+  "0": "\u2070",
+  "1": "\xB9",
+  "2": "\xB2",
+  "3": "\xB3",
+  "4": "\u2074",
+  "5": "\u2075",
+  "6": "\u2076",
+  "7": "\u2077",
+  "8": "\u2078",
+  "9": "\u2079",
+  "+": "\u207A",
+  "-": "\u207B",
+  "\u2212": "\u207B",
+  "=": "\u207C",
+  "(": "\u207D",
+  ")": "\u207E",
+  "a": "\u1D43",
+  "b": "\u1D47",
+  "c": "\u1D9C",
+  "d": "\u1D48",
+  "e": "\u1D49",
+  "f": "\u1DA0",
+  "g": "\u1D4D",
+  "h": "\u02B0",
+  "i": "\u2071",
+  "j": "\u02B2",
+  "k": "\u1D4F",
+  "l": "\u02E1",
+  "m": "\u1D50",
+  "n": "\u207F",
+  "o": "\u1D52",
+  "p": "\u1D56",
+  "r": "\u02B3",
+  "s": "\u02E2",
+  "t": "\u1D57",
+  "u": "\u1D58",
+  "v": "\u1D5B",
+  "w": "\u02B7",
+  "x": "\u02E3",
+  "y": "\u02B8",
+  "z": "\u1DBB"
+};
+var SUBSCRIPTS = {
+  "0": "\u2080",
+  "1": "\u2081",
+  "2": "\u2082",
+  "3": "\u2083",
+  "4": "\u2084",
+  "5": "\u2085",
+  "6": "\u2086",
+  "7": "\u2087",
+  "8": "\u2088",
+  "9": "\u2089",
+  "+": "\u208A",
+  "-": "\u208B",
+  "\u2212": "\u208B",
+  "=": "\u208C",
+  "(": "\u208D",
+  ")": "\u208E",
+  "a": "\u2090",
+  "e": "\u2091",
+  "h": "\u2095",
+  "i": "\u1D62",
+  "j": "\u2C7C",
+  "k": "\u2096",
+  "l": "\u2097",
+  "m": "\u2098",
+  "n": "\u2099",
+  "o": "\u2092",
+  "p": "\u209A",
+  "r": "\u1D63",
+  "s": "\u209B",
+  "t": "\u209C",
+  "u": "\u1D64",
+  "v": "\u1D65",
+  "x": "\u2093"
+};
+var GREEK_GLYPHS = {
+  alpha: "\u03B1",
+  beta: "\u03B2",
+  gamma: "\u03B3",
+  delta: "\u03B4",
+  epsilon: "\u03B5",
+  varepsilon: "\u03B5",
+  zeta: "\u03B6",
+  eta: "\u03B7",
+  theta: "\u03B8",
+  vartheta: "\u03D1",
+  iota: "\u03B9",
+  kappa: "\u03BA",
+  lambda: "\u03BB",
+  mu: "\u03BC",
+  nu: "\u03BD",
+  xi: "\u03BE",
+  rho: "\u03C1",
+  sigma: "\u03C3",
+  tau: "\u03C4",
+  upsilon: "\u03C5",
+  phi: "\u03C6",
+  varphi: "\u03C6",
+  chi: "\u03C7",
+  psi: "\u03C8",
+  omega: "\u03C9",
+  Gamma: "\u0393",
+  Delta: "\u0394",
+  Theta: "\u0398",
+  Lambda: "\u039B",
+  Xi: "\u039E",
+  Pi: "\u03A0",
+  Sigma: "\u03A3",
+  Upsilon: "\u03A5",
+  Phi: "\u03A6",
+  Psi: "\u03A8",
+  Omega: "\u03A9",
+  pi: "\u03C0"
+};
+var SYMBOL_COMMANDS = {
+  cdot: "\xB7",
+  times: "\xD7",
+  div: "\xF7",
+  pm: "\xB1",
+  mp: "\u2213",
+  infty: "\u221E",
+  to: "\u2192",
+  rightarrow: "\u2192",
+  leftarrow: "\u2190",
+  partial: "\u2202",
+  nabla: "\u2207",
+  le: "\u2264",
+  leq: "\u2264",
+  ge: "\u2265",
+  geq: "\u2265",
+  ne: "\u2260",
+  neq: "\u2260",
+  approx: "\u2248",
+  sqrt: "\u221A",
+  sum: "\u2211",
+  prod: "\u220F",
+  int: "\u222B",
+  pm0: "\xB1"
+};
+function mapScript(content, table) {
+  let out = "";
+  for (const char of content) {
+    const mapped = table[char];
+    if (mapped === void 0) {
+      return null;
+    }
+    out += mapped;
+  }
+  return out;
+}
+function convertScripts(text, marker, table) {
+  const escapedMarker = marker === "^" ? "\\^" : "_";
+  const braced = new RegExp(`${escapedMarker}\\{([^{}]*)\\}`, "g");
+  const single = new RegExp(`${escapedMarker}([A-Za-z0-9])`, "g");
+  let result = text.replace(braced, (match, content) => {
+    const mapped = mapScript(content, table);
+    return mapped != null ? mapped : `${marker}(${content})`;
+  });
+  result = result.replace(single, (match, char) => {
+    const mapped = mapScript(char, table);
+    return mapped != null ? mapped : match;
+  });
+  return result;
+}
+function formatMathLabelText(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (trimmed.includes("$")) {
+    return trimmed.replace(/\$\$?([^$]*)\$\$?/g, (_match, inner) => convertMathSegment(inner)).trim();
+  }
+  return convertMathSegment(trimmed);
+}
+function convertMathSegment(raw) {
+  let text = raw.trim();
+  if (!text) {
+    return "";
+  }
+  text = text.replace(/\\\(|\\\)|\\\[|\\\]/g, "").replace(/\\left\b/g, "").replace(/\\right\b/g, "").replace(/\\[,;!:]/g, " ").replace(/\\mathrm\s*\{([^{}]*)\}/g, "$1").replace(/\\text\s*\{([^{}]*)\}/g, "$1").replace(/\\operatorname\s*\{([^{}]*)\}/g, "$1");
+  for (let guard = 0; guard < 16; guard++) {
+    const next = text.replace(/\\[dtc]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/, (match, a, b) => {
+      const num = /^[A-Za-z0-9.]+$/.test(a) ? a : `(${a})`;
+      const den = /^[A-Za-z0-9.]+$/.test(b) ? b : `(${b})`;
+      return `${num}/${den}`;
+    });
+    if (next === text) {
+      break;
+    }
+    text = next;
+  }
+  for (const [name, glyph] of Object.entries(SYMBOL_COMMANDS)) {
+    text = text.replace(new RegExp(`\\\\${name}(?![A-Za-z])`, "g"), glyph);
+  }
+  const greekNames = Object.keys(GREEK_GLYPHS).sort((a, b) => b.length - a.length);
+  for (const name of greekNames) {
+    text = text.replace(new RegExp(`\\\\${name}(?![A-Za-z])`, "g"), GREEK_GLYPHS[name]);
+  }
+  text = text.replace(/\\([A-Za-z]+)/g, "$1");
+  text = convertScripts(text, "^", SUPERSCRIPTS);
+  text = convertScripts(text, "_", SUBSCRIPTS);
+  return text.replace(/[{}]/g, "").trim();
+}
+function formatLatexLabel(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (trimmed.includes("$")) {
+    return trimmed;
+  }
+  if (/[\\^_]/.test(trimmed)) {
+    return `$${trimmed}$`;
+  }
+  return trimmed;
+}
+
 // src/graphThemeColors.ts
 var LIGHT_FALLBACKS = {
   foreground: "#111111",
@@ -2573,11 +3399,11 @@ function makeScales(bounds, width, height, left, top) {
   const yScale = (y) => top + height - (y - bounds.ymin) / (bounds.ymax - bounds.ymin) * height;
   return { xScale, yScale };
 }
-function renderTitle(title, colors, centerX, titleY) {
+function renderTitle(title, colors, centerX, titleY, fontSize) {
   if (!(title == null ? void 0 : title.trim()) || titleY === null) {
     return "";
   }
-  return `<text x="${centerX}" y="${titleY}" text-anchor="middle" font-size="14" font-family="${TICK_LABEL_FONT}" fill="${colors.stroke}">${escapeXml(title.trim())}</text>`;
+  return `<text x="${centerX}" y="${titleY}" text-anchor="middle" font-size="${fontSize}" font-family="${TICK_LABEL_FONT}" fill="${colors.stroke}">${escapeXml(formatMathLabelText(title))}</text>`;
 }
 function renderGrid2D(bounds, xScale, yScale, colors) {
   const parts = [];
@@ -2601,8 +3427,9 @@ function renderAxes2D(spec, bounds, xScale, yScale, left, top, width, height, co
   const axisX = bounds.xmin <= 0 && bounds.xmax >= 0 ? xScale(0) : xScale(bounds.xmin);
   const xSpan = bounds.xmax - bounds.xmin;
   const ySpan = bounds.ymax - bounds.ymin;
-  parts.push(`<line x1="${left}" y1="${axisY}" x2="${left + width}" y2="${axisY}" stroke="${colors.stroke}" stroke-width="1.2"/>`);
-  parts.push(`<line x1="${axisX}" y1="${top}" x2="${axisX}" y2="${top + height}" stroke="${colors.stroke}" stroke-width="1.2"/>`);
+  const axisWidth = resolveAxisLineWidth(spec);
+  parts.push(`<line x1="${left}" y1="${axisY}" x2="${left + width}" y2="${axisY}" stroke="${colors.stroke}" stroke-width="${axisWidth}"/>`);
+  parts.push(`<line x1="${axisX}" y1="${top}" x2="${axisX}" y2="${top + height}" stroke="${colors.stroke}" stroke-width="${axisWidth}"/>`);
   for (const x of niceTicks(bounds.xmin, bounds.xmax, tickTargetForSpan(xSpan))) {
     const px = xScale(x);
     parts.push(`<line x1="${px}" y1="${axisY - 4}" x2="${px}" y2="${axisY + 4}" stroke="${colors.stroke}" stroke-width="1"/>`);
@@ -2614,10 +3441,10 @@ function renderAxes2D(spec, bounds, xScale, yScale, left, top, width, height, co
     parts.push(`<text x="${axisX - 10}" y="${py + 4}" text-anchor="end" font-size="11" fill="${colors.muted}" font-family="${TICK_LABEL_FONT}">${formatTickLabel(y)}</text>`);
   }
   if ((_b = labels.x) == null ? void 0 : _b.trim()) {
-    parts.push(`<text x="${left + width / 2}" y="${top + height + 14}" text-anchor="middle" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(labels.x.trim())}</text>`);
+    parts.push(`<text x="${left + width / 2}" y="${top + height + 14}" text-anchor="middle" font-size="${resolveLabelFontSize(spec)}" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(formatMathLabelText(labels.x))}</text>`);
   }
   if ((_c = labels.y) == null ? void 0 : _c.trim()) {
-    parts.push(`<text x="${left - 14}" y="${top + height / 2}" text-anchor="middle" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}" transform="rotate(-90 ${left - 14} ${top + height / 2})">${escapeXml(labels.y.trim())}</text>`);
+    parts.push(`<text x="${left - 14}" y="${top + height / 2}" text-anchor="middle" font-size="${resolveLabelFontSize(spec)}" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}" transform="rotate(-90 ${left - 14} ${top + height / 2})">${escapeXml(formatMathLabelText(labels.y))}</text>`);
   }
   return parts.join("");
 }
@@ -2672,39 +3499,19 @@ function sampleData2D(spec) {
     };
   }).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
 }
-function projectIsometric(x, y, z) {
-  const cos = Math.cos(Math.PI / 6);
-  const sin = Math.sin(Math.PI / 6);
+function projectOrbit(x, y, z, rotation) {
+  const azimuth = rotation.azimuth * Math.PI / 180;
+  const elevation = rotation.elevation * Math.PI / 180;
+  const rotatedX = x * Math.cos(azimuth) - y * Math.sin(azimuth);
+  const depth = x * Math.sin(azimuth) + y * Math.cos(azimuth);
   return {
-    px: (x - y) * cos,
-    py: -z + (x + y) * sin * 0.45
+    px: rotatedX,
+    py: -z * Math.cos(elevation) + depth * Math.sin(elevation)
   };
 }
-function fitProjectedPoints(points, left, top, width, height) {
-  if (points.length === 0) {
-    return points;
-  }
-  let minX = points[0].px;
-  let maxX = points[0].px;
-  let minY = points[0].py;
-  let maxY = points[0].py;
-  for (const p of points) {
-    minX = Math.min(minX, p.px);
-    maxX = Math.max(maxX, p.px);
-    minY = Math.min(minY, p.py);
-    maxY = Math.max(maxY, p.py);
-  }
-  const spanX = maxX - minX || 1;
-  const spanY = maxY - minY || 1;
-  const pad = 0.08;
-  return points.map((p) => ({
-    px: left + pad * width + (p.px - minX) / spanX * width * (1 - 2 * pad),
-    py: top + pad * height + (p.py - minY) / spanY * height * (1 - 2 * pad)
-  }));
-}
-function createProjectionLayout(worldPoints, left, top, width, height) {
+function createProjectionLayout(worldPoints, left, top, width, height, rotation) {
   var _a, _b, _c, _d, _e, _f, _g, _h;
-  const raw = worldPoints.map((p) => projectIsometric(p.x, p.y, p.z));
+  const raw = worldPoints.map((p) => projectOrbit(p.x, p.y, p.z, rotation));
   let minX = (_b = (_a = raw[0]) == null ? void 0 : _a.px) != null ? _b : 0;
   let maxX = (_d = (_c = raw[0]) == null ? void 0 : _c.px) != null ? _d : 0;
   let minY = (_f = (_e = raw[0]) == null ? void 0 : _e.py) != null ? _f : 0;
@@ -2718,12 +3525,20 @@ function createProjectionLayout(worldPoints, left, top, width, height) {
   const spanX = maxX - minX || 1;
   const spanY = maxY - minY || 1;
   const pad = 0.08;
+  const ax = width * (1 - 2 * pad) / spanX;
+  const bx = left + pad * width - minX * ax;
+  const ay = height * (1 - 2 * pad) / spanY;
+  const by = top + pad * height - minY * ay;
   const toScreen = (px, py) => ({
-    px: left + pad * width + (px - minX) / spanX * width * (1 - 2 * pad),
-    py: top + pad * height + (py - minY) / spanY * height * (1 - 2 * pad)
+    px: ax * px + bx,
+    py: ay * py + by
   });
   return {
-    projectWorld: (x, y, z) => toScreen(...Object.values(projectIsometric(x, y, z)))
+    projectWorld: (x, y, z) => {
+      const p = projectOrbit(x, y, z, rotation);
+      return toScreen(p.px, p.py);
+    },
+    screenTransform: { ax, bx, ay, by }
   };
 }
 function renderSurfaceMeshWithLayout(grid, samplesX, samplesY, projectWorld, stroke, surfaceStyle, zMin, zMax) {
@@ -2799,30 +3614,46 @@ function textAnchorForDirection(direction) {
   }
   return "middle";
 }
-function render3DAxisLabelText(text, position, anchor, fill, className) {
-  return `<text class="${className}" x="${position.x.toFixed(2)}" y="${position.y.toFixed(2)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="12" fill="${fill}" font-family="${TICK_LABEL_FONT}" pointer-events="none">${escapeXml(text)}</text>`;
+function render3DAxisLabelText(text, position, anchor, fill, className, fontSize) {
+  return `<text class="${className}" x="${position.x.toFixed(2)}" y="${position.y.toFixed(2)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="${fontSize}" fill="${fill}" font-family="${TICK_LABEL_FONT}" pointer-events="none">${escapeXml(text)}</text>`;
 }
-function renderAxisLine(from, to, stroke) {
-  return `<line x1="${from.px}" y1="${from.py}" x2="${to.px}" y2="${to.py}" stroke="${stroke}" stroke-width="2.2" marker-end="url(#mathgraph-axis-arrow)"/>`;
+function renderAxisLine(from, to, stroke, lineWidth) {
+  return `<line x1="${from.px}" y1="${from.py}" x2="${to.px}" y2="${to.py}" stroke="${stroke}" stroke-width="${lineWidth}" marker-end="url(#mathgraph-axis-arrow)"/>`;
 }
-function render3DAxisLines(xMin, xMax, yMin, yMax, zMin, zMax, projectWorld, stroke) {
-  const origin = projectWorld(xMin, yMin, zMin);
-  const xEnd = projectWorld(xMax, yMin, zMin);
-  const yEnd = projectWorld(xMin, yMax, zMin);
-  const zEnd = projectWorld(xMin, yMin, zMax);
+function clampToRange(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+function axis3DEndpoints(xMin, xMax, yMin, yMax, zMin, zMax) {
+  const cx = clampToRange(0, xMin, xMax);
+  const cy = clampToRange(0, yMin, yMax);
+  const cz = clampToRange(0, zMin, zMax);
+  return {
+    origin: { x: cx, y: cy, z: cz },
+    xStart: { x: xMin, y: cy, z: cz },
+    xEnd: { x: xMax, y: cy, z: cz },
+    yStart: { x: cx, y: yMin, z: cz },
+    yEnd: { x: cx, y: yMax, z: cz },
+    zStart: { x: cx, y: cy, z: zMin },
+    zEnd: { x: cx, y: cy, z: zMax }
+  };
+}
+function render3DAxisLines(xMin, xMax, yMin, yMax, zMin, zMax, projectWorld, stroke, lineWidth) {
+  const axes = axis3DEndpoints(xMin, xMax, yMin, yMax, zMin, zMax);
+  const project = (p) => projectWorld(p.x, p.y, p.z);
   return [
     axisArrowMarker(stroke),
-    renderAxisLine(origin, xEnd, stroke),
-    renderAxisLine(origin, yEnd, stroke),
-    renderAxisLine(origin, zEnd, stroke)
+    renderAxisLine(project(axes.xStart), project(axes.xEnd), stroke, lineWidth),
+    renderAxisLine(project(axes.yStart), project(axes.yEnd), stroke, lineWidth),
+    renderAxisLine(project(axes.zStart), project(axes.zEnd), stroke, lineWidth)
   ].join("");
 }
-function render3DAxisLabels(xMin, xMax, yMin, yMax, zMin, zMax, projectWorld, labels, labelColor) {
+function render3DAxisLabels(xMin, xMax, yMin, yMax, zMin, zMax, projectWorld, labels, labelColor, fontSize) {
   var _a, _b, _c;
-  const origin = projectWorld(xMin, yMin, zMin);
-  const xEnd = projectWorld(xMax, yMin, zMin);
-  const yEnd = projectWorld(xMin, yMax, zMin);
-  const zEnd = projectWorld(xMin, yMin, zMax);
+  const axes = axis3DEndpoints(xMin, xMax, yMin, yMax, zMin, zMax);
+  const origin = projectWorld(axes.origin.x, axes.origin.y, axes.origin.z);
+  const xEnd = projectWorld(axes.xEnd.x, axes.xEnd.y, axes.xEnd.z);
+  const yEnd = projectWorld(axes.yEnd.x, axes.yEnd.y, axes.yEnd.z);
+  const zEnd = projectWorld(axes.zEnd.x, axes.zEnd.y, axes.zEnd.z);
   const xDir = axisScreenDirection(origin, xEnd);
   const yDir = axisScreenDirection(origin, yEnd);
   const zDir = axisScreenDirection(origin, zEnd);
@@ -2830,18 +3661,18 @@ function render3DAxisLabels(xMin, xMax, yMin, yMax, zMin, zMax, projectWorld, la
   const parts = [];
   if ((_a = labels.x) == null ? void 0 : _a.trim()) {
     const pos = placeAxisLabel(xEnd, xDir, 22);
-    parts.push(render3DAxisLabelText(labels.x.trim(), pos, textAnchorForDirection(xDir), labelColor, "mathgraph-axis-label mathgraph-axis-label-x"));
+    parts.push(render3DAxisLabelText(formatMathLabelText(labels.x), pos, textAnchorForDirection(xDir), labelColor, "mathgraph-axis-label mathgraph-axis-label-x", fontSize));
   }
   if ((_b = labels.y) == null ? void 0 : _b.trim()) {
     const pos = placeAxisLabel(yEnd, yDir, 28, {
       x: yPerp.x + 2,
       y: yPerp.y + 8
     });
-    parts.push(render3DAxisLabelText(labels.y.trim(), pos, textAnchorForDirection(yDir), labelColor, "mathgraph-axis-label mathgraph-axis-label-y"));
+    parts.push(render3DAxisLabelText(formatMathLabelText(labels.y), pos, textAnchorForDirection(yDir), labelColor, "mathgraph-axis-label mathgraph-axis-label-y", fontSize));
   }
   if ((_c = labels.z) == null ? void 0 : _c.trim()) {
     const pos = placeAxisLabel(zEnd, zDir, 18, { x: 8, y: -14 });
-    parts.push(render3DAxisLabelText(labels.z.trim(), pos, textAnchorForDirection(zDir), labelColor, "mathgraph-axis-label mathgraph-axis-label-z"));
+    parts.push(render3DAxisLabelText(formatMathLabelText(labels.z), pos, textAnchorForDirection(zDir), labelColor, "mathgraph-axis-label mathgraph-axis-label-z", fontSize));
   }
   return parts.join("");
 }
@@ -2866,37 +3697,44 @@ function renderPoints2D(spec, xScale, yScale, colors) {
     const py = yScale(y);
     parts.push(`<circle cx="${px}" cy="${py}" r="4.5" fill="${colors.point}" stroke="${colors.stroke}" stroke-width="1"/>`);
     if ((_b = point.label) == null ? void 0 : _b.trim()) {
-      parts.push(`<text x="${px + 8}" y="${py - 8}" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(point.label.trim())}</text>`);
+      parts.push(`<text x="${px + 8}" y="${py - 8}" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(formatMathLabelText(point.label))}</text>`);
+    }
+    if (point.showValue) {
+      parts.push(`<text x="${px}" y="${py + 16}" text-anchor="middle" font-size="11" fill="${colors.muted}" font-family="${TICK_LABEL_FONT}">(${formatCoordValue(x)}, ${formatCoordValue(y)})</text>`);
     }
   }
   return parts.join("");
 }
-function renderPoints3D(spec, left, top, width, height, colors) {
-  var _a;
+function formatCoordValue(value) {
+  return String(Number.parseFloat(value.toFixed(3)));
+}
+function resolveWorldPoints3D(spec) {
+  var _a, _b;
   const points = (_a = spec.points) != null ? _a : [];
-  if (points.length === 0) {
-    return "";
-  }
-  const projected = points.map((point) => {
-    var _a2;
+  const resolvedPoints = [];
+  for (const point of points) {
     const resolved = resolveGraphPointCoordinates(spec, point);
     if (!resolved) {
-      return null;
+      continue;
     }
     const x = parseBoundToNumber(resolved.x);
     const y = parseBoundToNumber(resolved.y);
-    const z = parseBoundToNumber((_a2 = resolved.z) != null ? _a2 : "0");
+    const z = parseBoundToNumber((_b = resolved.z) != null ? _b : "0");
     if (x === null || y === null || z === null) {
-      return null;
+      continue;
     }
-    return __spreadValues({ point }, projectIsometric(x, y, z));
-  }).filter((p) => p !== null);
-  const fitted = fitProjectedPoints(projected, left, top, width, height);
-  return fitted.map((p, i) => {
-    var _a2, _b;
-    const label = (_b = (_a2 = projected[i]) == null ? void 0 : _a2.point.label) == null ? void 0 : _b.trim();
-    const labelSvg = label ? `<text x="${p.px + 8}" y="${p.py - 8}" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(label)}</text>` : "";
-    return `<circle cx="${p.px}" cy="${p.py}" r="4.5" fill="${colors.point}" stroke="${colors.stroke}" stroke-width="1"/>${labelSvg}`;
+    resolvedPoints.push({ point, x, y, z });
+  }
+  return resolvedPoints;
+}
+function renderPoints3D(worldPoints, projectWorld, colors) {
+  return worldPoints.map(({ point, x, y, z }) => {
+    var _a;
+    const p = projectWorld(x, y, z);
+    const label = (_a = point.label) == null ? void 0 : _a.trim();
+    const labelSvg = label ? `<text x="${p.px + 8}" y="${p.py - 8}" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(formatMathLabelText(label))}</text>` : "";
+    const valueSvg = point.showValue ? `<text x="${p.px}" y="${p.py + 16}" text-anchor="middle" font-size="11" fill="${colors.muted}" font-family="${TICK_LABEL_FONT}">(${formatCoordValue(x)}, ${formatCoordValue(y)}, ${formatCoordValue(z)})</text>` : "";
+    return `<circle cx="${p.px}" cy="${p.py}" r="4.5" fill="${colors.point}" stroke="${colors.stroke}" stroke-width="1"/>${labelSvg}${valueSvg}`;
   }).join("");
 }
 function collect2DSamples(spec) {
@@ -2934,9 +3772,10 @@ function render2DGraph(spec, theme) {
   const axes = renderAxes2D(spec, bounds, xScale, yScale, layout.plotLeft, layout.plotTop, layout.plotWidth, layout.plotHeight, colors);
   const curve = pathFrom2DPoints(points, xScale, yScale).replace('stroke-width="2"', `stroke="${curveColor}" stroke-width="2"`);
   const markers = renderPoints2D(spec, xScale, yScale, colors);
+  const calibration = `data-mg-plot="${layout.plotLeft},${layout.plotTop},${layout.plotWidth},${layout.plotHeight}" data-mg-window="${bounds.xmin},${bounds.xmax},${bounds.ymin},${bounds.ymax}"`;
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}">`,
-    renderTitle(spec.title, colors, layout.centerX, layout.titleY),
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" ${calibration}>`,
+    renderTitle(spec.title, colors, layout.centerX, layout.titleY, resolveLabelFontSize(spec)),
     grid,
     axes,
     curve,
@@ -2976,31 +3815,61 @@ function render3DGraph(spec, theme) {
     zMin = zRange[0];
     zMax = zRange[1];
   }
+  const worldPoints = resolveWorldPoints3D(spec);
   const axisCorners = [
     { x: xMin, y: yMin, z: zMin },
     { x: xMax, y: yMin, z: zMin },
     { x: xMin, y: yMax, z: zMin },
     { x: xMin, y: yMin, z: zMax },
-    ...grid
+    ...grid,
+    ...worldPoints.map(({ x, y, z }) => ({ x, y, z }))
   ];
-  const projection = createProjectionLayout(axisCorners, layout.plotLeft, layout.plotTop, layout.plotWidth, layout.plotHeight);
+  const xSpan = xMax - xMin || 1;
+  const ySpan = yMax - yMin || 1;
+  const zSpan = zMax - zMin || 1;
+  const normalize = (x, y, z) => ({
+    x: (x - xMin) / xSpan * 2 - 1,
+    y: (y - yMin) / ySpan * 2 - 1,
+    z: (z - zMin) / zSpan * 2 - 1
+  });
+  const rotation = resolveGraphRotation(spec);
+  const projection = createProjectionLayout(axisCorners.map((p) => normalize(p.x, p.y, p.z)), layout.plotLeft, layout.plotTop, layout.plotWidth, layout.plotHeight, rotation);
+  const projectWorld = (x, y, z) => {
+    const n = normalize(x, y, z);
+    return projection.projectWorld(n.x, n.y, n.z);
+  };
   const labels = (_e = spec.labels) != null ? _e : { x: "x", y: "y", z: "z" };
   const surfaceStyle = resolveSurfaceStyle(spec);
   const mesh = spec.type === "parametric3d" ? (() => {
     const d = grid.map((p, i) => {
-      const pt = projection.projectWorld(p.x, p.y, p.z);
+      const pt = projectWorld(p.x, p.y, p.z);
       return `${i === 0 ? "M" : "L"}${pt.px},${pt.py}`;
     }).join(" ");
     return `<path d="${d}" fill="none" stroke="${curveColor}" stroke-width="2"/>`;
-  })() : renderSurfaceMeshWithLayout(grid, samplesX, samplesY, projection.projectWorld, curveColor, surfaceStyle, zMin, zMax);
-  const axisLines = render3DAxisLines(xMin, xMax, yMin, yMax, zMin, zMax, projection.projectWorld, axisStroke);
-  const axisLabels = render3DAxisLabels(xMin, xMax, yMin, yMax, zMin, zMax, projection.projectWorld, labels, theme.text);
+  })() : renderSurfaceMeshWithLayout(grid, samplesX, samplesY, projectWorld, curveColor, surfaceStyle, zMin, zMax);
+  const axisLines = render3DAxisLines(xMin, xMax, yMin, yMax, zMin, zMax, projectWorld, axisStroke, resolveAxisLineWidth(spec) + 1);
+  const axisLabels = render3DAxisLabels(xMin, xMax, yMin, yMax, zMin, zMax, projectWorld, labels, theme.text, resolveLabelFontSize(spec));
+  const transform = projection.screenTransform;
+  const calibration3d = [
+    xMin,
+    xMax,
+    yMin,
+    yMax,
+    zMin,
+    zMax,
+    rotation.azimuth,
+    rotation.elevation,
+    transform.ax,
+    transform.bx,
+    transform.ay,
+    transform.by
+  ].map((value) => Number.parseFloat(value.toPrecision(10))).join(",");
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}">`,
-    renderTitle(spec.title, colors, layout.centerX, layout.titleY),
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" data-mg-3d="${calibration3d}">`,
+    renderTitle(spec.title, colors, layout.centerX, layout.titleY, resolveLabelFontSize(spec)),
     mesh,
     axisLines,
-    renderPoints3D(spec, layout.plotLeft, layout.plotTop, layout.plotWidth, layout.plotHeight, colors),
+    renderPoints3D(worldPoints, projectWorld, colors),
     axisLabels,
     "</svg>"
   ].join("");
@@ -3203,11 +4072,8 @@ function finalizeSvg(svgText) {
 // src/tikzJaxPaths.ts
 var fs2 = __toModule(require("fs"));
 var path = __toModule(require("path"));
-var TIKZJAX_MODULE_REL_PATHS = [
-  "node_modules/node-tikzjax/dist/index.js",
-  "assets/tikzjax/node/dist/index.js"
-];
-function resolveTikzJaxModulePath(pluginBaseDir) {
+var TIKZJAX_ASSET_MANIFEST_REL_PATH = "assets/tikzjax/manifest.json";
+function candidateRoots(pluginBaseDir) {
   const searchRoots = [pluginBaseDir];
   let dir = pluginBaseDir;
   for (let depth = 0; depth < 6; depth++) {
@@ -3218,22 +4084,60 @@ function resolveTikzJaxModulePath(pluginBaseDir) {
     searchRoots.push(parent);
     dir = parent;
   }
-  for (const root of searchRoots) {
-    for (const rel of TIKZJAX_MODULE_REL_PATHS) {
-      const candidate = path.join(root, rel);
-      if (fs2.existsSync(candidate)) {
-        return candidate;
-      }
-    }
-    try {
-      return require.resolve("node-tikzjax", { paths: [root] });
-    } catch (e) {
-    }
+  return searchRoots;
+}
+function isManifest(value) {
+  if (typeof value !== "object" || value === null) {
+    return false;
   }
-  return null;
+  const candidate = value;
+  return candidate.version === 1 && typeof candidate.module === "string" && Array.isArray(candidate.files) && candidate.files.every((entry) => typeof entry === "string");
+}
+function readManifest(manifestPath) {
+  if (!fs2.existsSync(manifestPath)) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(fs2.readFileSync(manifestPath, "utf8"));
+    return isManifest(parsed) ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+function inspectTikzJaxAssets(pluginBaseDir) {
+  for (const root of candidateRoots(pluginBaseDir)) {
+    const manifestPath = path.join(root, TIKZJAX_ASSET_MANIFEST_REL_PATH);
+    const manifest = readManifest(manifestPath);
+    if (!manifest) {
+      continue;
+    }
+    const missingFiles = manifest.files.map((rel) => path.join(root, rel)).filter((candidate) => !fs2.existsSync(candidate));
+    const modulePath = path.join(root, manifest.module);
+    return {
+      root,
+      manifestPath,
+      modulePath,
+      missingFiles,
+      manifest
+    };
+  }
+  return {
+    root: pluginBaseDir,
+    manifestPath: path.join(pluginBaseDir, TIKZJAX_ASSET_MANIFEST_REL_PATH),
+    modulePath: null,
+    missingFiles: [],
+    manifest: null
+  };
+}
+function resolveTikzJaxModulePath(pluginBaseDir) {
+  const status = inspectTikzJaxAssets(pluginBaseDir);
+  if (!status.manifest || status.missingFiles.length > 0 || !status.modulePath) {
+    return null;
+  }
+  return fs2.existsSync(status.modulePath) ? status.modulePath : null;
 }
 function describeTikzJaxSearchPaths(pluginBaseDir) {
-  return TIKZJAX_MODULE_REL_PATHS.map((rel) => path.join(pluginBaseDir, rel)).join("\n");
+  return candidateRoots(pluginBaseDir).map((root) => path.join(root, TIKZJAX_ASSET_MANIFEST_REL_PATH)).join("\n");
 }
 
 // render/inlinePlotAssets.ts
@@ -3297,10 +4201,15 @@ function runExclusive(task) {
   return next;
 }
 function missingAssetsMessage(pluginBaseDir) {
+  const status = inspectTikzJaxAssets(pluginBaseDir);
+  const missing = status.missingFiles.length > 0 ? status.missingFiles.map((file) => `- ${file}`).join("\n") : "No packaged TikZJax manifest was found.";
   return [
     "TikZJax assets not found.",
     "Run `npm install && npm run build` in the plugin folder, then reload Obsidian.",
-    "The plugin folder must include `assets/tikzjax/node/` or `node_modules/node-tikzjax/`.",
+    "The plugin folder must include a complete packaged `assets/tikzjax/` bundle.",
+    "",
+    "Missing files:",
+    missing,
     "",
     "Checked paths:",
     describeTikzJaxSearchPaths(pluginBaseDir)
@@ -4725,6 +5634,24 @@ function insertGraphBlockAtCursor(app, spec) {
 // src/graphBuilderModal.ts
 var import_obsidian4 = __toModule(require("obsidian"));
 
+// src/functionPlaceholders.ts
+var FUNCTION_PLACEHOLDER_2D = "";
+var FUNCTION_PLACEHOLDER_3D = "";
+var FUNCTION_PLACEHOLDER_PDE = "";
+var FUNCTION_PLACEHOLDER_ODE = "";
+function placeholderForGraphType(type) {
+  switch (type) {
+    case "surface3d":
+      return FUNCTION_PLACEHOLDER_3D;
+    case "pde":
+      return FUNCTION_PLACEHOLDER_PDE;
+    case "ode":
+      return FUNCTION_PLACEHOLDER_ODE;
+    default:
+      return FUNCTION_PLACEHOLDER_2D;
+  }
+}
+
 // src/graphPointsTikz.ts
 var MARK_OPTS = "only marks, mark=*, mark size=2pt";
 function escapeLatexText(text) {
@@ -4758,8 +5685,37 @@ function buildGraphPointsTikz(spec) {
     if ((_b = point.label) == null ? void 0 : _b.trim()) {
       lines.push(buildPointLabelNode(coords, point.label.trim(), is3d));
     }
+    if (point.showValue) {
+      const valueText = formatPointValueText(coords, is3d);
+      if (valueText) {
+        const at = is3d && coords.z !== void 0 ? `${coords.x},${coords.y},${coords.z}` : `${coords.x},${coords.y}`;
+        lines.push(`\\node[anchor=north, font=\\small] at (axis cs:${at}) {${valueText}};`);
+      }
+    }
   }
   return lines.join("\n");
+}
+function formatCoordText(value) {
+  const numeric = parseBoundToNumber(value);
+  if (numeric === null) {
+    return null;
+  }
+  return String(Number.parseFloat(numeric.toFixed(3)));
+}
+function formatPointValueText(coords, is3d) {
+  const x = formatCoordText(coords.x);
+  const y = formatCoordText(coords.y);
+  if (x === null || y === null) {
+    return null;
+  }
+  if (is3d && coords.z !== void 0) {
+    const z = formatCoordText(coords.z);
+    if (z === null) {
+      return null;
+    }
+    return `(${x}, ${y}, ${z})`;
+  }
+  return `(${x}, ${y})`;
 }
 function appendGraphPointsToTikz(tikz, spec) {
   const pointsTikz = buildGraphPointsTikz(spec);
@@ -4777,20 +5733,11 @@ ${tikz.slice(index)}`;
 }
 
 // src/graphBuilderModal.ts
-var BUILDER_TABS = [
-  { id: "equation", label: "Equation" },
-  { id: "ranges", label: "Ranges" },
-  { id: "style", label: "Style" },
-  { id: "size", label: "Size" },
-  { id: "points", label: "Points" }
-];
 var GraphBuilderModal = class extends import_obsidian4.Modal {
   constructor(app, plugin, options) {
     super(app);
     this.plugin = plugin;
-    this.activeTab = "equation";
-    this.navItems = new Map();
-    this.panels = new Map();
+    this.sections = new Map();
     this.pointWarningsEl = null;
     this.options = options;
     this.spec = options.spec ? hydrateGraphSpec(structuredClone(options.spec), this.plugin.settings) : defaultGraphSpec("function2d", this.plugin.settings);
@@ -4804,34 +5751,14 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
       cls: `mathgraph-modal-shell mathgraph-modal ${mathgraphUiClassName()}`
     });
     this.renderHeader();
-    this.renderMain();
+    this.bodyEl = this.shellEl.createDiv({ cls: "mathgraph-modal-body-scroll" });
     this.renderFooter();
     this.renderForm();
-    this.switchTab(this.activeTab);
   }
   renderHeader() {
     const header = this.shellEl.createDiv({ cls: "mathgraph-modal-header" });
     const textWrap = header.createDiv({ cls: "mathgraph-modal-header-text" });
     textWrap.createDiv({ cls: "mathgraph-modal-title", text: "Math Plotter" });
-  }
-  renderMain() {
-    const main = this.shellEl.createDiv({ cls: "mathgraph-modal-main" });
-    const nav = main.createDiv({ cls: "mathgraph-modal-nav" });
-    for (const tab of BUILDER_TABS) {
-      const item = nav.createDiv({
-        cls: "mathgraph-modal-nav-item",
-        text: tab.label
-      });
-      item.dataset.tab = tab.id;
-      item.addEventListener("click", () => this.switchTab(tab.id));
-      this.navItems.set(tab.id, item);
-    }
-    this.panelEl = main.createDiv({ cls: "mathgraph-modal-panel-scroll" });
-    for (const tab of BUILDER_TABS) {
-      const panel = this.panelEl.createDiv({ cls: "mathgraph-modal-panel" });
-      panel.dataset.tab = tab.id;
-      this.panels.set(tab.id, panel);
-    }
   }
   renderFooter() {
     const footer = this.shellEl.createDiv({ cls: "mathgraph-modal-footer" });
@@ -4847,39 +5774,28 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
       cls: "mathgraph-button mathgraph-button-primary"
     }).addEventListener("click", () => void this.submit());
   }
-  switchTab(tab) {
-    this.activeTab = tab;
-    for (const [id, item] of this.navItems) {
-      item.toggleClass("mathgraph-modal-nav-item-active", id === tab);
-    }
-    for (const [id, panel] of this.panels) {
-      panel.toggleClass("mathgraph-modal-panel-active", id === tab);
-    }
-  }
-  updateNavVisibility() {
-    const pointsNav = this.navItems.get("points");
-    pointsNav == null ? void 0 : pointsNav.toggleClass("mathgraph-modal-nav-item-hidden", this.spec.type === "data");
-    if (this.spec.type === "data" && this.activeTab === "points") {
-      this.switchTab("equation");
-    }
-  }
-  getPanel(tab) {
-    const panel = this.panels.get(tab);
-    if (!panel) {
-      throw new Error(`Missing builder panel: ${tab}`);
-    }
-    return panel;
-  }
   renderForm() {
-    for (const panel of this.panels.values()) {
-      panel.empty();
+    const scrollTop = this.bodyEl.scrollTop;
+    this.bodyEl.empty();
+    this.sections.clear();
+    this.pointWarningsEl = null;
+    this.renderEquationSection(this.createSection("equation"));
+    this.renderRangesSection(this.createSection("ranges", "Ranges"));
+    this.renderStyleSection(this.createSection("style", "Style"));
+    this.renderSizeSection(this.createSection("size", "Size"));
+    if (this.spec.type !== "data") {
+      this.renderPointsSection(this.createSection("points", "Points"));
     }
-    this.renderEquationPanel(this.getPanel("equation"));
-    this.renderRangesPanel(this.getPanel("ranges"));
-    this.renderStylePanel(this.getPanel("style"));
-    this.renderSizePanel(this.getPanel("size"));
-    this.renderPointsPanel(this.getPanel("points"));
-    this.updateNavVisibility();
+    this.bodyEl.scrollTop = scrollTop;
+  }
+  createSection(id, title) {
+    const section = this.bodyEl.createDiv({ cls: "mathgraph-form-section" });
+    section.dataset.section = id;
+    if (title) {
+      section.createDiv({ cls: "mathgraph-form-section-title", text: title });
+    }
+    this.sections.set(id, section);
+    return section;
   }
   formGrid(parent) {
     return parent.createDiv({ cls: "mathgraph-form-grid" });
@@ -4906,8 +5822,97 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
     }
     input.addEventListener("input", () => onChange(input.value));
   }
+  formPrimaryText(parent, label, value, onChange, placeholder) {
+    const field = this.formRow(parent, label, { wide: true });
+    const group = field.createDiv({ cls: "mathgraph-fn-group" });
+    const input = group.createEl("input", {
+      type: "text",
+      cls: "mathgraph-input mathgraph-fn-input",
+      value
+    });
+    if (placeholder) {
+      input.placeholder = placeholder;
+    }
+    input.addEventListener("input", () => onChange(input.value));
+    this.renderTypeChip(group);
+  }
+  renderTypeChip(parent) {
+    const chip = parent.createEl("button", {
+      type: "button",
+      cls: "mathgraph-type-chip",
+      attr: {
+        "aria-label": "Change graph type",
+        "aria-haspopup": "menu",
+        title: "Graph type"
+      }
+    });
+    chip.createSpan({ cls: "mathgraph-type-chip-label", text: GRAPH_TYPE_LABELS[this.spec.type] });
+    chip.createSpan({ cls: "mathgraph-type-chip-caret", text: "\u25BE" });
+    chip.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      const menu = new import_obsidian4.Menu();
+      for (const [value, label] of Object.entries(GRAPH_TYPE_LABELS)) {
+        menu.addItem((item) => {
+          item.setTitle(label);
+          item.setChecked(value === this.spec.type);
+          item.onClick(() => this.changeGraphType(value));
+        });
+      }
+      menu.showAtMouseEvent(evt);
+    });
+  }
+  changeGraphType(next) {
+    var _a, _b, _c, _d, _e, _f, _g, _h;
+    if (next === this.spec.type) {
+      return;
+    }
+    const previous = this.spec;
+    const fresh = defaultGraphSpec(next, this.plugin.settings);
+    if (previous.size) {
+      fresh.size = previous.size;
+    }
+    if ((_a = previous.title) == null ? void 0 : _a.trim()) {
+      fresh.title = previous.title;
+    }
+    const fn = getUserFunction(previous);
+    if (fn && next !== "data" && next !== "parametric2d" && next !== "parametric3d") {
+      setUserFunction(fresh, fn);
+    }
+    if (next === "parametric2d" || next === "parametric3d") {
+      fresh.parameter = (_b = previous.parameter) != null ? _b : "t";
+      fresh.xExpression = (_c = previous.xExpression) != null ? _c : "";
+      fresh.yExpression = (_d = previous.yExpression) != null ? _d : "";
+      fresh.zExpression = (_e = previous.zExpression) != null ? _e : "";
+    }
+    if (previous.parameters && Object.keys(previous.parameters).length > 0) {
+      fresh.parameters = __spreadValues({}, previous.parameters);
+    }
+    if ((_f = previous.points) == null ? void 0 : _f.length) {
+      fresh.points = previous.points;
+    }
+    if (previous.samples) {
+      fresh.samples = previous.samples;
+    }
+    const freshRanges = (_g = fresh.ranges) != null ? _g : {};
+    for (const key of Object.keys(freshRanges)) {
+      const prevRange = (_h = previous.ranges) == null ? void 0 : _h[key];
+      if (prevRange && (prevRange[0].trim() || prevRange[1].trim())) {
+        freshRanges[key] = prevRange;
+      }
+    }
+    this.spec = fresh;
+    this.renderForm();
+  }
   formTextArea(parent, label, value, onChange, options) {
-    const field = this.formRow(parent, label, __spreadProps(__spreadValues({}, options), { wide: true }));
+    const row = parent.createDiv({ cls: "mathgraph-form-row mathgraph-form-row-wide" });
+    if (options == null ? void 0 : options.withTypeChip) {
+      const labelRow = row.createDiv({ cls: "mathgraph-label-row" });
+      labelRow.createEl("label", { cls: "mathgraph-field-label", text: label });
+      this.renderTypeChip(labelRow);
+    } else {
+      row.createEl("label", { cls: "mathgraph-field-label", text: label });
+    }
+    const field = row.createDiv({ cls: "mathgraph-field" });
     const input = field.createEl("textarea", {
       cls: "mathgraph-input mathgraph-textarea",
       text: value
@@ -4927,19 +5932,19 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
     select.value = value;
     select.addEventListener("change", () => onChange(select.value));
   }
-  formRangeRow(parent, label, current, onChange) {
-    const row = parent.createDiv({ cls: "mathgraph-range-row" });
-    row.createEl("label", { cls: "mathgraph-range-label", text: `${label} range` });
-    const minInput = row.createEl("input", {
+  rangeInline(parent, label, current, onChange) {
+    const group = parent.createDiv({ cls: "mathgraph-range-inline" });
+    group.createSpan({ cls: "mathgraph-range-inline-label", text: label });
+    const minInput = group.createEl("input", {
       type: "text",
-      cls: "mathgraph-input",
+      cls: "mathgraph-input mathgraph-range-inline-input",
       value: current[0],
       attr: { placeholder: "min" }
     });
-    row.createSpan({ cls: "mathgraph-range-separator", text: "to" });
-    const maxInput = row.createEl("input", {
+    group.createSpan({ cls: "mathgraph-range-inline-sep", text: "\u2013" });
+    const maxInput = group.createEl("input", {
       type: "text",
-      cls: "mathgraph-input",
+      cls: "mathgraph-input mathgraph-range-inline-input",
       value: current[1],
       attr: { placeholder: "max" }
     });
@@ -4947,84 +5952,90 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
     minInput.addEventListener("input", sync);
     maxInput.addEventListener("input", sync);
   }
-  formSampleField(parent, label, value, onChange) {
-    const field = parent.createDiv({ cls: "mathgraph-field mathgraph-sample-field" });
-    field.createEl("label", { cls: "mathgraph-field-label", text: label });
-    const input = field.createEl("input", {
+  numberStepper(parent, label, initial, step, apply) {
+    const group = parent.createDiv({ cls: "mathgraph-range-inline" });
+    group.createSpan({ cls: "mathgraph-range-inline-label", text: label });
+    const stepper = group.createDiv({ cls: "mathgraph-stepper" });
+    const format = (value) => String(Number.parseFloat(value.toFixed(2)));
+    const minusBtn = stepper.createEl("button", {
+      type: "button",
+      cls: "mathgraph-stepper-btn",
+      text: "\u2212",
+      attr: { "aria-label": `Decrease ${label.toLowerCase()}` }
+    });
+    const input = stepper.createEl("input", {
       type: "text",
-      cls: "mathgraph-input",
+      cls: "mathgraph-input mathgraph-stepper-value",
+      value: format(initial)
+    });
+    const plusBtn = stepper.createEl("button", {
+      type: "button",
+      cls: "mathgraph-stepper-btn",
+      text: "+",
+      attr: { "aria-label": `Increase ${label.toLowerCase()}` }
+    });
+    const current = () => Number.parseFloat(input.value.trim());
+    const set = (next) => {
+      input.value = format(apply(next));
+    };
+    minusBtn.addEventListener("click", () => set((Number.isFinite(current()) ? current() : initial) - step));
+    plusBtn.addEventListener("click", () => set((Number.isFinite(current()) ? current() : initial) + step));
+    input.addEventListener("change", () => {
+      const parsed = current();
+      set(Number.isFinite(parsed) ? parsed : initial);
+    });
+  }
+  sampleInline(parent, label, value, onChange) {
+    const group = parent.createDiv({ cls: "mathgraph-range-inline mathgraph-sample-inline" });
+    group.createSpan({ cls: "mathgraph-range-inline-label", text: label });
+    const input = group.createEl("input", {
+      type: "text",
+      cls: "mathgraph-input mathgraph-range-inline-input",
       value
     });
     input.addEventListener("input", () => onChange(input.value));
   }
-  renderEquationPanel(panel) {
+  renderEquationSection(panel) {
     var _a, _b, _c, _d, _e, _f, _g, _h;
     const grid = this.formGrid(panel);
-    this.formSelect(grid, "Graph type", this.spec.type, Object.entries(GRAPH_TYPE_LABELS).map(([value, label]) => ({ value, label })), (value) => {
-      const preservedSize = this.spec.size;
-      this.spec = defaultGraphSpec(value, this.plugin.settings);
-      if (preservedSize) {
-        this.spec.size = preservedSize;
-      }
-      this.renderForm();
-      this.updateNavVisibility();
-    }, { wide: true });
-    this.formText(grid, "Title", (_a = this.spec.title) != null ? _a : "", (value) => {
-      this.spec.title = value;
-    }, {
-      placeholder: "Optional graph title",
-      wide: true
-    });
     switch (this.spec.type) {
       case "function2d":
-        this.formText(grid, "Function", getUserFunction(this.spec), (value) => {
+        this.formPrimaryText(grid, "Function", getUserFunction(this.spec), (value) => {
           setUserFunction(this.spec, value);
-        }, {
-          placeholder: placeholderForGraphType("function2d"),
-          wide: true
-        });
+        }, placeholderForGraphType("function2d"));
         break;
       case "surface3d":
-        this.formText(grid, "Surface function", getUserFunction(this.spec), (value) => {
+        this.formPrimaryText(grid, "Surface function", getUserFunction(this.spec), (value) => {
           setUserFunction(this.spec, value);
-        }, {
-          placeholder: placeholderForGraphType("surface3d"),
-          wide: true
-        });
+        }, placeholderForGraphType("surface3d"));
         break;
       case "parametric2d":
       case "parametric3d":
-        this.formText(grid, "Parameter", (_b = this.spec.parameter) != null ? _b : "t", (value) => {
-          this.spec.parameter = value || "t";
-        }, { placeholder: "t" });
-        this.formText(grid, "x(t)", (_c = this.spec.xExpression) != null ? _c : "", (value) => {
+        this.formPrimaryText(grid, "x(t)", (_a = this.spec.xExpression) != null ? _a : "", (value) => {
           this.spec.xExpression = value;
-        }, { wide: true });
-        this.formText(grid, "y(t)", (_d = this.spec.yExpression) != null ? _d : "", (value) => {
+        });
+        this.formText(grid, "y(t)", (_b = this.spec.yExpression) != null ? _b : "", (value) => {
           this.spec.yExpression = value;
         }, { wide: true });
         if (this.spec.type === "parametric3d") {
-          this.formText(grid, "z(t)", (_e = this.spec.zExpression) != null ? _e : "", (value) => {
+          this.formText(grid, "z(t)", (_c = this.spec.zExpression) != null ? _c : "", (value) => {
             this.spec.zExpression = value;
           }, { wide: true });
         }
+        this.formText(grid, "Parameter", (_d = this.spec.parameter) != null ? _d : "t", (value) => {
+          this.spec.parameter = value || "t";
+        }, { placeholder: "t" });
         break;
       case "ode":
       case "pde":
-        this.formText(grid, "Equation label", (_f = this.spec.equation) != null ? _f : "", (value) => {
-          this.spec.equation = value;
-        }, {
-          placeholder: this.spec.type === "pde" ? "u_t = u_xx + u_yy" : "y' = -2y",
-          wide: true
-        });
-        this.formText(grid, "Solution", getUserFunction(this.spec), (value) => {
+        this.formPrimaryText(grid, "Solution", getUserFunction(this.spec), (value) => {
           setUserFunction(this.spec, value);
-        }, {
-          placeholder: placeholderForGraphType(this.spec.type),
-          wide: true
-        });
+        }, placeholderForGraphType(this.spec.type));
+        this.formText(grid, "Equation label", (_e = this.spec.equation) != null ? _e : "", (value) => {
+          this.spec.equation = value;
+        }, { wide: true });
         if (this.spec.type === "pde") {
-          this.formSelect(grid, "View", (_g = this.spec.view) != null ? _g : "3d", [
+          this.formSelect(grid, "View", (_f = this.spec.view) != null ? _f : "3d", [
             { value: "2d", label: "2D curve / slice" },
             { value: "3d", label: "3D surface" }
           ], (value) => {
@@ -5032,23 +6043,28 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
             this.renderForm();
           });
         }
-        this.renderParametersBlock(grid);
         panel.createEl("p", {
           cls: "mathgraph-equation-tab-note",
           text: "ODE/PDE modes plot explicit solutions."
         });
         break;
       case "data":
-        this.formTextArea(grid, "Data points", ((_h = this.spec.data) != null ? _h : []).map((row) => `${row.x}, ${row.y}`).join("\n"), (raw) => {
+        this.formTextArea(grid, "Data points", ((_g = this.spec.data) != null ? _g : []).map((row) => `${row.x}, ${row.y}`).join("\n"), (raw) => {
           this.spec.data = raw.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
             const [x, y] = line.split(",").map((part) => part.trim());
             return { x: x != null ? x : "0", y: y != null ? y : "0" };
           });
-        }, {
-          placeholder: "0, 0\n1, 1\n2, 4",
-          wide: true
-        });
+        }, { withTypeChip: true });
         break;
+    }
+    this.formText(grid, "Title", (_h = this.spec.title) != null ? _h : "", (value) => {
+      this.spec.title = value;
+    }, {
+      placeholder: "Optional graph title",
+      wide: true
+    });
+    if (this.spec.type !== "data") {
+      this.renderParametersBlock(grid);
     }
   }
   renderParametersBlock(parent) {
@@ -5057,13 +6073,8 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
     block.createEl("label", { cls: "mathgraph-field-label", text: "Parameters" });
     const list = block.createDiv({ cls: "mathgraph-param-list" });
     const params = (_a = this.spec.parameters) != null ? _a : {};
-    const entries = Object.entries(params);
-    if (entries.length === 0) {
-      this.addParameterRow(list, "t", "0");
-    } else {
-      for (const [name, value] of entries) {
-        this.addParameterRow(list, name, value);
-      }
+    for (const [name, value] of Object.entries(params)) {
+      this.addParameterRow(list, name, value);
     }
     block.createEl("button", {
       type: "button",
@@ -5115,9 +6126,9 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
     });
     this.spec.parameters = params;
   }
-  renderRangesPanel(panel) {
+  renderRangesSection(panel) {
     var _a, _b, _c;
-    const container = panel.createDiv({ cls: "mathgraph-ranges-panel" });
+    const line = panel.createDiv({ cls: "mathgraph-ranges-line" });
     const ranges = (_a = this.spec.ranges) != null ? _a : {};
     const type = this.spec.type;
     const is3dView = this.spec.view === "3d";
@@ -5126,7 +6137,7 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
     const addRange = (key, label) => {
       var _a2;
       const current = (_a2 = ranges[key]) != null ? _a2 : ["", ""];
-      this.formRangeRow(container, label, current, (min, max) => {
+      this.rangeInline(line, label, current, (min, max) => {
         var _a3;
         this.spec.ranges = (_a3 = this.spec.ranges) != null ? _a3 : {};
         this.spec.ranges[key] = [min, max];
@@ -5146,21 +6157,18 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
         addRange("z", "z");
       }
     }
-    const samplesRow = container.createDiv({
-      cls: `mathgraph-samples-row${showSamplesY ? "" : " mathgraph-samples-row-2d"}`
-    });
-    this.formSampleField(samplesRow, "Samples", String((_b = this.spec.samples) != null ? _b : 100), (value) => {
+    this.sampleInline(line, "Samples", String((_b = this.spec.samples) != null ? _b : 100), (value) => {
       const parsed = Number.parseInt(value, 10);
       this.spec.samples = Number.isFinite(parsed) ? parsed : 100;
     });
     if (showSamplesY) {
-      this.formSampleField(samplesRow, "Samples Y", String((_c = this.spec.samplesY) != null ? _c : 35), (value) => {
+      this.sampleInline(line, "Samples Y", String((_c = this.spec.samplesY) != null ? _c : 35), (value) => {
         const parsed = Number.parseInt(value, 10);
         this.spec.samplesY = Number.isFinite(parsed) ? parsed : 35;
       });
     }
   }
-  renderStylePanel(panel) {
+  renderStyleSection(panel) {
     var _a, _b, _c, _d, _e, _f;
     const grid = this.formGrid(panel);
     const style = (_a = this.spec.style) != null ? _a : {};
@@ -5197,36 +6205,55 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
       this.spec.style = (_a2 = this.spec.style) != null ? _a2 : {};
       this.spec.style.width = value;
     }, { placeholder: "1pt" });
+    const appearanceLine = panel.createDiv({ cls: "mathgraph-ranges-line mathgraph-axis-labels-line" });
+    this.numberStepper(appearanceLine, "Axis width", resolveAxisLineWidth(this.spec), 0.2, (next) => {
+      var _a2;
+      this.spec.style = (_a2 = this.spec.style) != null ? _a2 : {};
+      this.spec.style.axisWidth = clampAxisLineWidth(next);
+      return this.spec.style.axisWidth;
+    });
+    this.numberStepper(appearanceLine, "Text size", resolveLabelFontSize(this.spec), 1, (next) => {
+      var _a2;
+      this.spec.style = (_a2 = this.spec.style) != null ? _a2 : {};
+      this.spec.style.labelFontSize = clampLabelFontSize(next);
+      return this.spec.style.labelFontSize;
+    });
     const labels = (_e = this.spec.labels) != null ? _e : {};
+    const labelsLine = panel.createDiv({ cls: "mathgraph-ranges-line mathgraph-axis-labels-line" });
+    labelsLine.createSpan({ cls: "mathgraph-range-inline-label mathgraph-line-caption", text: "Axis labels" });
     for (const axis of ["x", "y", "z"]) {
-      if (axis === "z" && this.spec.type === "function2d") {
+      if (axis === "z" && !graphUses3dPoints(this.spec)) {
         continue;
       }
-      this.formText(grid, `${axis}-axis label`, (_f = labels[axis]) != null ? _f : axis, (value) => {
+      const group = labelsLine.createDiv({ cls: "mathgraph-range-inline" });
+      group.createSpan({ cls: "mathgraph-range-inline-label", text: axis });
+      const input = group.createEl("input", {
+        type: "text",
+        cls: "mathgraph-input mathgraph-range-inline-input",
+        value: (_f = labels[axis]) != null ? _f : axis
+      });
+      input.addEventListener("input", () => {
         var _a2;
         this.spec.labels = (_a2 = this.spec.labels) != null ? _a2 : {};
-        this.spec.labels[axis] = value;
+        this.spec.labels[axis] = input.value;
       });
     }
   }
-  renderSizePanel(panel) {
-    var _a, _b, _c, _d, _e;
+  renderSizeSection(panel) {
+    var _a, _b, _c, _d;
     const grid = this.formGrid(panel);
     grid.addClass("mathgraph-size-section");
     const size = ensureGraphSize(this.spec);
     this.formSelect(grid, "LaTeX size preset", size.preset, Object.entries(GRAPH_SIZE_PRESET_LABELS).map(([value, label]) => ({ value, label })), (value) => {
       this.spec.size = applyPresetToGraphSize(value, this.spec.size, this.spec);
       this.renderForm();
-      this.switchTab("size");
-    }, {
-      wide: true
     });
     if (graphUses2dAspectRatio(this.spec)) {
       this.formSelect(grid, "Aspect", (_a = size.aspectMode) != null ? _a : "auto", Object.entries(ASPECT_MODE_LABELS).map(([value, label]) => ({ value, label })), (value) => {
         this.spec.size = __spreadProps(__spreadValues({}, ensureGraphSize(this.spec)), {
           aspectMode: value
         });
-      }, { wide: true });
+      });
     }
     if (size.preset === "custom") {
       this.formText(grid, "Width", (_b = size.width) != null ? _b : "", (value) => {
@@ -5242,50 +6269,62 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
         });
       }, { placeholder: "10cm" });
     }
-    const scaleRow = grid.createDiv({ cls: "mathgraph-form-row mathgraph-form-row-wide" });
+    const scaleRow = grid.createDiv({ cls: "mathgraph-form-row" });
     scaleRow.createEl("label", { cls: "mathgraph-field-label", text: "Display scale" });
-    const scaleField = scaleRow.createDiv({ cls: "mathgraph-field mathgraph-size-scale-field" });
-    const scaleValue = scaleField.createSpan({
-      cls: "mathgraph-size-scale-value",
-      text: formatDisplayScaleLabel((_d = size.displayScale) != null ? _d : 1)
+    const scaleField = scaleRow.createDiv({ cls: "mathgraph-field" });
+    const stepper = scaleField.createDiv({ cls: "mathgraph-stepper" });
+    const minusBtn = stepper.createEl("button", {
+      type: "button",
+      cls: "mathgraph-stepper-btn",
+      text: "\u2212",
+      attr: { "aria-label": "Decrease display scale" }
     });
-    const scaleInput = scaleField.createEl("input", {
-      type: "range",
-      cls: "mathgraph-size-slider"
+    const valueInput = stepper.createEl("input", {
+      type: "text",
+      cls: "mathgraph-input mathgraph-stepper-value",
+      value: formatDisplayScaleLabel((_d = size.displayScale) != null ? _d : 1)
     });
-    scaleInput.min = String(DISPLAY_SCALE_MIN);
-    scaleInput.max = String(DISPLAY_SCALE_MAX);
-    scaleInput.step = String(DISPLAY_SCALE_STEP);
-    scaleInput.value = String(clampDisplayScale((_e = size.displayScale) != null ? _e : 1));
-    scaleInput.addEventListener("input", () => {
-      const next = clampDisplayScale(Number.parseFloat(scaleInput.value));
-      scaleValue.setText(formatDisplayScaleLabel(next));
+    const plusBtn = stepper.createEl("button", {
+      type: "button",
+      cls: "mathgraph-stepper-btn",
+      text: "+",
+      attr: { "aria-label": "Increase display scale" }
+    });
+    const setScale = (next) => {
+      const clamped = clampDisplayScale(next);
+      valueInput.value = formatDisplayScaleLabel(clamped);
       this.spec.size = __spreadProps(__spreadValues({}, ensureGraphSize(this.spec)), {
-        displayScale: next
+        displayScale: clamped
       });
+    };
+    minusBtn.addEventListener("click", () => {
+      var _a2;
+      setScale(clampDisplayScale((_a2 = ensureGraphSize(this.spec).displayScale) != null ? _a2 : 1) - DISPLAY_SCALE_STEP);
+    });
+    plusBtn.addEventListener("click", () => {
+      var _a2;
+      setScale(clampDisplayScale((_a2 = ensureGraphSize(this.spec).displayScale) != null ? _a2 : 1) + DISPLAY_SCALE_STEP);
+    });
+    valueInput.addEventListener("change", () => {
+      var _a2;
+      const pct = Number.parseFloat(valueInput.value.replace("%", "").trim());
+      if (Number.isFinite(pct) && pct > 0) {
+        setScale(pct / 100);
+      } else {
+        valueInput.value = formatDisplayScaleLabel((_a2 = ensureGraphSize(this.spec).displayScale) != null ? _a2 : 1);
+      }
     });
   }
-  renderPointsPanel(panel) {
+  renderPointsSection(panel) {
     var _a;
-    if (this.spec.type === "data") {
-      panel.createEl("p", {
-        cls: "mathgraph-field-help",
-        text: "Data plots use the Equation tab for point values."
-      });
-      return;
-    }
     const is3d = graphUses3dPoints(this.spec);
     const autoY = graphSupportsAutoComputeY(this.spec);
     const autoZ = graphSupportsAutoComputeZ(this.spec);
     const list = panel.createDiv({ cls: "mathgraph-point-list" });
     const points = (_a = this.spec.points) != null ? _a : [];
     const emptyPoint = is3d ? { x: "", y: "", z: "", label: "" } : { x: "", y: autoY ? "" : "", label: "" };
-    if (points.length === 0) {
-      this.addPointRow(list, emptyPoint, is3d, autoY, autoZ);
-    } else {
-      for (const point of points) {
-        this.addPointRow(list, point, is3d, autoY, autoZ);
-      }
+    for (const point of points) {
+      this.addPointRow(list, point, is3d, autoY, autoZ);
     }
     panel.createEl("button", {
       type: "button",
@@ -5384,14 +6423,15 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
     const points = [];
     const autoY = graphSupportsAutoComputeY(this.spec);
     const autoZ = graphSupportsAutoComputeZ(this.spec);
-    rows.forEach((row) => {
-      var _a, _b, _c, _d, _e, _f, _g;
-      const inputs = row.querySelectorAll("input");
+    rows.forEach((row, rowIndex) => {
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+      const inputs = row.querySelectorAll('input[type="text"]');
       const x = (_b = (_a = inputs[0]) == null ? void 0 : _a.value.trim()) != null ? _b : "";
       const y = (_d = (_c = inputs[1]) == null ? void 0 : _c.value.trim()) != null ? _d : "";
       const z = is3d ? (_f = (_e = inputs[2]) == null ? void 0 : _e.value.trim()) != null ? _f : "" : void 0;
       const labelIndex = is3d ? 3 : 2;
       const label = (_g = inputs[labelIndex]) == null ? void 0 : _g.value.trim();
+      const showValue = (_i = (_h = this.spec.points) == null ? void 0 : _h[rowIndex]) == null ? void 0 : _i.showValue;
       if (!x) {
         return;
       }
@@ -5406,7 +6446,8 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
       }
       const entry = {
         x,
-        label: label || void 0
+        label: label || void 0,
+        showValue: showValue || void 0
       };
       if (autoY) {
         entry.y = y;
@@ -5422,19 +6463,19 @@ var GraphBuilderModal = class extends import_obsidian4.Modal {
   }
   submit() {
     return __async(this, null, function* () {
-      var _a, _b;
-      const paramList = (_a = this.panels.get("equation")) == null ? void 0 : _a.querySelector(".mathgraph-param-list");
+      var _a, _b, _c;
+      const paramList = (_a = this.sections.get("equation")) == null ? void 0 : _a.querySelector(".mathgraph-param-list");
       if (isHTMLElement(paramList)) {
         this.syncParametersFromDom(paramList);
       }
-      const pointList = (_b = this.panels.get("points")) == null ? void 0 : _b.querySelector(".mathgraph-point-list");
+      const pointList = (_b = this.sections.get("points")) == null ? void 0 : _b.querySelector(".mathgraph-point-list");
       if (isHTMLElement(pointList)) {
         this.syncPointsFromDom(pointList);
       }
       const sizeError = validateGraphSize(ensureGraphSize(this.spec));
       if (sizeError) {
         new import_obsidian4.Notice(sizeError);
-        this.switchTab("size");
+        (_c = this.sections.get("size")) == null ? void 0 : _c.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
       try {
@@ -5484,11 +6525,11 @@ function defaultInlineFields(type = "function2d") {
         type,
         sizePreset: "large",
         expression: FUNCTION_PLACEHOLDER_2D,
-        title: "Function Graph",
-        xMin: "-2*pi",
-        xMax: "2*pi",
-        yMin: "-1.5",
-        yMax: "1.5",
+        title: "",
+        xMin: "",
+        xMax: "",
+        yMin: "",
+        yMax: "",
         zMin: "",
         zMax: "",
         paramT: "",
@@ -5499,13 +6540,13 @@ function defaultInlineFields(type = "function2d") {
         type,
         sizePreset: "large",
         expression: FUNCTION_PLACEHOLDER_3D,
-        title: "3D Surface",
-        xMin: "-pi",
-        xMax: "pi",
-        yMin: "-pi",
-        yMax: "pi",
-        zMin: "-1",
-        zMax: "1",
+        title: "",
+        xMin: "",
+        xMax: "",
+        yMin: "",
+        yMax: "",
+        zMin: "",
+        zMax: "",
         paramT: "",
         grid: true
       };
@@ -5514,11 +6555,11 @@ function defaultInlineFields(type = "function2d") {
         type,
         sizePreset: "large",
         expression: FUNCTION_PLACEHOLDER_ODE,
-        title: "ODE Solution",
-        xMin: "-2",
-        xMax: "2",
-        yMin: "-1",
-        yMax: "5",
+        title: "",
+        xMin: "",
+        xMax: "",
+        yMin: "",
+        yMax: "",
         zMin: "",
         zMax: "",
         paramT: "",
@@ -5529,14 +6570,14 @@ function defaultInlineFields(type = "function2d") {
         type,
         sizePreset: "large",
         expression: FUNCTION_PLACEHOLDER_PDE,
-        title: "PDE Solution Surface",
-        xMin: "0",
-        xMax: "2*pi",
-        yMin: "0",
-        yMax: "2*pi",
-        zMin: "-1",
-        zMax: "1",
-        paramT: "0.25",
+        title: "",
+        xMin: "",
+        xMax: "",
+        yMin: "",
+        yMax: "",
+        zMin: "",
+        zMax: "",
+        paramT: "",
         grid: true
       };
   }
@@ -5583,7 +6624,7 @@ function specFromInlineFields(fields) {
       setUserFunction(base, fields.expression);
       return __spreadProps(__spreadValues({}, base), {
         type: "pde",
-        equation: "u_t = u_xx + u_yy",
+        equation: "",
         view: "3d",
         parameters: fields.paramT.trim() ? { t: fields.paramT.trim() } : {},
         ranges: {
@@ -5830,7 +6871,7 @@ function validatePgfCompatibility(expr, mode, odeSolution = false) {
   }
 }
 function normalizeFunctionExpression(raw, mode, odeSolution = false) {
-  const body = raw.trim();
+  const body = normalizeFrontendMath(raw, { substituteParameters: false }).trim();
   if (!body) {
     throw new GraphSyntaxError("Function body is empty.", "Enter an expression such as x^2 or y = sin(x).");
   }
@@ -6003,13 +7044,7 @@ var PLOT_RESERVED_NAMES = new Set([
   "ln"
 ]);
 function normalizePgfMath(expr) {
-  let result = expr;
-  let prev = "";
-  while (result !== prev) {
-    prev = result;
-    result = result.replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, "(($1)/($2))");
-  }
-  return result.replace(/\\sin\b/g, "sin").replace(/\\cos\b/g, "cos").replace(/\\tan\b/g, "tan").replace(/\\exp\b/g, "exp").replace(/\\log\b/g, "log").replace(/\\sqrt\b/g, "sqrt").replace(/\\abs\b/g, "abs").replace(/\\pi\b/g, "pi");
+  return normalizeFrontendMath(expr, { substituteParameters: false });
 }
 function substituteParameters(expr, parameters) {
   let result = expr;
@@ -6064,6 +7099,36 @@ function evaluatePlotExpr(expr, variable, value, trigDegrees = false) {
     return null;
   }
 }
+function octaveToSafeSyntax(compiled) {
+  return compiled.replace(/\.\^/g, "^").replace(/\.\*/g, "*").replace(/\.\//g, "/");
+}
+function compileNumericPlotEvaluator(rawExpr, variable, parameters = {}, trigDegrees = false) {
+  try {
+    const compiled = compileExpressionForOctave(rawExpr, {
+      variables: ["x", "y", "z", "t", "r"],
+      parameters
+    });
+    const safeExpr = octaveToSafeSyntax(compiled);
+    const paramNames = Object.keys(parameters);
+    const evaluate = compileSafeMathExpression(safeExpr, ["x", "y", "z", "t", "r", ...paramNames], { trigDegrees });
+    const paramScope = {};
+    for (const [name, value] of Object.entries(parameters)) {
+      try {
+        const numeric = evaluateSafeMathExpression(normalizeFrontendMath(value), {}, []);
+        if (Number.isFinite(numeric)) {
+          paramScope[name] = numeric;
+        }
+      } catch (e) {
+      }
+    }
+    return (value) => {
+      const result = evaluate(__spreadProps(__spreadValues({}, paramScope), { [variable]: value }));
+      return Number.isFinite(result) ? result : null;
+    };
+  } catch (e) {
+    return null;
+  }
+}
 function isNearInteger(value, tolerance = 0.01) {
   return Math.abs(value - Math.round(value)) <= tolerance;
 }
@@ -6114,15 +7179,20 @@ function sampleRange(range, samples) {
   }
   return values;
 }
-function estimateParametricCartesianRange(xExpr, yExpr, tRange, trigDegrees = false, samples = 64) {
+function estimateParametricCartesianRange(xExpr, yExpr, tRange, trigDegrees = false, samples = 64, parameters = {}) {
+  const evaluateX = compileNumericPlotEvaluator(xExpr, "x", parameters, trigDegrees);
+  const evaluateY = compileNumericPlotEvaluator(yExpr, "x", parameters, trigDegrees);
+  if (!evaluateX || !evaluateY) {
+    return null;
+  }
   let xmin = Number.POSITIVE_INFINITY;
   let xmax = Number.NEGATIVE_INFINITY;
   let ymin = Number.POSITIVE_INFINITY;
   let ymax = Number.NEGATIVE_INFINITY;
   let valid = 0;
   for (const t of sampleRange(tRange, samples)) {
-    const x = evaluatePlotExpr(xExpr, "x", t, trigDegrees);
-    const y = evaluatePlotExpr(yExpr, "x", t, trigDegrees);
+    const x = evaluateX(t);
+    const y = evaluateY(t);
     if (x === null || y === null) {
       continue;
     }
@@ -6140,15 +7210,20 @@ function estimateParametricCartesianRange(xExpr, yExpr, tRange, trigDegrees = fa
     y: padNumericRange(ymin, ymax)
   };
 }
-function estimatePolarCartesianRange(radiusExpr, angleExpr, tRange, trigDegrees = false, samples = 64) {
+function estimatePolarCartesianRange(radiusExpr, angleExpr, tRange, trigDegrees = false, samples = 64, parameters = {}) {
+  const evaluateRadius = compileNumericPlotEvaluator(radiusExpr, "x", parameters, trigDegrees);
+  const evaluateAngle = compileNumericPlotEvaluator(angleExpr, "x", parameters, trigDegrees);
+  if (!evaluateRadius || !evaluateAngle) {
+    return null;
+  }
   let xmin = Number.POSITIVE_INFINITY;
   let xmax = Number.NEGATIVE_INFINITY;
   let ymin = Number.POSITIVE_INFINITY;
   let ymax = Number.NEGATIVE_INFINITY;
   let valid = 0;
   for (const t of sampleRange(tRange, samples)) {
-    const radius = evaluatePlotExpr(radiusExpr, "x", t, trigDegrees);
-    const angle = evaluatePlotExpr(angleExpr, "x", t, trigDegrees);
+    const radius = evaluateRadius(t);
+    const angle = evaluateAngle(t);
     if (radius === null || angle === null) {
       continue;
     }
@@ -6169,14 +7244,18 @@ function estimatePolarCartesianRange(radiusExpr, angleExpr, tRange, trigDegrees 
     y: padNumericRange(ymin, ymax)
   };
 }
-function estimateExplicitYRange(pgfExpr, xRange, trigDegrees = false, samples = 48) {
+function estimateExplicitYRange(rawExpr, xRange, trigDegrees = false, samples = 48, parameters = {}) {
+  const evaluate = compileNumericPlotEvaluator(rawExpr, "x", parameters, trigDegrees);
+  if (!evaluate) {
+    return null;
+  }
   let ymin = Number.POSITIVE_INFINITY;
   let ymax = Number.NEGATIVE_INFINITY;
   let valid = 0;
   for (let i = 0; i <= samples; i++) {
     const t = i / samples;
     const x = xRange.min + t * (xRange.max - xRange.min);
-    const y = evaluatePlotExpr(pgfExpr, "x", x, trigDegrees);
+    const y = evaluate(x);
     if (y === null) {
       continue;
     }
@@ -6195,7 +7274,7 @@ function splitAxisArgList(sizeArg) {
   return sizeArg.split(",").map((part) => part.trim()).filter(Boolean);
 }
 function parseInequality(body) {
-  const trimmed = body.trim();
+  const trimmed = body.trim().replace(/\\leq?\b/g, "<=").replace(/\\geq?\b/g, ">=").replace(/≤/g, "<=").replace(/≥/g, ">=");
   const match = trimmed.match(/^(.+?)\s*(<=|>=|<|>)\s*(.+)$/);
   if (!match) {
     return null;
@@ -6254,8 +7333,11 @@ function sampleRange2(range, samples) {
   return values;
 }
 function compileExplicit(expr) {
-  const normalized = normalizePgfMath(expr);
-  return (x) => evaluatePlotExpr(normalized, "x", x, false);
+  const compiled = compileNumericPlotEvaluator(expr, "x");
+  if (compiled) {
+    return compiled;
+  }
+  return (x) => evaluatePlotExpr(expr, "x", x, false);
 }
 function findRootsNumeric(expr, domain, samples = 400) {
   const fn = compileExplicit(expr);
@@ -6420,7 +7502,7 @@ function ellipseFromRadii(a, b, filled) {
   };
 }
 function tryImplicitFallback(rawExpr, filled = false) {
-  const expr = normalizePgfMath(rawExpr.trim());
+  const expr = normalizeFrontendMath(rawExpr.trim(), { substituteParameters: false });
   const simpleCircle = SIMPLE_CIRCLE.exec(expr);
   if (simpleCircle) {
     const r2 = parseNumeric(simpleCircle[1]);
@@ -6534,19 +7616,26 @@ function parseOdeExpression(body, solutionMode) {
   };
 }
 function prepareSafeOdeExpr(expr) {
-  return normalizePgfMath(expr).replace(/y\s*''/gi, "0").replace(/y\s*'(?![a-zA-Z])/gi, "yp").replace(/\^/g, "^");
+  return normalizeFrontendMath(expr, { substituteParameters: false }).replace(/y\s*''/gi, "0").replace(/y\s*'(?![a-zA-Z])/gi, "yp");
+}
+function compileOdeEvaluator(expr) {
+  const normalized = prepareSafeOdeExpr(expr);
+  try {
+    const compiled = compileExpressionForOctave(normalized, { variables: ["x", "y", "yp"] }).replace(/\.\^/g, "^").replace(/\.\*/g, "*").replace(/\.\//g, "/");
+    return compileSafeMathExpression(compiled, ["x", "y", "yp"]);
+  } catch (e) {
+    return compileSafeMathExpression(normalized, ["x", "y", "yp"]);
+  }
 }
 function compileFirstOrderRhs(expr) {
-  const normalized = prepareSafeOdeExpr(expr);
-  const evaluate = compileSafeMathExpression(normalized, ["x", "y", "yp"]);
+  const evaluate = compileOdeEvaluator(expr);
   return (x, y) => {
     const result = evaluate({ x, y, yp: 0 });
     return Number.isFinite(result) ? result : Number.NaN;
   };
 }
 function compileSecondOrderRhs(expr) {
-  const normalized = prepareSafeOdeExpr(expr);
-  const evaluate = compileSafeMathExpression(normalized, ["x", "y", "yp"]);
+  const evaluate = compileOdeEvaluator(expr);
   return (x, y, ypVal) => {
     const result = evaluate({ x, y, yp: ypVal });
     return Number.isFinite(result) ? result : Number.NaN;
@@ -6760,12 +7849,20 @@ function pgfplotsTextSafeTickOptions() {
 function joinOptions2(options) {
   return options.filter(Boolean).join(", ");
 }
-function pgfplotsThemeAxisStyleOptions() {
+function limitOption(name, value) {
+  var _a;
+  const trimmed = (_a = value == null ? void 0 : value.trim()) != null ? _a : "";
+  return trimmed ? `${name}=${trimmed}` : "";
+}
+function pgfplotsThemeAxisStyleOptions(spec) {
+  const axisWidth = Number.parseFloat(resolveAxisLineWidth(spec).toFixed(2));
+  const labelFont = latexLabelFontCommand(resolveLabelFontSize(spec));
   return joinOptions2([
-    "axis line style={mathgraphAxis}",
+    `axis line style={mathgraphAxis, line width=${axisWidth}pt}`,
     "tick style={mathgraphAxis}",
     "tick label style={color=mathgraphAxis, font=\\small}",
-    "label style={color=mathgraphAxis, font=\\small}",
+    `label style={color=mathgraphAxis, font=${labelFont}}`,
+    `title style={font=${labelFont}}`,
     "grid style={mathgraphGrid}"
   ]);
 }
@@ -6775,28 +7872,29 @@ function pgfplots3dAxisOptions(spec) {
   const { width, height } = resolveLatexGraphDimensions(spec);
   const xRange = (_b = spec.ranges) == null ? void 0 : _b.x;
   const yRange = (_c = spec.ranges) == null ? void 0 : _c.y;
+  const rotation = resolveGraphRotation(spec);
   return joinOptions2([
-    "view={45}{28}",
+    `view={${rotation.azimuth}}{${rotation.elevation}}`,
     "axis lines=box",
-    labels.x ? `xlabel={${labels.x}}` : "xlabel={$x$}",
-    labels.y ? `ylabel={${labels.y}}` : "ylabel={$y$}",
-    labels.z ? `zlabel={${labels.z}}` : "zlabel={$z$}",
+    labels.x ? `xlabel={${formatLatexLabel(labels.x)}}` : "xlabel={$x$}",
+    labels.y ? `ylabel={${formatLatexLabel(labels.y)}}` : "ylabel={$y$}",
+    labels.z ? `zlabel={${formatLatexLabel(labels.z)}}` : "zlabel={$z$}",
     "xlabel style={at={(axis description cs:1.05,0.05)},anchor=west}",
     "ylabel style={at={(axis description cs:0.05,1.05)},anchor=south}",
     "zlabel style={at={(axis description cs:0.5,1.08)},anchor=south}",
     "tick align=outside",
-    pgfplotsThemeAxisStyleOptions(),
+    pgfplotsThemeAxisStyleOptions(spec),
     pgfplotsTextSafeTickOptions(),
     "grid=none",
     "enlargelimits=false",
     "axis background/.style={fill=none}",
     `width=${width}`,
     `height=${height}`,
-    ((_d = spec.title) == null ? void 0 : _d.trim()) ? `title={${spec.title.trim()}}` : "",
-    xRange ? `xmin=${xRange[0]}` : "",
-    xRange ? `xmax=${xRange[1]}` : "",
-    yRange ? `ymin=${yRange[0]}` : "",
-    yRange ? `ymax=${yRange[1]}` : ""
+    ((_d = spec.title) == null ? void 0 : _d.trim()) ? `title={${formatLatexLabel(spec.title)}}` : "",
+    xRange ? limitOption("xmin", xRange[0]) : "",
+    xRange ? limitOption("xmax", xRange[1]) : "",
+    yRange ? limitOption("ymin", yRange[0]) : "",
+    yRange ? limitOption("ymax", yRange[1]) : ""
   ]);
 }
 function pgfplots3dAxisCoreOptions() {
@@ -6862,7 +7960,14 @@ function findNextGraphCommand(text, start) {
   };
 }
 function parseCoordinatePair(content) {
-  const trimmed = content.trim().replace(/^\(\s*|\s*\)$/g, "").trim();
+  const matrixMatch = content.trim().match(/^\\begin\{([pbBvV]?matrix)\}([\s\S]*?)\\end\{\1\}$/);
+  if (matrixMatch) {
+    const rows = matrixMatch[2].split(/\\\\/).map((part) => part.trim()).filter(Boolean);
+    if (rows.length === 2 && rows.every((row) => !row.includes("&"))) {
+      return { x: rows[0], y: rows[1] };
+    }
+  }
+  const trimmed = content.trim().replace(/^\\langle\s*/, "").replace(/\s*\\rangle$/, "").replace(/^\(\s*|\s*\)$/g, "").trim();
   if (!trimmed) {
     return null;
   }
@@ -7694,7 +8799,7 @@ function convertFunctionToPlot(options, expression, parameters = [], plotIndex, 
       ["domain", "0:360"],
       ["samples", "200"]
     ], ["parametric"]);
-    const cartesianEstimate = tRange ? estimateParametricCartesianRange(xExpr, yExpr, tRange, trigDegrees2) : { x: { min: -1.2, max: 1.2 }, y: { min: -1.2, max: 1.2 } };
+    const cartesianEstimate = tRange ? estimateParametricCartesianRange(xExpr, yExpr, tRange, trigDegrees2, 64, graphParametersToRecord(parameters)) : { x: { min: -1.2, max: 1.2 }, y: { min: -1.2, max: 1.2 } };
     return {
       line: `\\addplot[${finalOpts}] ({${xPlot}}, {${yPlot}});`,
       limits: plotLimitsFromUserOptions(opts, finalOpts, "parametric", cartesianEstimate),
@@ -7721,7 +8826,7 @@ function convertFunctionToPlot(options, expression, parameters = [], plotIndex, 
       ["domain", "0:360"],
       ["samples", "200"]
     ], ["data cs=polar"]);
-    const cartesianEstimate = tRange ? estimatePolarCartesianRange(radiusExpr, angleExpr, tRange, trigDegrees2) : { x: { min: -1.2, max: 1.2 }, y: { min: -1.2, max: 1.2 } };
+    const cartesianEstimate = tRange ? estimatePolarCartesianRange(radiusExpr, angleExpr, tRange, trigDegrees2, 64, graphParametersToRecord(parameters)) : { x: { min: -1.2, max: 1.2 }, y: { min: -1.2, max: 1.2 } };
     const angleIsParameter = /^x$/i.test(anglePlot);
     const plotCoords = angleIsParameter ? `(x, {${radiusPlot}})` : `({${anglePlot}}, {${radiusPlot}})`;
     return {
@@ -7741,7 +8846,7 @@ function convertFunctionToPlot(options, expression, parameters = [], plotIndex, 
   const finalAddplotOpts = trigDegrees ? mergePlotOptions(addplotOpts, [], [...trigPlotOptions(true), ...plotColorOpts]) : mergePlotOptions(addplotOpts, [], plotColorOpts);
   const limits = plotLimitsFromUserOptions(opts, finalAddplotOpts);
   if (limits.x && !limits.y) {
-    const yEstimate = estimateExplicitYRange(expr, limits.x, trigDegrees);
+    const yEstimate = estimateExplicitYRange(rawExpr, limits.x, trigDegrees, 48, graphParametersToRecord(parameters));
     if (yEstimate) {
       limits.y = yEstimate;
     }
@@ -8065,13 +9170,18 @@ function csvPreviewLines(content, maxLines = 10) {
 function joinOptions3(options) {
   return options.filter(Boolean).join(", ");
 }
+function limitOption2(name, value) {
+  var _a;
+  const trimmed = (_a = value == null ? void 0 : value.trim()) != null ? _a : "";
+  return trimmed ? `${name}=${trimmed}` : "";
+}
 function axisOptions(spec, view3d) {
   var _a, _b, _c, _d, _e;
   if (view3d) {
     const opts = pgfplots3dAxisOptions(spec);
     const zRange = (_a = spec.ranges) == null ? void 0 : _a.z;
     if (zRange) {
-      return joinOptions3([opts, `zmin=${zRange[0]}`, `zmax=${zRange[1]}`]);
+      return joinOptions3([opts, limitOption2("zmin", zRange[0]), limitOption2("zmax", zRange[1])]);
     }
     return opts;
   }
@@ -8083,19 +9193,19 @@ function axisOptions(spec, view3d) {
     gridAxisOption(spec),
     "axis lines=middle",
     "axis background/.style={fill=none}",
-    pgfplotsThemeAxisStyleOptions(),
+    pgfplotsThemeAxisStyleOptions(spec),
     pgfplotsTextSafeTickOptions(),
     `width=${width}`,
     `height=${height}`,
-    labels.x ? `xlabel={${labels.x}}` : "",
-    labels.y ? `ylabel={${labels.y}}` : "",
-    ((_e = spec.title) == null ? void 0 : _e.trim()) ? `title={${spec.title.trim()}}` : ""
+    labels.x ? `xlabel={${formatLatexLabel(labels.x)}}` : "",
+    labels.y ? `ylabel={${formatLatexLabel(labels.y)}}` : "",
+    ((_e = spec.title) == null ? void 0 : _e.trim()) ? `title={${formatLatexLabel(spec.title)}}` : ""
   ];
   if (xRange) {
-    parts.push(`xmin=${xRange[0]}`, `xmax=${xRange[1]}`);
+    parts.push(limitOption2("xmin", xRange[0]), limitOption2("xmax", xRange[1]));
   }
   if (yRange) {
-    parts.push(`ymin=${yRange[0]}`, `ymax=${yRange[1]}`);
+    parts.push(limitOption2("ymin", yRange[0]), limitOption2("ymax", yRange[1]));
   }
   return joinOptions3(parts);
 }
@@ -8484,7 +9594,12 @@ function rangeToDomain(range) {
   if (!range || range.length !== 2) {
     return void 0;
   }
-  return `${range[0].trim()}:${range[1].trim()}`;
+  const min = range[0].trim();
+  const max = range[1].trim();
+  if (!min || !max) {
+    return void 0;
+  }
+  return `${min}:${max}`;
 }
 function joinOptions4(options) {
   return options.filter(Boolean).join(", ");
@@ -8538,16 +9653,16 @@ function buildAxisBracketOptions(spec) {
   const labels = (_a = spec.labels) != null ? _a : {};
   const parts = [];
   if (labels.x) {
-    parts.push(`xlabel={${labels.x}}`);
+    parts.push(`xlabel={${formatLatexLabel(labels.x)}}`);
   }
   if (labels.y) {
-    parts.push(`ylabel={${labels.y}}`);
+    parts.push(`ylabel={${formatLatexLabel(labels.y)}}`);
   }
   if (labels.z) {
-    parts.push(`zlabel={${labels.z}}`);
+    parts.push(`zlabel={${formatLatexLabel(labels.z)}}`);
   }
   if ((_b = spec.title) == null ? void 0 : _b.trim()) {
-    parts.push(`title={${spec.title.trim()}}`);
+    parts.push(`title={${formatLatexLabel(spec.title)}}`);
   }
   return joinOptions4(parts);
 }
@@ -8825,6 +9940,90 @@ function svgToPng(svgText, doc) {
     }
   });
 }
+function lineColumnFromOffset(source, offset) {
+  var _a, _b;
+  const safeOffset = Math.max(0, Math.min(offset, source.length));
+  const before = source.slice(0, safeOffset);
+  const parts = before.split("\n");
+  return {
+    line: parts.length,
+    column: ((_b = (_a = parts.at(-1)) == null ? void 0 : _a.length) != null ? _b : 0) + 1
+  };
+}
+function inferGraphErrorLocation(source, parts, lineHint) {
+  for (const part of parts) {
+    if (!part) {
+      continue;
+    }
+    const lineColumn = /line\s+(\d+)(?:\s+column\s+(\d+))?/i.exec(part);
+    if (lineColumn) {
+      return {
+        line: Number.parseInt(lineColumn[1], 10),
+        column: lineColumn[2] ? Number.parseInt(lineColumn[2], 10) : void 0
+      };
+    }
+    const offsetMatch = /position\s+(\d+)/i.exec(part);
+    if (offsetMatch) {
+      return lineColumnFromOffset(source, Number.parseInt(offsetMatch[1], 10));
+    }
+  }
+  if (typeof lineHint === "number" && Number.isFinite(lineHint)) {
+    return { line: Math.max(1, Math.floor(lineHint)) };
+  }
+  return void 0;
+}
+function highlightLengthForLocation(lineText, column, explicitLength) {
+  var _a, _b;
+  if (explicitLength && explicitLength > 0) {
+    return explicitLength;
+  }
+  if (!column || column < 1) {
+    return Math.max(1, lineText.trim().length);
+  }
+  const start = Math.min(lineText.length, column - 1);
+  const tail = lineText.slice(start);
+  const token = (_a = /^[^\s,;:()[\]{}]+/.exec(tail)) == null ? void 0 : _a[0];
+  return Math.max(1, (_b = token == null ? void 0 : token.length) != null ? _b : 1);
+}
+function appendCodeFrame(parent, codeFrame) {
+  const wrapper = parent.createDiv({ cls: "mathgraph-codeframe" });
+  if (codeFrame.label) {
+    wrapper.createDiv({ cls: "mathgraph-codeframe-label", text: codeFrame.label });
+  }
+  if (codeFrame.location) {
+    const parts = [`Line ${codeFrame.location.line}`];
+    if (codeFrame.location.column) {
+      parts.push(`column ${codeFrame.location.column}`);
+    }
+    wrapper.createDiv({ cls: "mathgraph-codeframe-meta", text: parts.join(", ") });
+  }
+  const lines = codeFrame.source.replace(/\r\n/g, "\n").split("\n");
+  lines.forEach((lineText, index) => {
+    var _a, _b;
+    const row = wrapper.createDiv({ cls: "mathgraph-codeframe-row" });
+    row.createDiv({ cls: "mathgraph-codeframe-gutter", text: String(index + 1) });
+    const code = row.createDiv({ cls: "mathgraph-codeframe-code" });
+    const target = ((_a = codeFrame.location) == null ? void 0 : _a.line) === index + 1 ? codeFrame.location : void 0;
+    if (!target) {
+      code.setText(lineText);
+      return;
+    }
+    row.addClass("is-error-line");
+    const column = Math.max(1, (_b = target.column) != null ? _b : 1);
+    const start = Math.max(0, column - 1);
+    const length = highlightLengthForLocation(lineText, column, target.length);
+    const before = lineText.slice(0, start);
+    const marked = lineText.slice(start, start + length) || " ";
+    const after = lineText.slice(start + length);
+    if (before) {
+      code.createSpan({ text: before });
+    }
+    code.createSpan({ cls: "mathgraph-codeframe-error", text: marked });
+    if (after) {
+      code.createSpan({ text: after });
+    }
+  });
+}
 function applyRenderedGraphDisplayScale(container, spec, svgText) {
   applyRenderedGraphLayoutScale(container, spec, { svgText });
 }
@@ -8845,6 +10044,9 @@ function appendGraphError(parent, message, detailsOrOptions, onRetry) {
     detailsEl.addEventListener("toggle", () => {
       summary.setAttr("aria-expanded", detailsEl.open ? "true" : "false");
     });
+  }
+  if (options.codeFrame) {
+    appendCodeFrame(errorEl, options.codeFrame);
   }
   const actions = (_a = options.actions) != null ? _a : [];
   if (options.onRetry) {
@@ -8874,6 +10076,11 @@ function renderGraphView(el, spec, result, tikzSource, actions = {}) {
     const detailParts = [result.rawLog, actions.debugSource].filter(Boolean);
     appendGraphError(el, (_a = result.error) != null ? _a : "Render failed.", {
       details: detailParts.length > 0 ? detailParts.join("\n\n--- generated source ---\n\n") : void 0,
+      codeFrame: actions.debugSource ? {
+        source: actions.debugSource,
+        location: inferGraphErrorLocation(actions.debugSource, [result.error, result.rawLog]),
+        label: "Generated source"
+      } : void 0,
       onRetry: actions.onRefresh
     });
     return;
@@ -8944,6 +10151,7 @@ function renderGraphView(el, spec, result, tikzSource, actions = {}) {
     const applyScale = (next) => {
       size.displayScale = next;
       spec.size = size;
+      scaleLabel.setText(formatDisplayScaleLabel(next));
       applyRenderedGraphDisplayScale(block, spec, svgText);
       const onDisplayScaleChange = actions.onDisplayScaleChange;
       if (onDisplayScaleChange) {
@@ -8962,26 +10170,392 @@ function renderGraphView(el, spec, result, tikzSource, actions = {}) {
     bindScaleButton(minusBtn, () => changeScale(-0.1));
     bindScaleButton(plusBtn, () => changeScale(0.1));
     bindScaleButton(scaleLabel, () => applyScale(1));
+    block.addEventListener("wheel", (event) => {
+      if (!event.ctrlKey) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      changeScale(-event.deltaY * 0.01);
+    }, { passive: false });
   }
-  makeButton("Export", () => {
-    downloadSvg(svgText, el.ownerDocument, `${spec.title || "math-graph"}.svg`);
-    new import_obsidian6.Notice("SVG exported.");
+  const exportSvgText = () => {
+    var _a2, _b2;
+    return (_b2 = (_a2 = actions.getExportSvgText) == null ? void 0 : _a2.call(actions)) != null ? _b2 : svgText;
+  };
+  const exportBtn = makeButton("Export", (event) => {
+    const menu = new import_obsidian6.Menu();
+    menu.addItem((item) => item.setTitle("PNG").onClick(() => {
+      void svgToPng(exportSvgText(), el.ownerDocument).then((blob) => {
+        downloadBlob(blob, `${spec.title || "math-graph"}.png`, el.ownerDocument);
+        new import_obsidian6.Notice("PNG exported.");
+      }).catch((err) => {
+        new import_obsidian6.Notice(err instanceof Error ? err.message : "PNG export failed.");
+      });
+    }));
+    menu.addItem((item) => item.setTitle("SVG").onClick(() => {
+      downloadSvg(exportSvgText(), el.ownerDocument, `${spec.title || "math-graph"}.svg`);
+      new import_obsidian6.Notice("SVG exported.");
+    }));
+    menu.showAtMouseEvent(event);
   });
-  makeButton("Export PNG", () => {
-    void svgToPng(svgText, el.ownerDocument).then((blob) => {
-      downloadBlob(blob, `${spec.title || "math-graph"}.png`, el.ownerDocument);
-      new import_obsidian6.Notice("PNG exported.");
-    }).catch((err) => {
-      new import_obsidian6.Notice(err instanceof Error ? err.message : "PNG export failed.");
-    });
-  });
+  exportBtn.createSpan({ cls: "mathgraph-button-caret", text: "\u25BE" });
   const scroll = block.createDiv({ cls: "mathgraph-graph-scroll" });
   const inner = scroll.createDiv({ cls: "mathgraph-rendered-inner" });
   const img = inner.createEl("img");
   img.setAttr("src", result.dataUrl);
   img.setAttr("alt", spec.title || GRAPH_TYPE_LABELS[spec.type] || "Math graph");
   img.addClass("mathgraph-image");
+  if (actions.onRotateView) {
+    bind3DInteraction(img, spec, svgText, actions.onRotateView, actions.onMovePoint);
+  } else if (actions.onMovePoint) {
+    bindPointDrag(img, spec, svgText, actions.onMovePoint);
+  }
   bindRenderedGraphLayoutScale(block, spec, svgText);
+}
+function parseFastSvgCalibration(svgText) {
+  const size = /<svg[^>]*\bwidth="([\d.]+)"[^>]*\bheight="([\d.]+)"/.exec(svgText);
+  const plot = /data-mg-plot="([^"]+)"/.exec(svgText);
+  const window2 = /data-mg-window="([^"]+)"/.exec(svgText);
+  if (!size || !plot || !window2) {
+    return null;
+  }
+  const plotParts = plot[1].split(",").map(Number);
+  const windowParts = window2[1].split(",").map(Number);
+  if (plotParts.length !== 4 || windowParts.length !== 4 || plotParts.some((v) => !Number.isFinite(v)) || windowParts.some((v) => !Number.isFinite(v))) {
+    return null;
+  }
+  const cal = {
+    svgWidth: Number.parseFloat(size[1]),
+    svgHeight: Number.parseFloat(size[2]),
+    plotLeft: plotParts[0],
+    plotTop: plotParts[1],
+    plotWidth: plotParts[2],
+    plotHeight: plotParts[3],
+    xmin: windowParts[0],
+    xmax: windowParts[1],
+    ymin: windowParts[2],
+    ymax: windowParts[3]
+  };
+  if (cal.plotWidth <= 0 || cal.plotHeight <= 0 || cal.xmax <= cal.xmin || cal.ymax <= cal.ymin) {
+    return null;
+  }
+  return cal;
+}
+var POINT_HIT_RADIUS_PX = 14;
+function resolveNumericGraphPoints(spec) {
+  var _a;
+  const result = [];
+  ((_a = spec.points) != null ? _a : []).forEach((point, index) => {
+    var _a2, _b;
+    const resolved = resolveGraphPointCoordinates(spec, point);
+    if (!resolved) {
+      return;
+    }
+    const x = parseBoundToNumber(resolved.x);
+    const y = parseBoundToNumber(resolved.y);
+    const z = (_b = parseBoundToNumber((_a2 = resolved.z) != null ? _a2 : "0")) != null ? _b : 0;
+    if (x === null || y === null) {
+      return;
+    }
+    result.push({ index, x, y, z });
+  });
+  return result;
+}
+function bindPointDrag(img, spec, svgText, movePoint) {
+  const cal = parseFastSvgCalibration(svgText);
+  if (!cal) {
+    return;
+  }
+  if (resolveNumericGraphPoints(spec).length === 0) {
+    return;
+  }
+  const toClient = (wx, wy, rect) => {
+    const sx = rect.width / cal.svgWidth;
+    const sy = rect.height / cal.svgHeight;
+    const localX = cal.plotLeft + (wx - cal.xmin) / (cal.xmax - cal.xmin) * cal.plotWidth;
+    const localY = cal.plotTop + cal.plotHeight - (wy - cal.ymin) / (cal.ymax - cal.ymin) * cal.plotHeight;
+    return { x: rect.left + localX * sx, y: rect.top + localY * sy };
+  };
+  const toWorld = (clientX, clientY, rect) => {
+    const sx = rect.width / cal.svgWidth;
+    const sy = rect.height / cal.svgHeight;
+    const localX = (clientX - rect.left) / sx;
+    const localY = (clientY - rect.top) / sy;
+    const x = cal.xmin + (localX - cal.plotLeft) / cal.plotWidth * (cal.xmax - cal.xmin);
+    const y = cal.ymax - (localY - cal.plotTop) / cal.plotHeight * (cal.ymax - cal.ymin);
+    return {
+      x: Math.min(cal.xmax, Math.max(cal.xmin, x)),
+      y: Math.min(cal.ymax, Math.max(cal.ymin, y))
+    };
+  };
+  const hitTest = (clientX, clientY) => {
+    const rect = img.getBoundingClientRect();
+    let best = null;
+    let bestDistance = POINT_HIT_RADIUS_PX;
+    for (const point of resolveNumericGraphPoints(spec)) {
+      const client = toClient(point.x, point.y, rect);
+      const distance = Math.hypot(client.x - clientX, client.y - clientY);
+      if (distance <= bestDistance) {
+        best = point.index;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  };
+  let activeIndex = null;
+  let moved = false;
+  let lastWorld = null;
+  let frame = null;
+  img.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const index = hitTest(event.clientX, event.clientY);
+    if (index === null) {
+      return;
+    }
+    activeIndex = index;
+    moved = false;
+    lastWorld = null;
+    img.setPointerCapture(event.pointerId);
+    img.addClass("mathgraph-point-dragging");
+    event.preventDefault();
+  });
+  img.addEventListener("pointermove", (event) => {
+    if (activeIndex === null) {
+      img.toggleClass("mathgraph-point-hover", hitTest(event.clientX, event.clientY) !== null);
+      return;
+    }
+    const rect = img.getBoundingClientRect();
+    lastWorld = toWorld(event.clientX, event.clientY, rect);
+    moved = true;
+    if (frame === null) {
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        if (activeIndex !== null && lastWorld) {
+          movePoint(activeIndex, lastWorld.x, lastWorld.y, "preview");
+        }
+      });
+    }
+    event.preventDefault();
+  });
+  const endDrag = (event) => {
+    if (activeIndex === null) {
+      return;
+    }
+    const index = activeIndex;
+    activeIndex = null;
+    img.removeClass("mathgraph-point-dragging");
+    try {
+      img.releasePointerCapture(event.pointerId);
+    } catch (e) {
+    }
+    if (frame !== null) {
+      window.cancelAnimationFrame(frame);
+      frame = null;
+    }
+    if (moved && lastWorld) {
+      movePoint(index, lastWorld.x, lastWorld.y, "commit");
+    }
+  };
+  img.addEventListener("pointerup", endDrag);
+  img.addEventListener("pointercancel", endDrag);
+  img.addEventListener("dragstart", (event) => event.preventDefault());
+}
+var ROTATE_DEG_PER_PX_AZIMUTH = 0.5;
+var ROTATE_DEG_PER_PX_ELEVATION = 0.35;
+function parseFastSvg3dCalibration(svgText) {
+  const size = /<svg[^>]*\bwidth="([\d.]+)"[^>]*\bheight="([\d.]+)"/.exec(svgText);
+  const data = /data-mg-3d="([^"]+)"/.exec(svgText);
+  if (!size || !data) {
+    return null;
+  }
+  const parts = data[1].split(",").map(Number);
+  if (parts.length !== 12 || parts.some((value) => !Number.isFinite(value))) {
+    return null;
+  }
+  const [xMin, xMax, yMin, yMax, zMin, zMax, azimuth, elevation, ax, bx, ay, by] = parts;
+  if (xMax <= xMin || yMax <= yMin || ax === 0 || ay === 0) {
+    return null;
+  }
+  return {
+    svgWidth: Number.parseFloat(size[1]),
+    svgHeight: Number.parseFloat(size[2]),
+    xMin,
+    xMax,
+    yMin,
+    yMax,
+    zMin,
+    zMax,
+    azimuth,
+    elevation,
+    ax,
+    bx,
+    ay,
+    by
+  };
+}
+function bind3DInteraction(img, spec, svgText, rotate, movePoint) {
+  img.addClass("mathgraph-rotatable");
+  img.setAttr("title", movePoint ? "Drag to rotate \xB7 drag a point to move it (hold Shift to always rotate)" : "Drag to rotate");
+  const cal = parseFastSvg3dCalibration(svgText);
+  const canDragPoints = Boolean(cal && movePoint);
+  const azimuthRad = cal ? cal.azimuth * Math.PI / 180 : 0;
+  const elevationRad = cal ? cal.elevation * Math.PI / 180 : 0;
+  const cosA = Math.cos(azimuthRad);
+  const sinA = Math.sin(azimuthRad);
+  const cosE = Math.cos(elevationRad);
+  const sinE = Math.sin(elevationRad);
+  const spanX = cal ? cal.xMax - cal.xMin || 1 : 1;
+  const spanY = cal ? cal.yMax - cal.yMin || 1 : 1;
+  const spanZ = cal ? cal.zMax - cal.zMin || 1 : 1;
+  const normX = (x) => cal ? (x - cal.xMin) / spanX * 2 - 1 : 0;
+  const normY = (y) => cal ? (y - cal.yMin) / spanY * 2 - 1 : 0;
+  const normZ = (z) => cal ? (z - cal.zMin) / spanZ * 2 - 1 : 0;
+  const denormX = (nx) => cal ? cal.xMin + (nx + 1) / 2 * spanX : 0;
+  const denormY = (ny) => cal ? cal.yMin + (ny + 1) / 2 * spanY : 0;
+  const worldToSvg = (x, y, z) => {
+    var _a, _b, _c, _d;
+    const nx = normX(x);
+    const ny = normY(y);
+    const nz = normZ(z);
+    const px = nx * cosA - ny * sinA;
+    const py = -nz * cosE + (nx * sinA + ny * cosA) * sinE;
+    return { x: ((_a = cal == null ? void 0 : cal.ax) != null ? _a : 1) * px + ((_b = cal == null ? void 0 : cal.bx) != null ? _b : 0), y: ((_c = cal == null ? void 0 : cal.ay) != null ? _c : 1) * py + ((_d = cal == null ? void 0 : cal.by) != null ? _d : 0) };
+  };
+  const svgToWorldXY = (svgX, svgY, current) => {
+    var _a, _b, _c, _d;
+    const px = (svgX - ((_a = cal == null ? void 0 : cal.bx) != null ? _a : 0)) / ((_b = cal == null ? void 0 : cal.ax) != null ? _b : 1);
+    const py = (svgY - ((_c = cal == null ? void 0 : cal.by) != null ? _c : 0)) / ((_d = cal == null ? void 0 : cal.ay) != null ? _d : 1);
+    const nz = normZ(current.z);
+    const depth = Math.abs(sinE) >= 0.15 ? (py + nz * cosE) / sinE : normX(current.x) * sinA + normY(current.y) * cosA;
+    const nx = Math.max(-1, Math.min(1, px * cosA + depth * sinA));
+    const ny = Math.max(-1, Math.min(1, -px * sinA + depth * cosA));
+    return { x: denormX(nx), y: denormY(ny) };
+  };
+  const hitTestPoint = (clientX, clientY) => {
+    if (!canDragPoints || !cal) {
+      return null;
+    }
+    const rect = img.getBoundingClientRect();
+    const scaleX = rect.width / cal.svgWidth;
+    const scaleY = rect.height / cal.svgHeight;
+    let best = null;
+    let bestDistance = POINT_HIT_RADIUS_PX;
+    for (const point of resolveNumericGraphPoints(spec)) {
+      const svg = worldToSvg(point.x, point.y, point.z);
+      const distance = Math.hypot(rect.left + svg.x * scaleX - clientX, rect.top + svg.y * scaleY - clientY);
+      if (distance <= bestDistance) {
+        best = point;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  };
+  let mode = null;
+  let activeIndex = 0;
+  let moved = false;
+  let lastX = 0;
+  let lastY = 0;
+  let pendingAzimuth = 0;
+  let pendingElevation = 0;
+  let lastWorld = null;
+  let frame = null;
+  const flushPreview = () => {
+    frame = null;
+    if (mode === "rotate" && (pendingAzimuth !== 0 || pendingElevation !== 0)) {
+      rotate(pendingAzimuth, pendingElevation, "preview");
+      pendingAzimuth = 0;
+      pendingElevation = 0;
+    } else if (mode === "point" && lastWorld && movePoint) {
+      movePoint(activeIndex, lastWorld.x, lastWorld.y, "preview");
+    }
+  };
+  img.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const hit = event.shiftKey ? null : hitTestPoint(event.clientX, event.clientY);
+    if (hit && movePoint) {
+      mode = "point";
+      activeIndex = hit.index;
+      img.addClass("mathgraph-point-dragging");
+    } else {
+      mode = "rotate";
+      img.addClass("mathgraph-rotating");
+    }
+    moved = false;
+    lastWorld = null;
+    lastX = event.clientX;
+    lastY = event.clientY;
+    img.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  img.addEventListener("pointermove", (event) => {
+    if (mode === null) {
+      if (canDragPoints) {
+        img.toggleClass("mathgraph-point-hover", !event.shiftKey && hitTestPoint(event.clientX, event.clientY) !== null);
+      }
+      return;
+    }
+    if (mode === "rotate") {
+      const dx = event.clientX - lastX;
+      const dy = event.clientY - lastY;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      if (dx === 0 && dy === 0) {
+        return;
+      }
+      moved = true;
+      pendingAzimuth += -dx * ROTATE_DEG_PER_PX_AZIMUTH;
+      pendingElevation += dy * ROTATE_DEG_PER_PX_ELEVATION;
+    } else if (cal) {
+      const current = resolveNumericGraphPoints(spec).find((p) => p.index === activeIndex);
+      if (!current) {
+        return;
+      }
+      const rect = img.getBoundingClientRect();
+      const svgX = (event.clientX - rect.left) / (rect.width / cal.svgWidth);
+      const svgY = (event.clientY - rect.top) / (rect.height / cal.svgHeight);
+      lastWorld = svgToWorldXY(svgX, svgY, current);
+      moved = true;
+    }
+    if (frame === null) {
+      frame = window.requestAnimationFrame(flushPreview);
+    }
+    event.preventDefault();
+  });
+  const endDrag = (event) => {
+    if (mode === null) {
+      return;
+    }
+    const endedMode = mode;
+    mode = null;
+    img.removeClass("mathgraph-rotating");
+    img.removeClass("mathgraph-point-dragging");
+    try {
+      img.releasePointerCapture(event.pointerId);
+    } catch (e) {
+    }
+    if (frame !== null) {
+      window.cancelAnimationFrame(frame);
+      frame = null;
+    }
+    if (!moved) {
+      return;
+    }
+    if (endedMode === "rotate") {
+      rotate(pendingAzimuth, pendingElevation, "commit");
+      pendingAzimuth = 0;
+      pendingElevation = 0;
+    } else if (lastWorld && movePoint) {
+      movePoint(activeIndex, lastWorld.x, lastWorld.y, "commit");
+    }
+  };
+  img.addEventListener("pointerup", endDrag);
+  img.addEventListener("pointercancel", endDrag);
+  img.addEventListener("dragstart", (event) => event.preventDefault());
 }
 
 // src/scrollPreserve.ts
@@ -9148,13 +10722,13 @@ function registerGraphProcessor(plugin) {
   plugin.registerMarkdownCodeBlockProcessor("graph", (source, el, ctx) => {
     var _a;
     const classification = classifyGraphBlockSource(source, plugin.settings);
+    const hasRenderedGraph = el.querySelector(".mathgraph-rendered-container") !== null;
     if (classification.state === "valid" && classification.spec) {
       const hydrated = hydrateGraphSpec(structuredClone(classification.spec), plugin.settings);
       const fingerprint = specRenderFingerprint(hydrated);
       const prevFingerprint = el.dataset.mathgraphFingerprint;
       const themeKey = isObsidianDarkTheme() ? "dark" : "light";
       const prevTheme = el.dataset.mathgraphTheme;
-      const hasRenderedGraph = el.querySelector(".mathgraph-rendered-container") !== null;
       if (hasRenderedGraph && prevFingerprint === fingerprint && prevTheme === themeKey) {
         el.dataset.mathgraphFingerprint = fingerprint;
         el.dataset.mathgraphTheme = themeKey;
@@ -9162,7 +10736,9 @@ function registerGraphProcessor(plugin) {
         return;
       }
     }
-    el.empty();
+    if (!(classification.state === "valid" && hasRenderedGraph)) {
+      el.empty();
+    }
     el.addClass("mathgraph-processor-root");
     if (classification.state === "empty") {
       void renderEmptyBlock(plugin, el, ctx, source);
@@ -9199,7 +10775,7 @@ function hideAdjacentSourceEmbed(el) {
   }
 }
 function renderValidBlock(plugin, el, ctx, source, spec) {
-  var _a;
+  var _a, _b;
   el.addClass("mathgraph-has-rendered-graph");
   hideAdjacentSourceEmbed(el);
   const ensureLoading = (text = "Drawing graph\u2026") => {
@@ -9208,11 +10784,16 @@ function renderValidBlock(plugin, el, ctx, source, spec) {
       existing.setText(text);
       return existing;
     }
+    if (el.querySelector(".mathgraph-rendered-container")) {
+      return el;
+    }
     return el.createDiv({ cls: "mathgraph-loading", text });
   };
-  ensureLoading();
   const currentSpec = hydrateGraphSpec(structuredClone(spec), plugin.settings);
   const fingerprint = specRenderFingerprint(currentSpec);
+  if (!((_a = getCachedGraphRender(fingerprint, "svgFast", isObsidianDarkTheme())) == null ? void 0 : _a.result.ok)) {
+    ensureLoading();
+  }
   el.dataset.mathgraphFingerprint = fingerprint;
   el.dataset.mathgraphTheme = isObsidianDarkTheme() ? "dark" : "light";
   const clipWarning = surfaceZRangeClipWarning(currentSpec);
@@ -9222,7 +10803,7 @@ function renderValidBlock(plugin, el, ctx, source, spec) {
   let renderGeneration = 0;
   let debounceTimer = null;
   const runRender = (mode) => __async(this, null, function* () {
-    var _a2, _b, _c, _d, _e;
+    var _a2, _b2, _c, _d, _e;
     const generation = ++renderGeneration;
     const themeIsDark = isObsidianDarkTheme();
     el.dataset.mathgraphTheme = themeIsDark ? "dark" : "light";
@@ -9234,7 +10815,7 @@ function renderValidBlock(plugin, el, ctx, source, spec) {
       }
       el.dataset.mathgraphRenderMode = mode;
       (_a2 = el.querySelector(".mathgraph-loading")) == null ? void 0 : _a2.remove();
-      void setupGraphView(el, plugin, ctx, source, currentSpec, cached.result, (_b = cached.tikz) != null ? _b : "", () => scheduleRender("svgFast", true));
+      void setupGraphView(el, plugin, ctx, source, currentSpec, cached.result, (_b2 = cached.tikz) != null ? _b2 : "", () => scheduleRender("svgFast", true));
       return;
     }
     let bundle;
@@ -9308,6 +10889,11 @@ function renderValidBlock(plugin, el, ctx, source, spec) {
         return;
       }
       (_e = el.querySelector(".mathgraph-loading")) == null ? void 0 : _e.remove();
+      if (el.querySelector(".mathgraph-rendered-container")) {
+        el.empty();
+        el.addClass("mathgraph-processor-root");
+        decorateMathGraphRoot(el);
+      }
       const detailParts = [];
       if (err instanceof OctaveEngineError && err.rawLog) {
         detailParts.push(err.rawLog);
@@ -9321,6 +10907,14 @@ ${bundle.tikz}`);
       }
       appendGraphError(el, err instanceof Error ? err.message : "Could not render graph.", {
         details: detailParts.length > 0 ? detailParts.join("\n\n") : err instanceof Error ? err.stack : void 0,
+        codeFrame: plugin.settings.debugMode && (bundle == null ? void 0 : bundle.tikz) ? {
+          source: bundle.tikz,
+          location: inferGraphErrorLocation(bundle.tikz, [
+            err instanceof Error ? err.message : void 0,
+            ...detailParts
+          ], err instanceof Error && typeof err.line === "number" ? err.line : void 0),
+          label: "Generated source"
+        } : void 0,
         onRetry: () => {
           el.empty();
           el.addClass("mathgraph-processor-root");
@@ -9360,43 +10954,139 @@ ${bundle.tikz}`);
     scheduleRender(mode, true);
   };
   registerGraphRerenderHandler(el, triggerThemeRerender);
-  scheduleRender("svgFast", Boolean((_a = getCachedGraphRender(fingerprint, "svgFast", isObsidianDarkTheme())) == null ? void 0 : _a.result.ok));
+  scheduleRender("svgFast", Boolean((_b = getCachedGraphRender(fingerprint, "svgFast", isObsidianDarkTheme())) == null ? void 0 : _b.result.ok));
 }
 function setupGraphView(el, plugin, ctx, source, spec, result, tikz, rerender) {
-  return __async(this, null, function* () {
-    const location = yield resolveGraphBlockLocation(plugin.app, ctx, source, el);
-    renderGraphView(el, spec, result, tikz, {
-      debugSource: plugin.settings.debugMode ? tikz : void 0,
-      onEdit: () => void openEditModal(plugin, spec, source, ctx, el),
-      onRefresh: () => {
-        el.empty();
-        el.addClass("mathgraph-processor-root");
-        decorateMathGraphRoot(el);
-        el.createDiv({ cls: "mathgraph-loading", text: "Drawing graph\u2026" });
-        rerender();
-      },
-      onDisplayScaleChange: (newScale) => {
-        if (!location) {
-          new import_obsidian7.Notice("Could not locate graph block to save size.");
+  var _a, _b;
+  let location = null;
+  const ensureLocation = () => __async(this, null, function* () {
+    if (location) {
+      return location;
+    }
+    location = yield resolveGraphBlockLocation(plugin.app, ctx, source, el);
+    return location;
+  });
+  const cacheFinalFastRender = () => {
+    if (!plugin.renderer.canRenderFast(spec)) {
+      return;
+    }
+    try {
+      const roundTripped = hydrateGraphSpec(JSON.parse(serializeGraphSpec(spec)), plugin.settings);
+      const svgText = renderFastSvg(roundTripped, resolveGraphThemeColors());
+      const fingerprint = specRenderFingerprint(roundTripped);
+      const themeIsDark = isObsidianDarkTheme();
+      setCachedGraphRender({
+        cacheKey: renderCacheKey(fingerprint, "svgFast", themeIsDark),
+        renderMode: "svgFast",
+        result: { ok: true, svgText, dataUrl: svgDataUrl(svgText) },
+        tikz: ""
+      });
+    } catch (e) {
+    }
+  };
+  const commitSpecSave = (what) => {
+    cacheFinalFastRender();
+    void ensureLocation().then((resolved) => {
+      if (!resolved) {
+        new import_obsidian7.Notice(`Could not locate graph block to save ${what}.`);
+        return;
+      }
+      scheduleDisplayScaleSave(plugin, resolved, spec);
+    });
+  };
+  let liveSvgText = result.ok && result.svgText ? result.svgText : "";
+  const refreshFastPreview = () => {
+    if (!plugin.renderer.canRenderFast(spec)) {
+      return;
+    }
+    try {
+      const svgText = renderFastSvg(spec, resolveGraphThemeColors());
+      const img = el.querySelector(".mathgraph-image");
+      if (img instanceof HTMLImageElement) {
+        img.src = svgDataUrl(svgText);
+      }
+      liveSvgText = svgText;
+    } catch (e) {
+    }
+  };
+  renderGraphView(el, spec, result, tikz, {
+    getExportSvgText: () => {
+      var _a2;
+      return liveSvgText || ((_a2 = result.svgText) != null ? _a2 : "");
+    },
+    debugSource: plugin.settings.debugMode ? tikz : void 0,
+    onEdit: () => void openEditModal(plugin, spec, source, ctx, el),
+    onRefresh: () => {
+      el.empty();
+      el.addClass("mathgraph-processor-root");
+      decorateMathGraphRoot(el);
+      el.createDiv({ cls: "mathgraph-loading", text: "Drawing graph\u2026" });
+      rerender();
+    },
+    onDisplayScaleChange: (newScale) => {
+      const size = ensureGraphSize(spec);
+      size.displayScale = clampDisplayScale(newScale);
+      spec.size = size;
+      const container = el.querySelector(".mathgraph-rendered-container");
+      if (isHTMLElement(container)) {
+        applyRenderedGraphDisplayScale(container, spec, result.svgText);
+      }
+      commitSpecSave("size");
+    },
+    onRotateView: isGraph3dView(spec) ? (() => {
+      const start = resolveGraphRotation(spec);
+      let liveAzimuth = start.azimuth;
+      let liveElevation = start.elevation;
+      return (azimuthDelta, elevationDelta, phase) => {
+        liveAzimuth += azimuthDelta;
+        if (liveAzimuth > 180) {
+          liveAzimuth -= 360;
+        } else if (liveAzimuth < -180) {
+          liveAzimuth += 360;
+        }
+        liveElevation = Math.min(90, Math.max(0, liveElevation + elevationDelta));
+        spec.rotation = {
+          azimuth: normalizeAzimuthDeg(liveAzimuth),
+          elevation: clampElevationDeg(liveElevation)
+        };
+        if (phase === "preview") {
+          refreshFastPreview();
           return;
         }
-        const size = ensureGraphSize(spec);
-        size.displayScale = clampDisplayScale(newScale);
-        spec.size = size;
-        const container = el.querySelector(".mathgraph-rendered-container");
-        if (isHTMLElement(container)) {
-          applyRenderedGraphDisplayScale(container, spec, result.svgText);
-        }
-        scheduleDisplayScaleSave(plugin, location, spec);
+        commitSpecSave("rotation");
+      };
+    })() : void 0,
+    onMovePoint: ((_b = (_a = spec.points) == null ? void 0 : _a.length) != null ? _b : 0) > 0 ? (pointIndex, x, y, phase) => {
+      var _a2, _b2;
+      const points = (_a2 = spec.points) != null ? _a2 : [];
+      const point = points[pointIndex];
+      if (!point) {
+        return;
       }
-    });
+      const format = (value) => String(Number.parseFloat(value.toFixed(3)));
+      point.x = format(x);
+      if (isGraph3dView(spec)) {
+        point.y = format(y);
+      } else if ((_b2 = point.y) == null ? void 0 : _b2.trim()) {
+        point.y = format(y);
+      }
+      spec.points = attachComputedCoordinates(spec, points);
+      if (phase === "preview") {
+        refreshFastPreview();
+        return;
+      }
+      commitSpecSave("the point");
+    } : void 0
   });
 }
 function renderInvalidBlock(plugin, el, ctx, source, message) {
-  const sourceEl = el.createEl("pre", { cls: "mathgraph-invalid-source mathgraph-invalid-source-hidden" });
-  sourceEl.setText(source.trim());
   appendGraphError(el, message, {
     details: source.trim(),
+    codeFrame: {
+      source: source.trim(),
+      location: inferGraphErrorLocation(source.trim(), [message]),
+      label: "Graph block source"
+    },
     actions: [
       {
         label: "Edit Graph",
@@ -9408,11 +11098,15 @@ function renderInvalidBlock(plugin, el, ctx, source, message) {
         onClick: () => void resetBlock(plugin, source, ctx, el)
       },
       {
-        label: "Show Source",
-        onClick: () => {
-          const hidden = sourceEl.hasClass("mathgraph-invalid-source-hidden");
-          sourceEl.toggleClass("mathgraph-invalid-source-hidden", !hidden);
-        }
+        label: "Copy Source",
+        onClick: () => __async(this, null, function* () {
+          try {
+            yield navigator.clipboard.writeText(source.trim());
+            new import_obsidian7.Notice("Graph source copied.");
+          } catch (e) {
+            new import_obsidian7.Notice("Could not copy graph source.");
+          }
+        })
       }
     ]
   });
@@ -9470,6 +11164,179 @@ function resetBlock(plugin, source, ctx, el) {
   });
 }
 
+// src/inlineGraphEditor.ts
+var import_state = __toModule(require("@codemirror/state"));
+var import_view = __toModule(require("@codemirror/view"));
+function classifyGraphBlockSourceForEditor(source) {
+  const trimmed = source.trim();
+  if (!trimmed) {
+    return { state: "empty" };
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== "object" || parsed.version !== 1 || typeof parsed.type !== "string") {
+      return { state: "invalid", error: "Graph block is missing required fields." };
+    }
+    return { state: "valid" };
+  } catch (err) {
+    return {
+      state: "invalid",
+      error: err instanceof Error ? err.message : "Invalid graph JSON."
+    };
+  }
+}
+function offsetToLineColumn(source, offset) {
+  var _a, _b;
+  const safeOffset = Math.max(0, Math.min(offset, source.length));
+  const before = source.slice(0, safeOffset);
+  const parts = before.split("\n");
+  return {
+    line: parts.length,
+    column: ((_b = (_a = parts.at(-1)) == null ? void 0 : _a.length) != null ? _b : 0) + 1
+  };
+}
+function lineColumnToOffset(source, line, column = 1) {
+  const lines = source.split("\n");
+  let offset = 0;
+  for (let index = 0; index < lines.length; index++) {
+    if (index + 1 === line) {
+      return offset + Math.max(0, column - 1);
+    }
+    offset += lines[index].length + 1;
+  }
+  return source.length;
+}
+function parseJsonErrorLocation(source, message) {
+  const offsetMatch = /position\s+(\d+)/i.exec(message);
+  if (!offsetMatch) {
+    return null;
+  }
+  return offsetToLineColumn(source, Number.parseInt(offsetMatch[1], 10));
+}
+function diagnosticRangeForLine(source, baseOffset, line, column = 1) {
+  var _a, _b, _c, _d;
+  const lineStart = baseOffset + lineColumnToOffset(source, line, 1);
+  const targetOffset = baseOffset + lineColumnToOffset(source, line, column);
+  const lineText = (_a = source.split("\n")[Math.max(0, line - 1)]) != null ? _a : "";
+  const localColumn = Math.max(1, Math.min(column, lineText.length + 1));
+  const tail = lineText.slice(localColumn - 1);
+  const width = Math.max(1, (_d = (_c = (_b = /^[^\s,;:()[\]{}]+/.exec(tail)) == null ? void 0 : _b[0]) == null ? void 0 : _c.length) != null ? _d : 1);
+  return {
+    from: targetOffset,
+    to: Math.min(lineStart + lineText.length, targetOffset + width)
+  };
+}
+function collectFenceDiagnostics(source) {
+  var _a, _b, _c;
+  const diagnostics = [];
+  const lines = source.split("\n");
+  const lineOffsets = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineOffsets.push(offset);
+    offset += line.length + 1;
+  }
+  for (let index = 0; index < lines.length; index++) {
+    if (!lines[index].trim().startsWith("```graph")) {
+      continue;
+    }
+    let end = index + 1;
+    while (end < lines.length && lines[end].trim() !== "```") {
+      end++;
+    }
+    if (end >= lines.length) {
+      break;
+    }
+    const bodyLines = lines.slice(index + 1, end);
+    const body = bodyLines.join("\n");
+    if (!body.trim()) {
+      index = end;
+      continue;
+    }
+    const classification = classifyGraphBlockSourceForEditor(body);
+    if (classification.state !== "invalid") {
+      index = end;
+      continue;
+    }
+    let line = 1;
+    let column = 1;
+    try {
+      JSON.parse(body);
+      line = bodyLines.findIndex((text) => text.trim().length > 0) + 1;
+    } catch (err) {
+      const location = err instanceof Error ? parseJsonErrorLocation(body, err.message) : null;
+      line = (_a = location == null ? void 0 : location.line) != null ? _a : 1;
+      column = (_b = location == null ? void 0 : location.column) != null ? _b : 1;
+    }
+    const bodyOffset = end > index + 1 ? lineOffsets[index + 1] : lineOffsets[index] + lines[index].length + 1;
+    const range = diagnosticRangeForLine(body, bodyOffset, line, column);
+    diagnostics.push(__spreadProps(__spreadValues({}, range), {
+      message: (_c = classification.error) != null ? _c : "Invalid graph block."
+    }));
+    index = end;
+  }
+  return diagnostics;
+}
+function collectLatexGraphDiagnostics(source) {
+  var _a;
+  const diagnostics = [];
+  const pattern = /\\begin\{graph\}([\s\S]*?)\\end\{graph\}/g;
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    try {
+      expandGraphSyntax(match[0]);
+    } catch (err) {
+      if (!(err instanceof GraphSyntaxError)) {
+        continue;
+      }
+      const line = Math.max(1, (_a = err.line) != null ? _a : 1);
+      const range = diagnosticRangeForLine(match[0], match.index, line, 1);
+      diagnostics.push(__spreadProps(__spreadValues({}, range), {
+        message: err.message
+      }));
+    }
+  }
+  return diagnostics;
+}
+function collectGraphEditorDiagnostics(source) {
+  return [
+    ...collectFenceDiagnostics(source),
+    ...collectLatexGraphDiagnostics(source)
+  ];
+}
+function buildDecorations(view) {
+  const builder = new import_state.RangeSetBuilder();
+  const lineDecoration = import_view.Decoration.line({ class: "cm-mathgraph-error-line" });
+  for (const diagnostic of collectGraphEditorDiagnostics(view.state.doc.toString())) {
+    const line = view.state.doc.lineAt(diagnostic.from);
+    builder.add(line.from, line.from, lineDecoration);
+    builder.add(diagnostic.from, Math.max(diagnostic.from + 1, diagnostic.to), import_view.Decoration.mark({
+      class: "cm-mathgraph-error-zigzag",
+      attributes: {
+        title: diagnostic.message,
+        "aria-label": diagnostic.message
+      }
+    }));
+  }
+  return builder.finish();
+}
+function inlineGraphEditorExtension() {
+  return [
+    import_view.ViewPlugin.fromClass(class {
+      constructor(view) {
+        this.decorations = buildDecorations(view);
+      }
+      update(update) {
+        if (update.docChanged || update.viewportChanged) {
+          this.decorations = buildDecorations(update.view);
+        }
+      }
+    }, {
+      decorations: (value) => value.decorations
+    })
+  ];
+}
+
 // main.ts
 var MathGraphStudioPlugin = class extends import_obsidian8.Plugin {
   constructor() {
@@ -9502,6 +11369,7 @@ var MathGraphStudioPlugin = class extends import_obsidian8.Plugin {
         this.openInsertModal();
       });
       this.addSettingTab(new MathGraphSettingTab(this.app, this));
+      this.registerEditorExtension(inlineGraphEditorExtension());
       registerGraphProcessor(this);
     });
   }

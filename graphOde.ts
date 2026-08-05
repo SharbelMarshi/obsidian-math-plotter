@@ -1,5 +1,6 @@
-import { normalizePgfMath, type NumericRange } from './graphExpression';
-import { compileSafeMathExpression } from './src/safeMathEvaluator';
+import type { NumericRange } from './graphExpression';
+import { compileExpressionForOctave, normalizeFrontendMath } from './graphSyntax';
+import { compileSafeMathExpression, type MathScope } from './src/safeMathEvaluator';
 
 export type OdeKind = 'first_order_slope' | 'first_order_solution' | 'second_order_solution';
 
@@ -99,15 +100,27 @@ export function parseOdeExpression(body: string, solutionMode: boolean): ParsedO
 }
 
 function prepareSafeOdeExpr(expr: string): string {
-	return normalizePgfMath(expr)
+	return normalizeFrontendMath(expr, { substituteParameters: false })
 		.replace(/y\s*''/gi, '0')
-		.replace(/y\s*'(?![a-zA-Z])/gi, 'yp')
-		.replace(/\^/g, '^');
+		.replace(/y\s*'(?![a-zA-Z])/gi, 'yp');
+}
+
+function compileOdeEvaluator(expr: string): (scope: MathScope) => number {
+	const normalized = prepareSafeOdeExpr(expr);
+	// Prefer the full expression engine so sin^2(x), |y|, etc. work in ODE right-hand sides.
+	try {
+		const compiled = compileExpressionForOctave(normalized, { variables: ['x', 'y', 'yp'] })
+			.replace(/\.\^/g, '^')
+			.replace(/\.\*/g, '*')
+			.replace(/\.\//g, '/');
+		return compileSafeMathExpression(compiled, ['x', 'y', 'yp']);
+	} catch {
+		return compileSafeMathExpression(normalized, ['x', 'y', 'yp']);
+	}
 }
 
 function compileFirstOrderRhs(expr: string): (x: number, y: number) => number {
-	const normalized = prepareSafeOdeExpr(expr);
-	const evaluate = compileSafeMathExpression(normalized, ['x', 'y', 'yp']);
+	const evaluate = compileOdeEvaluator(expr);
 	return (x, y) => {
 		const result = evaluate({ x, y, yp: 0 });
 		return Number.isFinite(result) ? result : Number.NaN;
@@ -115,8 +128,7 @@ function compileFirstOrderRhs(expr: string): (x: number, y: number) => number {
 }
 
 function compileSecondOrderRhs(expr: string): (x: number, y: number, yp: number) => number {
-	const normalized = prepareSafeOdeExpr(expr);
-	const evaluate = compileSafeMathExpression(normalized, ['x', 'y', 'yp']);
+	const evaluate = compileOdeEvaluator(expr);
 	return (x, y, ypVal) => {
 		const result = evaluate({ x, y, yp: ypVal });
 		return Number.isFinite(result) ? result : Number.NaN;

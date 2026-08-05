@@ -26,6 +26,9 @@ assert(corner?.z === 2, `x^2+y^2 at (1,1) should be 2, got ${corner?.z}`);
 const line = sampleFunction2D('x^2', 0, 2, 3);
 assert(line.length === 3 && line[2].y === 4, 'sampleFunction2D should include endpoint y=4');
 
+const finiteSum = evaluateExpression('\\sum_{i=1}^{3}{i*x}', { x: 2 });
+assert(finiteSum === 12, `finite sum at x=2 should be 12, got ${finiteSum}`);
+
 if (failed === 0) {
 	console.log('All ExpressionEngine tests passed.');
 } else {

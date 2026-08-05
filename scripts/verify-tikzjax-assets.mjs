@@ -3,11 +3,17 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const required = [
-	path.join(root, 'assets/tikzjax/node/dist/index.js'),
-	path.join(root, 'assets/tikzjax/node/tex/tex.wasm.gz'),
-	path.join(root, 'assets/tikzjax/node/tex/core.dump.gz'),
-];
+const manifestPath = path.join(root, 'assets/tikzjax/manifest.json');
+
+if (!fs.existsSync(manifestPath)) {
+	console.error(`TikZJax bundle verification failed. Missing manifest: ${manifestPath}`);
+	process.exit(1);
+}
+
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+const required = Array.isArray(manifest.files)
+	? manifest.files.map(relativePath => path.join(root, relativePath))
+	: [];
 
 const missing = required.filter(file => !fs.existsSync(file));
 if (missing.length > 0) {

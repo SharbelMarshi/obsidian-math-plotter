@@ -1,4 +1,4 @@
-import { defaultGraphSpec } from '../src/graphSpec';
+import { defaultGraphSpec, setUserFunction } from '../src/graphSpec';
 import { renderFastSvg } from '../render/FastSvgRenderer';
 import type { GraphThemeColors } from '../src/graphThemeColors';
 
@@ -13,6 +13,9 @@ const lightTheme: GraphThemeColors = {
 };
 
 const spec = defaultGraphSpec('function2d');
+// New graphs no longer seed sample math, so the test provides its own function.
+setUserFunction(spec, 'sin^2(x)');
+spec.ranges = { x: ['-5', '5'], y: ['-2', '2'] };
 const svg = renderFastSvg(spec, lightTheme);
 
 if (!svg.includes('<svg') || !svg.includes('<path')) {

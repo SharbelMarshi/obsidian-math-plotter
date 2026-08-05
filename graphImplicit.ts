@@ -1,4 +1,4 @@
-import { normalizePgfMath } from './graphExpression';
+import { normalizeFrontendMath } from './graphSyntax';
 
 export interface ImplicitFallback {
 	line: string;
@@ -41,7 +41,7 @@ function ellipseFromRadii(a: number, b: number, filled: boolean): ImplicitFallba
 }
 
 export function tryImplicitFallback(rawExpr: string, filled = false): ImplicitFallback | null {
-	const expr = normalizePgfMath(rawExpr.trim());
+	const expr = normalizeFrontendMath(rawExpr.trim(), { substituteParameters: false });
 
 	const simpleCircle = SIMPLE_CIRCLE.exec(expr);
 	if (simpleCircle) {

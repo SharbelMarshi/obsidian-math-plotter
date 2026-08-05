@@ -1,8 +1,8 @@
-/** Desmos-style placeholder examples shown in GUI fields. */
-export const FUNCTION_PLACEHOLDER_2D = 'sin^2(x)';
-export const FUNCTION_PLACEHOLDER_3D = 'sin^2(x)+cos^2(y)';
-export const FUNCTION_PLACEHOLDER_PDE = 'exp(-2*t)*sin(x)*sin(y)';
-export const FUNCTION_PLACEHOLDER_ODE = 'exp(x)';
+/** Placeholder text is intentionally blank: new graphs should not seed sample math. */
+export const FUNCTION_PLACEHOLDER_2D = '';
+export const FUNCTION_PLACEHOLDER_3D = '';
+export const FUNCTION_PLACEHOLDER_PDE = '';
+export const FUNCTION_PLACEHOLDER_ODE = '';
 
 export function placeholderForGraphType(type: string): string {
 	switch (type) {

@@ -1,4 +1,4 @@
-import { evaluatePlotExpr, normalizePgfMath, type NumericRange } from './graphExpression';
+import { compileNumericPlotEvaluator, evaluatePlotExpr, type NumericRange } from './graphExpression';
 
 export interface AnalysisPoint {
 	x: number;
@@ -15,8 +15,12 @@ function sampleRange(range: NumericRange, samples: number): number[] {
 }
 
 function compileExplicit(expr: string): (x: number) => number | null {
-	const normalized = normalizePgfMath(expr);
-	return (x: number) => evaluatePlotExpr(normalized, 'x', x, false);
+	// Compile once through the full expression engine (supports sin^2(x), |x|, etc.).
+	const compiled = compileNumericPlotEvaluator(expr, 'x');
+	if (compiled) {
+		return compiled;
+	}
+	return (x: number) => evaluatePlotExpr(expr, 'x', x, false);
 }
 
 export function findRootsNumeric(

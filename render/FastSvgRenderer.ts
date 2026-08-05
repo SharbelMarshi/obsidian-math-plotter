@@ -10,13 +10,21 @@ import { gridEnabledForGraph } from '../src/graphGridStyle';
 import { isFastSvg3dGraph } from '../src/fastSvgRouter';
 import { parseBoundToNumber } from '../src/graphRangeValidation';
 import { resolveGraphPointCoordinates } from '../src/graphPointResolution';
-import { getUserFunction, type GraphPoint, type GraphSpec } from '../src/graphSpec';
+import {
+	getUserFunction,
+	resolveGraphRotation,
+	type GraphPoint,
+	type GraphSpec,
+	type GraphViewRotation,
+} from '../src/graphSpec';
 import {
 	heatColorFromZ,
 	resolveFastSvgStrokeColor,
 	resolveSurfaceStyle,
 } from '../src/graphPlotStyle';
 import { formatTickLabel, TICK_LABEL_FONT } from '../src/formatTickLabel';
+import { resolveAxisLineWidth, resolveLabelFontSize } from '../src/renderStyleConfig';
+import { formatMathLabelText } from '../src/mathLabelText';
 import type { GraphThemeColors } from '../src/graphThemeColors';
 import { resolveGraphThemeColors } from '../src/graphThemeColors';
 import { effectiveSamples2D, effectiveSamples3D } from './renderSampleDefaults';
@@ -188,11 +196,12 @@ function renderTitle(
 	colors: ReturnType<typeof svgPalette>,
 	centerX: number,
 	titleY: number | null,
+	fontSize: number,
 ): string {
 	if (!title?.trim() || titleY === null) {
 		return '';
 	}
-	return `<text x="${centerX}" y="${titleY}" text-anchor="middle" font-size="14" font-family="${TICK_LABEL_FONT}" fill="${colors.stroke}">${escapeXml(title.trim())}</text>`;
+	return `<text x="${centerX}" y="${titleY}" text-anchor="middle" font-size="${fontSize}" font-family="${TICK_LABEL_FONT}" fill="${colors.stroke}">${escapeXml(formatMathLabelText(title))}</text>`;
 }
 
 function renderGrid2D(
@@ -233,8 +242,9 @@ function renderAxes2D(
 	const xSpan = bounds.xmax - bounds.xmin;
 	const ySpan = bounds.ymax - bounds.ymin;
 
-	parts.push(`<line x1="${left}" y1="${axisY}" x2="${left + width}" y2="${axisY}" stroke="${colors.stroke}" stroke-width="1.2"/>`);
-	parts.push(`<line x1="${axisX}" y1="${top}" x2="${axisX}" y2="${top + height}" stroke="${colors.stroke}" stroke-width="1.2"/>`);
+	const axisWidth = resolveAxisLineWidth(spec);
+	parts.push(`<line x1="${left}" y1="${axisY}" x2="${left + width}" y2="${axisY}" stroke="${colors.stroke}" stroke-width="${axisWidth}"/>`);
+	parts.push(`<line x1="${axisX}" y1="${top}" x2="${axisX}" y2="${top + height}" stroke="${colors.stroke}" stroke-width="${axisWidth}"/>`);
 
 	for (const x of niceTicks(bounds.xmin, bounds.xmax, tickTargetForSpan(xSpan))) {
 		const px = xScale(x);
@@ -248,10 +258,10 @@ function renderAxes2D(
 	}
 
 	if (labels.x?.trim()) {
-		parts.push(`<text x="${left + width / 2}" y="${top + height + 14}" text-anchor="middle" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(labels.x.trim())}</text>`);
+		parts.push(`<text x="${left + width / 2}" y="${top + height + 14}" text-anchor="middle" font-size="${resolveLabelFontSize(spec)}" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(formatMathLabelText(labels.x))}</text>`);
 	}
 	if (labels.y?.trim()) {
-		parts.push(`<text x="${left - 14}" y="${top + height / 2}" text-anchor="middle" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}" transform="rotate(-90 ${left - 14} ${top + height / 2})">${escapeXml(labels.y.trim())}</text>`);
+		parts.push(`<text x="${left - 14}" y="${top + height / 2}" text-anchor="middle" font-size="${resolveLabelFontSize(spec)}" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}" transform="rotate(-90 ${left - 14} ${top + height / 2})">${escapeXml(formatMathLabelText(labels.y))}</text>`);
 	}
 
 	return parts.join('');
@@ -305,42 +315,25 @@ function sampleData2D(spec: GraphSpec): SamplePoint2D[] {
 		.filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
 }
 
-function projectIsometric(x: number, y: number, z: number): ProjectedPoint {
-	const cos = Math.cos(Math.PI / 6);
-	const sin = Math.sin(Math.PI / 6);
+/**
+ * Orbit projection: azimuth spins the view horizontally around the z axis,
+ * elevation tilts it vertically (0 = side view, 90 = top-down). The default
+ * 45/28 matches pgfplots' view={45}{28}.
+ */
+function projectOrbit(
+	x: number,
+	y: number,
+	z: number,
+	rotation: GraphViewRotation,
+): ProjectedPoint {
+	const azimuth = (rotation.azimuth * Math.PI) / 180;
+	const elevation = (rotation.elevation * Math.PI) / 180;
+	const rotatedX = x * Math.cos(azimuth) - y * Math.sin(azimuth);
+	const depth = x * Math.sin(azimuth) + y * Math.cos(azimuth);
 	return {
-		px: (x - y) * cos,
-		py: -z + (x + y) * sin * 0.45,
+		px: rotatedX,
+		py: -z * Math.cos(elevation) + depth * Math.sin(elevation),
 	};
-}
-
-function fitProjectedPoints(
-	points: ProjectedPoint[],
-	left: number,
-	top: number,
-	width: number,
-	height: number,
-): ProjectedPoint[] {
-	if (points.length === 0) {
-		return points;
-	}
-	let minX = points[0].px;
-	let maxX = points[0].px;
-	let minY = points[0].py;
-	let maxY = points[0].py;
-	for (const p of points) {
-		minX = Math.min(minX, p.px);
-		maxX = Math.max(maxX, p.px);
-		minY = Math.min(minY, p.py);
-		maxY = Math.max(maxY, p.py);
-	}
-	const spanX = maxX - minX || 1;
-	const spanY = maxY - minY || 1;
-	const pad = 0.08;
-	return points.map(p => ({
-		px: left + pad * width + ((p.px - minX) / spanX) * width * (1 - 2 * pad),
-		py: top + pad * height + ((p.py - minY) / spanY) * height * (1 - 2 * pad),
-	}));
 }
 
 function createProjectionLayout(
@@ -349,10 +342,13 @@ function createProjectionLayout(
 	top: number,
 	width: number,
 	height: number,
+	rotation: GraphViewRotation,
 ): {
 	projectWorld: (x: number, y: number, z: number) => ProjectedPoint;
+	/** Linear projected→screen transform: screenX = ax·px + bx, screenY = ay·py + by. */
+	screenTransform: { ax: number; bx: number; ay: number; by: number };
 } {
-	const raw = worldPoints.map(p => projectIsometric(p.x, p.y, p.z));
+	const raw = worldPoints.map(p => projectOrbit(p.x, p.y, p.z, rotation));
 	let minX = raw[0]?.px ?? 0;
 	let maxX = raw[0]?.px ?? 0;
 	let minY = raw[0]?.py ?? 0;
@@ -366,12 +362,20 @@ function createProjectionLayout(
 	const spanX = maxX - minX || 1;
 	const spanY = maxY - minY || 1;
 	const pad = 0.08;
+	const ax = (width * (1 - 2 * pad)) / spanX;
+	const bx = left + pad * width - minX * ax;
+	const ay = (height * (1 - 2 * pad)) / spanY;
+	const by = top + pad * height - minY * ay;
 	const toScreen = (px: number, py: number): ProjectedPoint => ({
-		px: left + pad * width + ((px - minX) / spanX) * width * (1 - 2 * pad),
-		py: top + pad * height + ((py - minY) / spanY) * height * (1 - 2 * pad),
+		px: ax * px + bx,
+		py: ay * py + by,
 	});
 	return {
-		projectWorld: (x, y, z) => toScreen(...Object.values(projectIsometric(x, y, z)) as [number, number]),
+		projectWorld: (x, y, z) => {
+			const p = projectOrbit(x, y, z, rotation);
+			return toScreen(p.px, p.py);
+		},
+		screenTransform: { ax, bx, ay, by },
 	};
 }
 
@@ -483,16 +487,57 @@ function render3DAxisLabelText(
 	anchor: string,
 	fill: string,
 	className: string,
+	fontSize: number,
 ): string {
-	return `<text class="${className}" x="${position.x.toFixed(2)}" y="${position.y.toFixed(2)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="12" fill="${fill}" font-family="${TICK_LABEL_FONT}" pointer-events="none">${escapeXml(text)}</text>`;
+	return `<text class="${className}" x="${position.x.toFixed(2)}" y="${position.y.toFixed(2)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="${fontSize}" fill="${fill}" font-family="${TICK_LABEL_FONT}" pointer-events="none">${escapeXml(text)}</text>`;
 }
 
 function renderAxisLine(
 	from: ProjectedPoint,
 	to: ProjectedPoint,
 	stroke: string,
+	lineWidth: number,
 ): string {
-	return `<line x1="${from.px}" y1="${from.py}" x2="${to.px}" y2="${to.py}" stroke="${stroke}" stroke-width="2.2" marker-end="url(#mathgraph-axis-arrow)"/>`;
+	return `<line x1="${from.px}" y1="${from.py}" x2="${to.px}" y2="${to.py}" stroke="${stroke}" stroke-width="${lineWidth}" marker-end="url(#mathgraph-axis-arrow)"/>`;
+}
+
+function clampToRange(value: number, min: number, max: number): number {
+	return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * 3D axes pass through the true origin (0,0,0), clamped into the plotted domain,
+ * so the crossing point is the actual coordinate origin — matching the 2D style
+ * and making user points at (0,0,0) sit exactly on the crossing.
+ */
+function axis3DEndpoints(
+	xMin: number,
+	xMax: number,
+	yMin: number,
+	yMax: number,
+	zMin: number,
+	zMax: number,
+): {
+	origin: { x: number; y: number; z: number };
+	xStart: { x: number; y: number; z: number };
+	xEnd: { x: number; y: number; z: number };
+	yStart: { x: number; y: number; z: number };
+	yEnd: { x: number; y: number; z: number };
+	zStart: { x: number; y: number; z: number };
+	zEnd: { x: number; y: number; z: number };
+} {
+	const cx = clampToRange(0, xMin, xMax);
+	const cy = clampToRange(0, yMin, yMax);
+	const cz = clampToRange(0, zMin, zMax);
+	return {
+		origin: { x: cx, y: cy, z: cz },
+		xStart: { x: xMin, y: cy, z: cz },
+		xEnd: { x: xMax, y: cy, z: cz },
+		yStart: { x: cx, y: yMin, z: cz },
+		yEnd: { x: cx, y: yMax, z: cz },
+		zStart: { x: cx, y: cy, z: zMin },
+		zEnd: { x: cx, y: cy, z: zMax },
+	};
 }
 
 function render3DAxisLines(
@@ -504,16 +549,15 @@ function render3DAxisLines(
 	zMax: number,
 	projectWorld: (x: number, y: number, z: number) => ProjectedPoint,
 	stroke: string,
+	lineWidth: number,
 ): string {
-	const origin = projectWorld(xMin, yMin, zMin);
-	const xEnd = projectWorld(xMax, yMin, zMin);
-	const yEnd = projectWorld(xMin, yMax, zMin);
-	const zEnd = projectWorld(xMin, yMin, zMax);
+	const axes = axis3DEndpoints(xMin, xMax, yMin, yMax, zMin, zMax);
+	const project = (p: { x: number; y: number; z: number }) => projectWorld(p.x, p.y, p.z);
 	return [
 		axisArrowMarker(stroke),
-		renderAxisLine(origin, xEnd, stroke),
-		renderAxisLine(origin, yEnd, stroke),
-		renderAxisLine(origin, zEnd, stroke),
+		renderAxisLine(project(axes.xStart), project(axes.xEnd), stroke, lineWidth),
+		renderAxisLine(project(axes.yStart), project(axes.yEnd), stroke, lineWidth),
+		renderAxisLine(project(axes.zStart), project(axes.zEnd), stroke, lineWidth),
 	].join('');
 }
 
@@ -527,11 +571,13 @@ function render3DAxisLabels(
 	projectWorld: (x: number, y: number, z: number) => ProjectedPoint,
 	labels: { x?: string; y?: string; z?: string },
 	labelColor: string,
+	fontSize: number,
 ): string {
-	const origin = projectWorld(xMin, yMin, zMin);
-	const xEnd = projectWorld(xMax, yMin, zMin);
-	const yEnd = projectWorld(xMin, yMax, zMin);
-	const zEnd = projectWorld(xMin, yMin, zMax);
+	const axes = axis3DEndpoints(xMin, xMax, yMin, yMax, zMin, zMax);
+	const origin = projectWorld(axes.origin.x, axes.origin.y, axes.origin.z);
+	const xEnd = projectWorld(axes.xEnd.x, axes.xEnd.y, axes.xEnd.z);
+	const yEnd = projectWorld(axes.yEnd.x, axes.yEnd.y, axes.yEnd.z);
+	const zEnd = projectWorld(axes.zEnd.x, axes.zEnd.y, axes.zEnd.z);
 
 	const xDir = axisScreenDirection(origin, xEnd);
 	const yDir = axisScreenDirection(origin, yEnd);
@@ -543,11 +589,12 @@ function render3DAxisLabels(
 	if (labels.x?.trim()) {
 		const pos = placeAxisLabel(xEnd, xDir, 22);
 		parts.push(render3DAxisLabelText(
-			labels.x.trim(),
+			formatMathLabelText(labels.x),
 			pos,
 			textAnchorForDirection(xDir),
 			labelColor,
 			'mathgraph-axis-label mathgraph-axis-label-x',
+			fontSize,
 		));
 	}
 
@@ -557,22 +604,24 @@ function render3DAxisLabels(
 			y: yPerp.y + 8,
 		});
 		parts.push(render3DAxisLabelText(
-			labels.y.trim(),
+			formatMathLabelText(labels.y),
 			pos,
 			textAnchorForDirection(yDir),
 			labelColor,
 			'mathgraph-axis-label mathgraph-axis-label-y',
+			fontSize,
 		));
 	}
 
 	if (labels.z?.trim()) {
 		const pos = placeAxisLabel(zEnd, zDir, 18, { x: 8, y: -14 });
 		parts.push(render3DAxisLabelText(
-			labels.z.trim(),
+			formatMathLabelText(labels.z),
 			pos,
 			textAnchorForDirection(zDir),
 			labelColor,
 			'mathgraph-axis-label mathgraph-axis-label-z',
+			fontSize,
 		));
 	}
 
@@ -605,46 +654,62 @@ function renderPoints2D(
 		const py = yScale(y);
 		parts.push(`<circle cx="${px}" cy="${py}" r="4.5" fill="${colors.point}" stroke="${colors.stroke}" stroke-width="1"/>`);
 		if (point.label?.trim()) {
-			parts.push(`<text x="${px + 8}" y="${py - 8}" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(point.label.trim())}</text>`);
+			parts.push(`<text x="${px + 8}" y="${py - 8}" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(formatMathLabelText(point.label))}</text>`);
+		}
+		if (point.showValue) {
+			parts.push(`<text x="${px}" y="${py + 16}" text-anchor="middle" font-size="11" fill="${colors.muted}" font-family="${TICK_LABEL_FONT}">(${formatCoordValue(x)}, ${formatCoordValue(y)})</text>`);
 		}
 	}
 	return parts.join('');
 }
 
-function renderPoints3D(
-	spec: GraphSpec,
-	left: number,
-	top: number,
-	width: number,
-	height: number,
-	colors: ReturnType<typeof svgPalette>,
-): string {
-	const points = spec.points ?? [];
-	if (points.length === 0) {
-		return '';
-	}
+function formatCoordValue(value: number): string {
+	return String(Number.parseFloat(value.toFixed(3)));
+}
 
-	const projected = points.map(point => {
+interface WorldPoint3D {
+	point: GraphPoint;
+	x: number;
+	y: number;
+	z: number;
+}
+
+/** Resolve user points into numeric world coordinates (computed z included). */
+function resolveWorldPoints3D(spec: GraphSpec): WorldPoint3D[] {
+	const points = spec.points ?? [];
+	const resolvedPoints: WorldPoint3D[] = [];
+	for (const point of points) {
 		const resolved = resolveGraphPointCoordinates(spec, point);
 		if (!resolved) {
-			return null;
+			continue;
 		}
 		const x = parseBoundToNumber(resolved.x);
 		const y = parseBoundToNumber(resolved.y);
 		const z = parseBoundToNumber(resolved.z ?? '0');
 		if (x === null || y === null || z === null) {
-			return null;
+			continue;
 		}
-		return { point, ...projectIsometric(x, y, z) };
-	}).filter((p): p is { point: GraphPoint; px: number; py: number } => p !== null);
+		resolvedPoints.push({ point, x, y, z });
+	}
+	return resolvedPoints;
+}
 
-	const fitted = fitProjectedPoints(projected, left, top, width, height);
-	return fitted.map((p, i) => {
-		const label = projected[i]?.point.label?.trim();
+/** Draw user points with the same projection as the surface so they land on the graph. */
+function renderPoints3D(
+	worldPoints: WorldPoint3D[],
+	projectWorld: (x: number, y: number, z: number) => ProjectedPoint,
+	colors: ReturnType<typeof svgPalette>,
+): string {
+	return worldPoints.map(({ point, x, y, z }) => {
+		const p = projectWorld(x, y, z);
+		const label = point.label?.trim();
 		const labelSvg = label
-			? `<text x="${p.px + 8}" y="${p.py - 8}" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(label)}</text>`
+			? `<text x="${p.px + 8}" y="${p.py - 8}" font-size="12" fill="${colors.stroke}" font-family="${TICK_LABEL_FONT}">${escapeXml(formatMathLabelText(label))}</text>`
 			: '';
-		return `<circle cx="${p.px}" cy="${p.py}" r="4.5" fill="${colors.point}" stroke="${colors.stroke}" stroke-width="1"/>${labelSvg}`;
+		const valueSvg = point.showValue
+			? `<text x="${p.px}" y="${p.py + 16}" text-anchor="middle" font-size="11" fill="${colors.muted}" font-family="${TICK_LABEL_FONT}">(${formatCoordValue(x)}, ${formatCoordValue(y)}, ${formatCoordValue(z)})</text>`
+			: '';
+		return `<circle cx="${p.px}" cy="${p.py}" r="4.5" fill="${colors.point}" stroke="${colors.stroke}" stroke-width="1"/>${labelSvg}${valueSvg}`;
 	}).join('');
 }
 
@@ -705,9 +770,12 @@ function render2DGraph(spec: GraphSpec, theme: GraphThemeColors): string {
 	const curve = pathFrom2DPoints(points, xScale, yScale).replace('stroke-width="2"', `stroke="${curveColor}" stroke-width="2"`);
 	const markers = renderPoints2D(spec, xScale, yScale, colors);
 
+	// Calibration data lets the graph view map pointer positions back to graph coordinates.
+	const calibration = `data-mg-plot="${layout.plotLeft},${layout.plotTop},${layout.plotWidth},${layout.plotHeight}" data-mg-window="${bounds.xmin},${bounds.xmax},${bounds.ymin},${bounds.ymax}"`;
+
 	return [
-		`<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}">`,
-		renderTitle(spec.title, colors, layout.centerX, layout.titleY),
+		`<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" ${calibration}>`,
+		renderTitle(spec.title, colors, layout.centerX, layout.titleY, resolveLabelFontSize(spec)),
 		grid,
 		axes,
 		curve,
@@ -750,27 +818,47 @@ function render3DGraph(spec: GraphSpec, theme: GraphThemeColors): string {
 		zMax = zRange[1];
 	}
 
+	const worldPoints = resolveWorldPoints3D(spec);
 	const axisCorners = [
 		{ x: xMin, y: yMin, z: zMin },
 		{ x: xMax, y: yMin, z: zMin },
 		{ x: xMin, y: yMax, z: zMin },
 		{ x: xMin, y: yMin, z: zMax },
 		...grid,
+		...worldPoints.map(({ x, y, z }) => ({ x, y, z })),
 	];
+
+	// Normalize each axis to [-1, 1] before projecting, like pgfplots scales its
+	// axis box — otherwise a large z-range flattens the surface into a thin band.
+	const xSpan = xMax - xMin || 1;
+	const ySpan = yMax - yMin || 1;
+	const zSpan = zMax - zMin || 1;
+	const normalize = (x: number, y: number, z: number) => ({
+		x: ((x - xMin) / xSpan) * 2 - 1,
+		y: ((y - yMin) / ySpan) * 2 - 1,
+		z: ((z - zMin) / zSpan) * 2 - 1,
+	});
+
+	const rotation = resolveGraphRotation(spec);
 	const projection = createProjectionLayout(
-		axisCorners,
+		axisCorners.map(p => normalize(p.x, p.y, p.z)),
 		layout.plotLeft,
 		layout.plotTop,
 		layout.plotWidth,
 		layout.plotHeight,
+		rotation,
 	);
+	const projectWorld = (x: number, y: number, z: number): ProjectedPoint => {
+		const n = normalize(x, y, z);
+		return projection.projectWorld(n.x, n.y, n.z);
+	};
 	const labels = spec.labels ?? { x: 'x', y: 'y', z: 'z' };
 
 	const surfaceStyle = resolveSurfaceStyle(spec);
 	const mesh = spec.type === 'parametric3d'
 		? (() => {
 			const d = grid.map((p, i) => {
-				const pt = projection.projectWorld(p.x, p.y, p.z);
+				const pt = projectWorld(p.x, p.y, p.z);
 				return `${i === 0 ? 'M' : 'L'}${pt.px},${pt.py}`;
 			}).join(' ');
 			return `<path d="${d}" fill="none" stroke="${curveColor}" stroke-width="2"/>`;
@@ -779,7 +867,7 @@ function render3DGraph(spec: GraphSpec, theme: GraphThemeColors): string {
 			grid,
 			samplesX,
 			samplesY,
-			projection.projectWorld,
+			projectWorld,
 			curveColor,
 			surfaceStyle,
 			zMin,
@@ -793,8 +881,9 @@ function render3DGraph(spec: GraphSpec, theme: GraphThemeColors): string {
 		yMax,
 		zMin,
 		zMax,
-		projection.projectWorld,
+		projectWorld,
 		axisStroke,
+		resolveAxisLineWidth(spec) + 1,
 	);
 	const axisLabels = render3DAxisLabels(
 		xMin,
@@ -803,17 +892,26 @@ function render3DGraph(spec: GraphSpec, theme: GraphThemeColors): string {
 		yMax,
 		zMin,
 		zMax,
-		projection.projectWorld,
+		projectWorld,
 		labels,
 		theme.text,
+		resolveLabelFontSize(spec),
 	);
 
+	// Calibration data lets the graph view map pointer positions back to 3D world coordinates.
+	const transform = projection.screenTransform;
+	const calibration3d = [
+		xMin, xMax, yMin, yMax, zMin, zMax,
+		rotation.azimuth, rotation.elevation,
+		transform.ax, transform.bx, transform.ay, transform.by,
+	].map(value => Number.parseFloat(value.toPrecision(10))).join(',');
+
 	return [
-		`<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}">`,
-		renderTitle(spec.title, colors, layout.centerX, layout.titleY),
+		`<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" data-mg-3d="${calibration3d}">`,
+		renderTitle(spec.title, colors, layout.centerX, layout.titleY, resolveLabelFontSize(spec)),
 		mesh,
 		axisLines,
-		renderPoints3D(spec, layout.plotLeft, layout.plotTop, layout.plotWidth, layout.plotHeight, colors),
+		renderPoints3D(worldPoints, projectWorld, colors),
 		axisLabels,
 		'</svg>',
 	].join('');

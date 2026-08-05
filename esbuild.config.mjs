@@ -20,6 +20,19 @@ esbuild.build({
 	external: [
 		'obsidian',
 		'electron',
+		// CodeMirror is provided by Obsidian at runtime — bundling a second copy
+		// breaks instanceof checks ("Unrecognized extension value in extension set").
+		'@codemirror/autocomplete',
+		'@codemirror/collab',
+		'@codemirror/commands',
+		'@codemirror/language',
+		'@codemirror/lint',
+		'@codemirror/search',
+		'@codemirror/state',
+		'@codemirror/view',
+		'@lezer/common',
+		'@lezer/highlight',
+		'@lezer/lr',
 		...builtinModules,
 	],
 	format: 'cjs',

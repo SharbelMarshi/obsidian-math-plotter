@@ -1,4 +1,4 @@
-import { App, Modal, Notice } from 'obsidian';
+import { App, Menu, Modal, Notice } from 'obsidian';
 import type MathGraphStudioPlugin from '../main';
 import { replaceGraphBlockBody, type GraphBlockLocation } from './GraphBlockUpdater';
 import { placeholderForGraphType } from './functionPlaceholders';
@@ -24,8 +24,6 @@ import {
 import {
 	applyPresetToGraphSize,
 	clampDisplayScale,
-	DISPLAY_SCALE_MAX,
-	DISPLAY_SCALE_MIN,
 	DISPLAY_SCALE_STEP,
 	ensureGraphSize,
 	formatDisplayScaleLabel,
@@ -38,6 +36,12 @@ import { ASPECT_MODE_LABELS, graphUses2dAspectRatio } from './graphAspectLayout'
 import { surfaceZRangeClipWarning } from './graphRangeValidation';
 import { graphSupportsGridToggle, gridEnabledForGraph } from './graphGridStyle';
 import { graphSupportsSurfaceStyleControl, hydrateGraphStyle, type SurfaceStyle } from './graphPlotStyle';
+import {
+	clampAxisLineWidth,
+	clampLabelFontSize,
+	resolveAxisLineWidth,
+	resolveLabelFontSize,
+} from './renderStyleConfig';
 import { mathgraphUiClassName } from './uiStyle';
 
 export interface GraphBuilderModalOptions {
@@ -47,24 +51,14 @@ export interface GraphBuilderModalOptions {
 	onInsert?: (spec: GraphSpec) => Promise<void>;
 }
 
-type BuilderTab = 'equation' | 'ranges' | 'style' | 'size' | 'points';
-
-const BUILDER_TABS: Array<{ id: BuilderTab; label: string }> = [
-	{ id: 'equation', label: 'Equation' },
-	{ id: 'ranges', label: 'Ranges' },
-	{ id: 'style', label: 'Style' },
-	{ id: 'size', label: 'Size' },
-	{ id: 'points', label: 'Points' },
-];
+type BuilderSection = 'equation' | 'ranges' | 'style' | 'size' | 'points';
 
 export class GraphBuilderModal extends Modal {
 	private spec: GraphSpec;
 	private readonly options: GraphBuilderModalOptions;
 	private shellEl!: HTMLElement;
-	private panelEl!: HTMLElement;
-	private activeTab: BuilderTab = 'equation';
-	private navItems = new Map<BuilderTab, HTMLElement>();
-	private panels = new Map<BuilderTab, HTMLElement>();
+	private bodyEl!: HTMLElement;
+	private sections = new Map<BuilderSection, HTMLElement>();
 	private pointWarningsEl: HTMLElement | null = null;
 
 	constructor(app: App, private plugin: MathGraphStudioPlugin, options: GraphBuilderModalOptions) {
@@ -86,38 +80,15 @@ export class GraphBuilderModal extends Modal {
 		});
 
 		this.renderHeader();
-		this.renderMain();
+		this.bodyEl = this.shellEl.createDiv({ cls: 'mathgraph-modal-body-scroll' });
 		this.renderFooter();
 		this.renderForm();
-		this.switchTab(this.activeTab);
 	}
 
 	private renderHeader(): void {
 		const header = this.shellEl.createDiv({ cls: 'mathgraph-modal-header' });
 		const textWrap = header.createDiv({ cls: 'mathgraph-modal-header-text' });
 		textWrap.createDiv({ cls: 'mathgraph-modal-title', text: 'Math Plotter' });
-	}
-
-	private renderMain(): void {
-		const main = this.shellEl.createDiv({ cls: 'mathgraph-modal-main' });
-		const nav = main.createDiv({ cls: 'mathgraph-modal-nav' });
-
-		for (const tab of BUILDER_TABS) {
-			const item = nav.createDiv({
-				cls: 'mathgraph-modal-nav-item',
-				text: tab.label,
-			});
-			item.dataset.tab = tab.id;
-			item.addEventListener('click', () => this.switchTab(tab.id));
-			this.navItems.set(tab.id, item);
-		}
-
-		this.panelEl = main.createDiv({ cls: 'mathgraph-modal-panel-scroll' });
-		for (const tab of BUILDER_TABS) {
-			const panel = this.panelEl.createDiv({ cls: 'mathgraph-modal-panel' });
-			panel.dataset.tab = tab.id;
-			this.panels.set(tab.id, panel);
-		}
 	}
 
 	private renderFooter(): void {
@@ -136,43 +107,31 @@ export class GraphBuilderModal extends Modal {
 		}).addEventListener('click', () => void this.submit());
 	}
 
-	private switchTab(tab: BuilderTab): void {
-		this.activeTab = tab;
-		for (const [id, item] of this.navItems) {
-			item.toggleClass('mathgraph-modal-nav-item-active', id === tab);
-		}
-		for (const [id, panel] of this.panels) {
-			panel.toggleClass('mathgraph-modal-panel-active', id === tab);
-		}
-	}
-
-	private updateNavVisibility(): void {
-		const pointsNav = this.navItems.get('points');
-		pointsNav?.toggleClass('mathgraph-modal-nav-item-hidden', this.spec.type === 'data');
-		if (this.spec.type === 'data' && this.activeTab === 'points') {
-			this.switchTab('equation');
-		}
-	}
-
-	private getPanel(tab: BuilderTab): HTMLElement {
-		const panel = this.panels.get(tab);
-		if (!panel) {
-			throw new Error(`Missing builder panel: ${tab}`);
-		}
-		return panel;
-	}
-
 	private renderForm(): void {
-		for (const panel of this.panels.values()) {
-			panel.empty();
+		const scrollTop = this.bodyEl.scrollTop;
+		this.bodyEl.empty();
+		this.sections.clear();
+		this.pointWarningsEl = null;
+
+		this.renderEquationSection(this.createSection('equation'));
+		this.renderRangesSection(this.createSection('ranges', 'Ranges'));
+		this.renderStyleSection(this.createSection('style', 'Style'));
+		this.renderSizeSection(this.createSection('size', 'Size'));
+		if (this.spec.type !== 'data') {
+			this.renderPointsSection(this.createSection('points', 'Points'));
 		}
 
-		this.renderEquationPanel(this.getPanel('equation'));
-		this.renderRangesPanel(this.getPanel('ranges'));
-		this.renderStylePanel(this.getPanel('style'));
-		this.renderSizePanel(this.getPanel('size'));
-		this.renderPointsPanel(this.getPanel('points'));
-		this.updateNavVisibility();
+		this.bodyEl.scrollTop = scrollTop;
+	}
+
+	private createSection(id: BuilderSection, title?: string): HTMLElement {
+		const section = this.bodyEl.createDiv({ cls: 'mathgraph-form-section' });
+		section.dataset.section = id;
+		if (title) {
+			section.createDiv({ cls: 'mathgraph-form-section-title', text: title });
+		}
+		this.sections.set(id, section);
+		return section;
 	}
 
 	private formGrid(parent: HTMLElement): HTMLElement {
@@ -213,14 +172,118 @@ export class GraphBuilderModal extends Modal {
 		input.addEventListener('input', () => onChange(input.value));
 	}
 
+	/** Wide text input with the graph-type chooser chip attached to its right edge. */
+	private formPrimaryText(
+		parent: HTMLElement,
+		label: string,
+		value: string,
+		onChange: (value: string) => void,
+		placeholder?: string,
+	): void {
+		const field = this.formRow(parent, label, { wide: true });
+		const group = field.createDiv({ cls: 'mathgraph-fn-group' });
+		const input = group.createEl('input', {
+			type: 'text',
+			cls: 'mathgraph-input mathgraph-fn-input',
+			value,
+		});
+		if (placeholder) {
+			input.placeholder = placeholder;
+		}
+		input.addEventListener('input', () => onChange(input.value));
+		this.renderTypeChip(group);
+	}
+
+	private renderTypeChip(parent: HTMLElement): void {
+		const chip = parent.createEl('button', {
+			type: 'button',
+			cls: 'mathgraph-type-chip',
+			attr: {
+				'aria-label': 'Change graph type',
+				'aria-haspopup': 'menu',
+				title: 'Graph type',
+			},
+		});
+		chip.createSpan({ cls: 'mathgraph-type-chip-label', text: GRAPH_TYPE_LABELS[this.spec.type] });
+		chip.createSpan({ cls: 'mathgraph-type-chip-caret', text: '▾' });
+		chip.addEventListener('click', evt => {
+			evt.preventDefault();
+			const menu = new Menu();
+			for (const [value, label] of Object.entries(GRAPH_TYPE_LABELS) as Array<[GraphType, string]>) {
+				menu.addItem(item => {
+					item.setTitle(label);
+					item.setChecked(value === this.spec.type);
+					item.onClick(() => this.changeGraphType(value));
+				});
+			}
+			menu.showAtMouseEvent(evt);
+		});
+	}
+
+	/** Switch graph type while preserving everything the user already entered that still applies. */
+	private changeGraphType(next: GraphType): void {
+		if (next === this.spec.type) {
+			return;
+		}
+
+		const previous = this.spec;
+		const fresh = defaultGraphSpec(next, this.plugin.settings);
+
+		if (previous.size) {
+			fresh.size = previous.size;
+		}
+		if (previous.title?.trim()) {
+			fresh.title = previous.title;
+		}
+
+		const fn = getUserFunction(previous);
+		if (fn && next !== 'data' && next !== 'parametric2d' && next !== 'parametric3d') {
+			setUserFunction(fresh, fn);
+		}
+		if (next === 'parametric2d' || next === 'parametric3d') {
+			fresh.parameter = previous.parameter ?? 't';
+			fresh.xExpression = previous.xExpression ?? '';
+			fresh.yExpression = previous.yExpression ?? '';
+			fresh.zExpression = previous.zExpression ?? '';
+		}
+		if (previous.parameters && Object.keys(previous.parameters).length > 0) {
+			fresh.parameters = { ...previous.parameters };
+		}
+		if (previous.points?.length) {
+			fresh.points = previous.points;
+		}
+		if (previous.samples) {
+			fresh.samples = previous.samples;
+		}
+
+		const freshRanges = fresh.ranges ?? {};
+		for (const key of Object.keys(freshRanges) as Array<'x' | 'y' | 'z' | 't'>) {
+			const prevRange = previous.ranges?.[key];
+			if (prevRange && (prevRange[0].trim() || prevRange[1].trim())) {
+				freshRanges[key] = prevRange;
+			}
+		}
+
+		this.spec = fresh;
+		this.renderForm();
+	}
+
 	private formTextArea(
 		parent: HTMLElement,
 		label: string,
 		value: string,
 		onChange: (value: string) => void,
-		options?: { placeholder?: string; help?: string; wide?: boolean },
+		options?: { placeholder?: string; withTypeChip?: boolean },
 	): void {
-		const field = this.formRow(parent, label, { ...options, wide: true });
+		const row = parent.createDiv({ cls: 'mathgraph-form-row mathgraph-form-row-wide' });
+		if (options?.withTypeChip) {
+			const labelRow = row.createDiv({ cls: 'mathgraph-label-row' });
+			labelRow.createEl('label', { cls: 'mathgraph-field-label', text: label });
+			this.renderTypeChip(labelRow);
+		} else {
+			row.createEl('label', { cls: 'mathgraph-field-label', text: label });
+		}
+		const field = row.createDiv({ cls: 'mathgraph-field' });
 		const input = field.createEl('textarea', {
 			cls: 'mathgraph-input mathgraph-textarea',
 			text: value,
@@ -249,24 +312,24 @@ export class GraphBuilderModal extends Modal {
 		select.addEventListener('change', () => onChange(select.value));
 	}
 
-	private formRangeRow(
+	private rangeInline(
 		parent: HTMLElement,
 		label: string,
 		current: [string, string],
 		onChange: (min: string, max: string) => void,
 	): void {
-		const row = parent.createDiv({ cls: 'mathgraph-range-row' });
-		row.createEl('label', { cls: 'mathgraph-range-label', text: `${label} range` });
-		const minInput = row.createEl('input', {
+		const group = parent.createDiv({ cls: 'mathgraph-range-inline' });
+		group.createSpan({ cls: 'mathgraph-range-inline-label', text: label });
+		const minInput = group.createEl('input', {
 			type: 'text',
-			cls: 'mathgraph-input',
+			cls: 'mathgraph-input mathgraph-range-inline-input',
 			value: current[0],
 			attr: { placeholder: 'min' },
 		});
-		row.createSpan({ cls: 'mathgraph-range-separator', text: 'to' });
-		const maxInput = row.createEl('input', {
+		group.createSpan({ cls: 'mathgraph-range-inline-sep', text: '–' });
+		const maxInput = group.createEl('input', {
 			type: 'text',
-			cls: 'mathgraph-input',
+			cls: 'mathgraph-input mathgraph-range-inline-input',
 			value: current[1],
 			attr: { placeholder: 'max' },
 		});
@@ -275,68 +338,85 @@ export class GraphBuilderModal extends Modal {
 		maxInput.addEventListener('input', sync);
 	}
 
-	private formSampleField(
+	/** Compact [−][value][+] control; apply() clamps and returns the value to display. */
+	private numberStepper(
+		parent: HTMLElement,
+		label: string,
+		initial: number,
+		step: number,
+		apply: (next: number) => number,
+	): void {
+		const group = parent.createDiv({ cls: 'mathgraph-range-inline' });
+		group.createSpan({ cls: 'mathgraph-range-inline-label', text: label });
+		const stepper = group.createDiv({ cls: 'mathgraph-stepper' });
+
+		const format = (value: number) => String(Number.parseFloat(value.toFixed(2)));
+		const minusBtn = stepper.createEl('button', {
+			type: 'button',
+			cls: 'mathgraph-stepper-btn',
+			text: '−',
+			attr: { 'aria-label': `Decrease ${label.toLowerCase()}` },
+		});
+		const input = stepper.createEl('input', {
+			type: 'text',
+			cls: 'mathgraph-input mathgraph-stepper-value',
+			value: format(initial),
+		});
+		const plusBtn = stepper.createEl('button', {
+			type: 'button',
+			cls: 'mathgraph-stepper-btn',
+			text: '+',
+			attr: { 'aria-label': `Increase ${label.toLowerCase()}` },
+		});
+
+		const current = () => Number.parseFloat(input.value.trim());
+		const set = (next: number) => {
+			input.value = format(apply(next));
+		};
+
+		minusBtn.addEventListener('click', () => set((Number.isFinite(current()) ? current() : initial) - step));
+		plusBtn.addEventListener('click', () => set((Number.isFinite(current()) ? current() : initial) + step));
+		input.addEventListener('change', () => {
+			const parsed = current();
+			set(Number.isFinite(parsed) ? parsed : initial);
+		});
+	}
+
+	private sampleInline(
 		parent: HTMLElement,
 		label: string,
 		value: string,
 		onChange: (value: string) => void,
 	): void {
-		const field = parent.createDiv({ cls: 'mathgraph-field mathgraph-sample-field' });
-		field.createEl('label', { cls: 'mathgraph-field-label', text: label });
-		const input = field.createEl('input', {
+		const group = parent.createDiv({ cls: 'mathgraph-range-inline mathgraph-sample-inline' });
+		group.createSpan({ cls: 'mathgraph-range-inline-label', text: label });
+		const input = group.createEl('input', {
 			type: 'text',
-			cls: 'mathgraph-input',
+			cls: 'mathgraph-input mathgraph-range-inline-input',
 			value,
 		});
 		input.addEventListener('input', () => onChange(input.value));
 	}
 
-	private renderEquationPanel(panel: HTMLElement): void {
+	private renderEquationSection(panel: HTMLElement): void {
 		const grid = this.formGrid(panel);
-
-		this.formSelect(grid, 'Graph type', this.spec.type, Object.entries(GRAPH_TYPE_LABELS)
-			.map(([value, label]) => ({ value, label })), value => {
-			const preservedSize = this.spec.size;
-			this.spec = defaultGraphSpec(value as GraphType, this.plugin.settings);
-			if (preservedSize) {
-				this.spec.size = preservedSize;
-			}
-			this.renderForm();
-			this.updateNavVisibility();
-		}, { wide: true });
-
-		this.formText(grid, 'Title', this.spec.title ?? '', value => {
-			this.spec.title = value;
-		}, {
-			placeholder: 'Optional graph title',
-			wide: true,
-		});
 
 		switch (this.spec.type) {
 			case 'function2d':
-				this.formText(grid, 'Function', getUserFunction(this.spec), value => {
+				this.formPrimaryText(grid, 'Function', getUserFunction(this.spec), value => {
 					setUserFunction(this.spec, value);
-				}, {
-					placeholder: placeholderForGraphType('function2d'),
-					wide: true,
-				});
+				}, placeholderForGraphType('function2d'));
 				break;
 			case 'surface3d':
-				this.formText(grid, 'Surface function', getUserFunction(this.spec), value => {
+				this.formPrimaryText(grid, 'Surface function', getUserFunction(this.spec), value => {
 					setUserFunction(this.spec, value);
-				}, {
-					placeholder: placeholderForGraphType('surface3d'),
-					wide: true,
-				});
+				}, placeholderForGraphType('surface3d'));
 				break;
 			case 'parametric2d':
 			case 'parametric3d':
-				this.formText(grid, 'Parameter', this.spec.parameter ?? 't', value => {
-					this.spec.parameter = value || 't';
-				}, { placeholder: 't' });
-				this.formText(grid, 'x(t)', this.spec.xExpression ?? '', value => {
+				this.formPrimaryText(grid, 'x(t)', this.spec.xExpression ?? '', value => {
 					this.spec.xExpression = value;
-				}, { wide: true });
+				});
 				this.formText(grid, 'y(t)', this.spec.yExpression ?? '', value => {
 					this.spec.yExpression = value;
 				}, { wide: true });
@@ -345,21 +425,18 @@ export class GraphBuilderModal extends Modal {
 						this.spec.zExpression = value;
 					}, { wide: true });
 				}
+				this.formText(grid, 'Parameter', this.spec.parameter ?? 't', value => {
+					this.spec.parameter = value || 't';
+				}, { placeholder: 't' });
 				break;
 			case 'ode':
 			case 'pde':
+				this.formPrimaryText(grid, 'Solution', getUserFunction(this.spec), value => {
+					setUserFunction(this.spec, value);
+				}, placeholderForGraphType(this.spec.type));
 				this.formText(grid, 'Equation label', this.spec.equation ?? '', value => {
 					this.spec.equation = value;
-				}, {
-					placeholder: this.spec.type === 'pde' ? 'u_t = u_xx + u_yy' : "y' = -2y",
-					wide: true,
-				});
-				this.formText(grid, 'Solution', getUserFunction(this.spec), value => {
-					setUserFunction(this.spec, value);
-				}, {
-					placeholder: placeholderForGraphType(this.spec.type),
-					wide: true,
-				});
+				}, { wide: true });
 				if (this.spec.type === 'pde') {
 					this.formSelect(grid, 'View', this.spec.view ?? '3d', [
 						{ value: '2d', label: '2D curve / slice' },
@@ -369,7 +446,6 @@ export class GraphBuilderModal extends Modal {
 						this.renderForm();
 					});
 				}
-				this.renderParametersBlock(grid);
 				panel.createEl('p', {
 					cls: 'mathgraph-equation-tab-note',
 					text: 'ODE/PDE modes plot explicit solutions.',
@@ -385,11 +461,19 @@ export class GraphBuilderModal extends Modal {
 							const [x, y] = line.split(',').map(part => part.trim());
 							return { x: x ?? '0', y: y ?? '0' };
 						});
-				}, {
-					placeholder: '0, 0\n1, 1\n2, 4',
-					wide: true,
-				});
+				}, { withTypeChip: true });
 				break;
+		}
+
+		this.formText(grid, 'Title', this.spec.title ?? '', value => {
+			this.spec.title = value;
+		}, {
+			placeholder: 'Optional graph title',
+			wide: true,
+		});
+
+		if (this.spec.type !== 'data') {
+			this.renderParametersBlock(grid);
 		}
 	}
 
@@ -399,13 +483,8 @@ export class GraphBuilderModal extends Modal {
 		const list = block.createDiv({ cls: 'mathgraph-param-list' });
 
 		const params = this.spec.parameters ?? {};
-		const entries = Object.entries(params);
-		if (entries.length === 0) {
-			this.addParameterRow(list, 't', '0');
-		} else {
-			for (const [name, value] of entries) {
-				this.addParameterRow(list, name, value);
-			}
+		for (const [name, value] of Object.entries(params)) {
+			this.addParameterRow(list, name, value);
 		}
 
 		block.createEl('button', {
@@ -460,8 +539,8 @@ export class GraphBuilderModal extends Modal {
 		this.spec.parameters = params;
 	}
 
-	private renderRangesPanel(panel: HTMLElement): void {
-		const container = panel.createDiv({ cls: 'mathgraph-ranges-panel' });
+	private renderRangesSection(panel: HTMLElement): void {
+		const line = panel.createDiv({ cls: 'mathgraph-ranges-line' });
 		const ranges = this.spec.ranges ?? {};
 		const type = this.spec.type;
 		const is3dView = this.spec.view === '3d';
@@ -472,7 +551,7 @@ export class GraphBuilderModal extends Modal {
 
 		const addRange = (key: 'x' | 'y' | 'z' | 't', label: string) => {
 			const current = ranges[key] ?? ['', ''];
-			this.formRangeRow(container, label, current, (min, max) => {
+			this.rangeInline(line, label, current, (min, max) => {
 				this.spec.ranges = this.spec.ranges ?? {};
 				this.spec.ranges[key] = [min, max];
 			});
@@ -493,24 +572,20 @@ export class GraphBuilderModal extends Modal {
 			}
 		}
 
-		const samplesRow = container.createDiv({
-			cls: `mathgraph-samples-row${showSamplesY ? '' : ' mathgraph-samples-row-2d'}`,
-		});
-
-		this.formSampleField(samplesRow, 'Samples', String(this.spec.samples ?? 100), value => {
+		this.sampleInline(line, 'Samples', String(this.spec.samples ?? 100), value => {
 			const parsed = Number.parseInt(value, 10);
 			this.spec.samples = Number.isFinite(parsed) ? parsed : 100;
 		});
 
 		if (showSamplesY) {
-			this.formSampleField(samplesRow, 'Samples Y', String(this.spec.samplesY ?? 35), value => {
+			this.sampleInline(line, 'Samples Y', String(this.spec.samplesY ?? 35), value => {
 				const parsed = Number.parseInt(value, 10);
 				this.spec.samplesY = Number.isFinite(parsed) ? parsed : 35;
 			});
 		}
 	}
 
-	private renderStylePanel(panel: HTMLElement): void {
+	private renderStyleSection(panel: HTMLElement): void {
 		const grid = this.formGrid(panel);
 		const style = this.spec.style ?? {};
 		hydrateGraphStyle(this.spec);
@@ -546,19 +621,40 @@ export class GraphBuilderModal extends Modal {
 			this.spec.style.width = value;
 		}, { placeholder: '1pt' });
 
+		const appearanceLine = panel.createDiv({ cls: 'mathgraph-ranges-line mathgraph-axis-labels-line' });
+		this.numberStepper(appearanceLine, 'Axis width', resolveAxisLineWidth(this.spec), 0.2, next => {
+			this.spec.style = this.spec.style ?? {};
+			this.spec.style.axisWidth = clampAxisLineWidth(next);
+			return this.spec.style.axisWidth;
+		});
+		this.numberStepper(appearanceLine, 'Text size', resolveLabelFontSize(this.spec), 1, next => {
+			this.spec.style = this.spec.style ?? {};
+			this.spec.style.labelFontSize = clampLabelFontSize(next);
+			return this.spec.style.labelFontSize;
+		});
+
 		const labels = this.spec.labels ?? {};
+		const labelsLine = panel.createDiv({ cls: 'mathgraph-ranges-line mathgraph-axis-labels-line' });
+		labelsLine.createSpan({ cls: 'mathgraph-range-inline-label mathgraph-line-caption', text: 'Axis labels' });
 		for (const axis of ['x', 'y', 'z'] as const) {
-			if (axis === 'z' && this.spec.type === 'function2d') {
+			if (axis === 'z' && !graphUses3dPoints(this.spec)) {
 				continue;
 			}
-			this.formText(grid, `${axis}-axis label`, labels[axis] ?? axis, value => {
+			const group = labelsLine.createDiv({ cls: 'mathgraph-range-inline' });
+			group.createSpan({ cls: 'mathgraph-range-inline-label', text: axis });
+			const input = group.createEl('input', {
+				type: 'text',
+				cls: 'mathgraph-input mathgraph-range-inline-input',
+				value: labels[axis] ?? axis,
+			});
+			input.addEventListener('input', () => {
 				this.spec.labels = this.spec.labels ?? {};
-				this.spec.labels[axis] = value;
+				this.spec.labels[axis] = input.value;
 			});
 		}
 	}
 
-	private renderSizePanel(panel: HTMLElement): void {
+	private renderSizeSection(panel: HTMLElement): void {
 		const grid = this.formGrid(panel);
 		grid.addClass('mathgraph-size-section');
 		const size = ensureGraphSize(this.spec);
@@ -571,9 +667,6 @@ export class GraphBuilderModal extends Modal {
 				this.spec,
 			);
 			this.renderForm();
-			this.switchTab('size');
-		}, {
-			wide: true,
 		});
 
 		if (graphUses2dAspectRatio(this.spec)) {
@@ -588,7 +681,6 @@ export class GraphBuilderModal extends Modal {
 						aspectMode: value as AspectMode,
 					};
 				},
-				{ wide: true },
 			);
 		}
 
@@ -610,40 +702,55 @@ export class GraphBuilderModal extends Modal {
 			}, { placeholder: '10cm' });
 		}
 
-		const scaleRow = grid.createDiv({ cls: 'mathgraph-form-row mathgraph-form-row-wide' });
+		const scaleRow = grid.createDiv({ cls: 'mathgraph-form-row' });
 		scaleRow.createEl('label', { cls: 'mathgraph-field-label', text: 'Display scale' });
-		const scaleField = scaleRow.createDiv({ cls: 'mathgraph-field mathgraph-size-scale-field' });
-		const scaleValue = scaleField.createSpan({
-			cls: 'mathgraph-size-scale-value',
-			text: formatDisplayScaleLabel(size.displayScale ?? 1),
+		const scaleField = scaleRow.createDiv({ cls: 'mathgraph-field' });
+		const stepper = scaleField.createDiv({ cls: 'mathgraph-stepper' });
+
+		const minusBtn = stepper.createEl('button', {
+			type: 'button',
+			cls: 'mathgraph-stepper-btn',
+			text: '−',
+			attr: { 'aria-label': 'Decrease display scale' },
 		});
-		const scaleInput = scaleField.createEl('input', {
-			type: 'range',
-			cls: 'mathgraph-size-slider',
+		const valueInput = stepper.createEl('input', {
+			type: 'text',
+			cls: 'mathgraph-input mathgraph-stepper-value',
+			value: formatDisplayScaleLabel(size.displayScale ?? 1),
 		});
-		scaleInput.min = String(DISPLAY_SCALE_MIN);
-		scaleInput.max = String(DISPLAY_SCALE_MAX);
-		scaleInput.step = String(DISPLAY_SCALE_STEP);
-		scaleInput.value = String(clampDisplayScale(size.displayScale ?? 1));
-		scaleInput.addEventListener('input', () => {
-			const next = clampDisplayScale(Number.parseFloat(scaleInput.value));
-			scaleValue.setText(formatDisplayScaleLabel(next));
+		const plusBtn = stepper.createEl('button', {
+			type: 'button',
+			cls: 'mathgraph-stepper-btn',
+			text: '+',
+			attr: { 'aria-label': 'Increase display scale' },
+		});
+
+		const setScale = (next: number) => {
+			const clamped = clampDisplayScale(next);
+			valueInput.value = formatDisplayScaleLabel(clamped);
 			this.spec.size = {
 				...ensureGraphSize(this.spec),
-				displayScale: next,
+				displayScale: clamped,
 			};
+		};
+
+		minusBtn.addEventListener('click', () => {
+			setScale(clampDisplayScale(ensureGraphSize(this.spec).displayScale ?? 1) - DISPLAY_SCALE_STEP);
+		});
+		plusBtn.addEventListener('click', () => {
+			setScale(clampDisplayScale(ensureGraphSize(this.spec).displayScale ?? 1) + DISPLAY_SCALE_STEP);
+		});
+		valueInput.addEventListener('change', () => {
+			const pct = Number.parseFloat(valueInput.value.replace('%', '').trim());
+			if (Number.isFinite(pct) && pct > 0) {
+				setScale(pct / 100);
+			} else {
+				valueInput.value = formatDisplayScaleLabel(ensureGraphSize(this.spec).displayScale ?? 1);
+			}
 		});
 	}
 
-	private renderPointsPanel(panel: HTMLElement): void {
-		if (this.spec.type === 'data') {
-			panel.createEl('p', {
-				cls: 'mathgraph-field-help',
-				text: 'Data plots use the Equation tab for point values.',
-			});
-			return;
-		}
-
+	private renderPointsSection(panel: HTMLElement): void {
 		const is3d = graphUses3dPoints(this.spec);
 		const autoY = graphSupportsAutoComputeY(this.spec);
 		const autoZ = graphSupportsAutoComputeZ(this.spec);
@@ -653,12 +760,8 @@ export class GraphBuilderModal extends Modal {
 			? { x: '', y: '', z: '', label: '' }
 			: { x: '', y: autoY ? '' : '', label: '' };
 
-		if (points.length === 0) {
-			this.addPointRow(list, emptyPoint, is3d, autoY, autoZ);
-		} else {
-			for (const point of points) {
-				this.addPointRow(list, point, is3d, autoY, autoZ);
-			}
+		for (const point of points) {
+			this.addPointRow(list, point, is3d, autoY, autoZ);
 		}
 
 		panel.createEl('button', {
@@ -783,13 +886,15 @@ export class GraphBuilderModal extends Modal {
 		const autoY = graphSupportsAutoComputeY(this.spec);
 		const autoZ = graphSupportsAutoComputeZ(this.spec);
 
-		rows.forEach(row => {
-			const inputs = row.querySelectorAll('input');
-			const x = inputs[0]?.value.trim() ?? '';
-			const y = inputs[1]?.value.trim() ?? '';
-			const z = is3d ? inputs[2]?.value.trim() ?? '' : undefined;
+		rows.forEach((row, rowIndex) => {
+			const inputs = row.querySelectorAll('input[type="text"]');
+			const x = (inputs[0] as HTMLInputElement | undefined)?.value.trim() ?? '';
+			const y = (inputs[1] as HTMLInputElement | undefined)?.value.trim() ?? '';
+			const z = is3d ? (inputs[2] as HTMLInputElement | undefined)?.value.trim() ?? '' : undefined;
 			const labelIndex = is3d ? 3 : 2;
-			const label = inputs[labelIndex]?.value.trim();
+			const label = (inputs[labelIndex] as HTMLInputElement | undefined)?.value.trim();
+			// showValue has no form control — carry it over from the stored point (JSON-editable).
+			const showValue = this.spec.points?.[rowIndex]?.showValue;
 
 			if (!x) {
 				return;
@@ -807,6 +912,7 @@ export class GraphBuilderModal extends Modal {
 			const entry: GraphPoint = {
 				x,
 				label: label || undefined,
+				showValue: showValue || undefined,
 			};
 			if (autoY) {
 				entry.y = y;
@@ -823,11 +929,11 @@ export class GraphBuilderModal extends Modal {
 	}
 
 	private async submit(): Promise<void> {
-		const paramList = this.panels.get('equation')?.querySelector('.mathgraph-param-list');
+		const paramList = this.sections.get('equation')?.querySelector('.mathgraph-param-list');
 		if (isHTMLElement(paramList)) {
 			this.syncParametersFromDom(paramList);
 		}
-		const pointList = this.panels.get('points')?.querySelector('.mathgraph-point-list');
+		const pointList = this.sections.get('points')?.querySelector('.mathgraph-point-list');
 		if (isHTMLElement(pointList)) {
 			this.syncPointsFromDom(pointList);
 		}
@@ -835,7 +941,7 @@ export class GraphBuilderModal extends Modal {
 		const sizeError = validateGraphSize(ensureGraphSize(this.spec));
 		if (sizeError) {
 			new Notice(sizeError);
-			this.switchTab('size');
+			this.sections.get('size')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 			return;
 		}
 

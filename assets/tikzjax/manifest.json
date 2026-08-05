@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "module": "assets/tikzjax/node/dist/index.js",
+  "files": [
+    "assets/tikzjax/node/dist/index.js",
+    "assets/tikzjax/node/dist/xhr-sync-worker.js",
+    "assets/tikzjax/node/tex/tex.wasm.gz",
+    "assets/tikzjax/node/tex/core.dump.gz",
+    "assets/tikzjax/node/tex/tex_files.tar.gz",
+    "assets/tikzjax/fonts.css"
+  ]
+}

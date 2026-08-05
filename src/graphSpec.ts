@@ -2,12 +2,6 @@ import { hydrateGraphStyle, type ColormapName, type SurfaceStyle } from './graph
 import { sanitizeUserExpressionForStorage } from '../graphSyntax';
 import { defaultGraphSize, hydrateGraphSize, type GraphSizeSettings } from './graphSize';
 import type { MathGraphSettings } from './settings';
-import {
-	FUNCTION_PLACEHOLDER_2D,
-	FUNCTION_PLACEHOLDER_3D,
-	FUNCTION_PLACEHOLDER_ODE,
-	FUNCTION_PLACEHOLDER_PDE,
-} from './functionPlaceholders';
 
 export type GraphType =
 	| 'function2d'
@@ -25,6 +19,8 @@ export interface GraphPoint {
 	y?: string;
 	z?: string;
 	label?: string;
+	/** Show the point's coordinate values below the marker on the graph. */
+	showValue?: boolean;
 	computed?: {
 		y?: string;
 		z?: string;
@@ -45,6 +41,10 @@ export interface GraphStyle {
 	colormap?: ColormapName;
 	/** 2D graphs only — show background grid lines. Default true when omitted. */
 	grid?: boolean;
+	/** Axis line thickness in px (preview) / pt (LaTeX render). Default 1.2. */
+	axisWidth?: number;
+	/** Title and axis-label text size in px. Default 16. */
+	labelFontSize?: number;
 }
 
 export interface GraphExportSettings {
@@ -94,8 +94,49 @@ export interface GraphSpec {
 	export?: GraphExportSettings;
 	numericMode?: boolean;
 	implicit?: boolean;
+	/** 3D view rotation in degrees (horizontal azimuth, vertical elevation). */
+	rotation?: { azimuth?: number; elevation?: number };
 	/** @deprecated Not user-configurable — kept for legacy graph JSON only. */
 	renderEngine?: GraphRenderEngine;
+}
+
+export interface GraphViewRotation {
+	azimuth: number;
+	elevation: number;
+}
+
+/** Matches the pgfplots default view={45}{28}. */
+export const DEFAULT_GRAPH_ROTATION: GraphViewRotation = { azimuth: 45, elevation: 28 };
+
+/** Wrap a horizontal rotation into [-180, 180]. */
+export function normalizeAzimuthDeg(value: number): number {
+	if (!Number.isFinite(value)) {
+		return DEFAULT_GRAPH_ROTATION.azimuth;
+	}
+	let azimuth = Math.round(value) % 360;
+	if (azimuth > 180) {
+		azimuth -= 360;
+	}
+	if (azimuth < -180) {
+		azimuth += 360;
+	}
+	return azimuth;
+}
+
+/** Clamp a vertical rotation to [0, 90] (0 = side view, 90 = top-down). */
+export function clampElevationDeg(value: number): number {
+	if (!Number.isFinite(value)) {
+		return DEFAULT_GRAPH_ROTATION.elevation;
+	}
+	return Math.min(90, Math.max(0, Math.round(value)));
+}
+
+/** Effective 3D view rotation for a spec, with defaults and clamping applied. */
+export function resolveGraphRotation(spec: GraphSpec): GraphViewRotation {
+	return {
+		azimuth: normalizeAzimuthDeg(spec.rotation?.azimuth ?? DEFAULT_GRAPH_ROTATION.azimuth),
+		elevation: clampElevationDeg(spec.rotation?.elevation ?? DEFAULT_GRAPH_ROTATION.elevation),
+	};
 }
 
 /** Read the user-facing function string exactly as stored/typed. */
@@ -118,6 +159,22 @@ export function setUserFunction(spec: GraphSpec, value: string): void {
 	} else if (spec.type !== 'parametric2d' && spec.type !== 'parametric3d' && spec.type !== 'data') {
 		spec.expression = trimmed;
 	}
+}
+
+export function resetGraphMathFields(spec: GraphSpec): GraphSpec {
+	spec.equation = '';
+	spec.function = '';
+	spec.expression = '';
+	spec.solution = '';
+	spec.xExpression = '';
+	spec.yExpression = '';
+	spec.zExpression = '';
+	spec.parameter = spec.type === 'parametric2d' || spec.type === 'parametric3d' ? 't' : spec.parameter;
+	spec.parameters = {};
+	if (spec.type === 'data') {
+		spec.data = [];
+	}
+	return spec;
 }
 
 /** Ensure legacy graphs expose a function field and size without compiling. */
@@ -181,61 +238,49 @@ export function defaultGraphSpec(
 
 	switch (type) {
 		case 'function2d':
-			return setUserFunctionOnSpec({ ...base }, FUNCTION_PLACEHOLDER_2D);
+			return resetGraphMathFields({
+				...base,
+				ranges: { x: ['', ''], y: ['', ''] },
+			});
 		case 'surface3d':
-			return setUserFunctionOnSpec({
+			return resetGraphMathFields({
 				...base,
-				ranges: { x: ['-pi', 'pi'], y: ['-pi', 'pi'], z: ['-1', '1'] },
+				ranges: { x: ['', ''], y: ['', ''], z: ['', ''] },
 				labels: { x: 'x', y: 'y', z: 'z' },
-			}, FUNCTION_PLACEHOLDER_3D);
+			});
 		case 'parametric2d':
-			return {
+			return resetGraphMathFields({
 				...base,
-				xExpression: 'cos(t)',
-				yExpression: 'sin(t)',
 				parameter: 't',
-				ranges: { t: ['0', '2*pi'] },
-			};
+				ranges: { t: ['', ''] },
+			});
 		case 'parametric3d':
-			return {
+			return resetGraphMathFields({
 				...base,
-				xExpression: 'cos(t)',
-				yExpression: 'sin(t)',
-				zExpression: 't',
 				parameter: 't',
-				ranges: { t: ['0', '2*pi'] },
+				ranges: { t: ['', ''] },
 				labels: { x: 'x', y: 'y', z: 'z' },
-			};
+			});
 		case 'ode':
-			return setUserFunctionOnSpec({
+			return resetGraphMathFields({
 				...base,
-				equation: "y' = y",
 				view: '2d',
-				parameters: {},
-			}, FUNCTION_PLACEHOLDER_ODE);
+				ranges: { x: ['', ''], y: ['', ''] },
+			});
 		case 'pde':
-			return setUserFunctionOnSpec({
+			return resetGraphMathFields({
 				...base,
 				style: { color: 'auto', surfaceStyle: 'colored', colormap: 'heat', grid: false },
-				title: '2D Heat Equation',
-				equation: 'u_t = u_xx + u_yy',
 				view: '3d',
-				parameters: { t: '0.25' },
-				ranges: { x: ['0', '2*pi'], y: ['0', '2*pi'], z: ['-1', '1'] },
+				ranges: { x: ['', ''], y: ['', ''], z: ['', ''] },
 				labels: { x: 'x', y: 'y', z: 'u(x,y,t)' },
 				samples: 35,
 				samplesY: 35,
-			}, FUNCTION_PLACEHOLDER_PDE);
+			});
 		case 'data':
-			return {
+			return resetGraphMathFields({
 				...base,
-				data: [
-					{ x: '0', y: '0' },
-					{ x: '1', y: '1' },
-					{ x: '2', y: '4' },
-					{ x: '3', y: '9' },
-				],
-			};
+			});
 	}
 }
 
@@ -253,11 +298,6 @@ export function parseGraphSpec(source: string, settings?: Partial<MathGraphSetti
 		throw new Error('Graph block is missing "type".');
 	}
 	return parsed;
-}
-
-function setUserFunctionOnSpec(spec: GraphSpec, value: string): GraphSpec {
-	setUserFunction(spec, value);
-	return spec;
 }
 
 /** Serialize user graph data only — never writes compiled engine syntax. */

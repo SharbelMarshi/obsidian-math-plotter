@@ -12,9 +12,12 @@ export class SafeMathSyntaxError extends Error {
 }
 
 const MATH_FUNCTIONS = new Set([
-	'sin', 'cos', 'tan', 'asin', 'acos', 'atan',
-	'sinh', 'cosh', 'tanh', 'sqrt', 'abs', 'log', 'ln', 'log10',
-	'exp', 'floor', 'ceil', 'round', 'min', 'max', 'pow', 'deg',
+	'sin', 'cos', 'tan', 'sec', 'csc', 'cosec', 'cot',
+	'asin', 'acos', 'atan', 'atan2',
+	'sinh', 'cosh', 'tanh', 'asinh', 'acosh', 'atanh',
+	'sqrt', 'abs', 'log', 'ln', 'log10', 'log2',
+	'exp', 'floor', 'ceil', 'round', 'sign', 'mod', 'factorial',
+	'min', 'max', 'pow', 'deg', 'rad',
 ]);
 
 const CONSTANTS: Record<string, number> = {
@@ -296,26 +299,42 @@ class Parser {
 		const trig = this.options.trigDegrees ?? false;
 		const deg = (value: number) => (value * Math.PI) / 180;
 		const rad = (value: number) => value;
+		const trigArg = (value: number) => (trig ? deg(value) : rad(value));
 
 		switch (name) {
 			case 'sin':
-				return Math.sin(trig ? deg(args[0] ?? Number.NaN) : rad(args[0] ?? Number.NaN));
+				return Math.sin(trigArg(args[0] ?? Number.NaN));
 			case 'cos':
-				return Math.cos(trig ? deg(args[0] ?? Number.NaN) : rad(args[0] ?? Number.NaN));
+				return Math.cos(trigArg(args[0] ?? Number.NaN));
 			case 'tan':
-				return Math.tan(trig ? deg(args[0] ?? Number.NaN) : rad(args[0] ?? Number.NaN));
+				return Math.tan(trigArg(args[0] ?? Number.NaN));
+			case 'sec':
+				return 1 / Math.cos(trigArg(args[0] ?? Number.NaN));
+			case 'csc':
+			case 'cosec':
+				return 1 / Math.sin(trigArg(args[0] ?? Number.NaN));
+			case 'cot':
+				return 1 / Math.tan(trigArg(args[0] ?? Number.NaN));
 			case 'asin':
 				return Math.asin(args[0] ?? Number.NaN);
 			case 'acos':
 				return Math.acos(args[0] ?? Number.NaN);
 			case 'atan':
 				return Math.atan(args[0] ?? Number.NaN);
+			case 'atan2':
+				return Math.atan2(args[0] ?? Number.NaN, args[1] ?? Number.NaN);
 			case 'sinh':
 				return Math.sinh(args[0] ?? Number.NaN);
 			case 'cosh':
 				return Math.cosh(args[0] ?? Number.NaN);
 			case 'tanh':
 				return Math.tanh(args[0] ?? Number.NaN);
+			case 'asinh':
+				return Math.asinh(args[0] ?? Number.NaN);
+			case 'acosh':
+				return Math.acosh(args[0] ?? Number.NaN);
+			case 'atanh':
+				return Math.atanh(args[0] ?? Number.NaN);
 			case 'sqrt':
 				return Math.sqrt(args[0] ?? Number.NaN);
 			case 'abs':
@@ -325,6 +344,8 @@ class Parser {
 				return Math.log(args[0] ?? Number.NaN);
 			case 'log10':
 				return Math.log10(args[0] ?? Number.NaN);
+			case 'log2':
+				return Math.log2(args[0] ?? Number.NaN);
 			case 'exp':
 				return Math.exp(args[0] ?? Number.NaN);
 			case 'floor':
@@ -333,13 +354,33 @@ class Parser {
 				return Math.ceil(args[0] ?? Number.NaN);
 			case 'round':
 				return Math.round(args[0] ?? Number.NaN);
+			case 'sign':
+				return Math.sign(args[0] ?? Number.NaN);
+			case 'mod': {
+				const a = args[0] ?? Number.NaN;
+				const b = args[1] ?? Number.NaN;
+				return a - b * Math.floor(a / b);
+			}
+			case 'factorial': {
+				const n = Math.round(args[0] ?? Number.NaN);
+				if (!Number.isFinite(n) || n < 0 || n > 170) {
+					return Number.NaN;
+				}
+				let product = 1;
+				for (let i = 2; i <= n; i++) {
+					product *= i;
+				}
+				return product;
+			}
 			case 'min':
-				return Math.min(args[0] ?? Number.NaN, args[1] ?? Number.NaN);
+				return args.length > 0 ? Math.min(...args) : Number.NaN;
 			case 'max':
-				return Math.max(args[0] ?? Number.NaN, args[1] ?? Number.NaN);
+				return args.length > 0 ? Math.max(...args) : Number.NaN;
 			case 'pow':
 				return Math.pow(args[0] ?? Number.NaN, args[1] ?? Number.NaN);
 			case 'deg':
+			case 'rad':
+				// Both mirror PGF's rad(): convert a degree value into radians.
 				return deg(args[0] ?? Number.NaN);
 			default:
 				return Number.NaN;

@@ -5,6 +5,7 @@ import { shouldUseOctave } from '../octave/octaveRouter';
 import { runJsSamplingPipeline } from '../sampler/jsSamplingPipeline';
 import { shouldUseJsSampling } from '../sampler/samplingRouter';
 import { compileExpressionForPgfplots } from '../graphSyntax';
+import { formatLatexLabel } from './mathLabelText';
 import { applyGridStyleToTikz } from './graphGridStyle';
 import { appendGraphPointsToTikz } from './graphPointsTikz';
 import type { MathGraphSettings } from './settings';
@@ -19,7 +20,13 @@ function rangeToDomain(range?: [string, string]): string | undefined {
 	if (!range || range.length !== 2) {
 		return undefined;
 	}
-	return `${range[0].trim()}:${range[1].trim()}`;
+	const min = range[0].trim();
+	const max = range[1].trim();
+	// Blank bounds must not produce "domain=:" — leave the domain unset instead.
+	if (!min || !max) {
+		return undefined;
+	}
+	return `${min}:${max}`;
 }
 
 function joinOptions(options: string[]): string {
@@ -78,16 +85,16 @@ function buildAxisBracketOptions(spec: GraphSpec): string {
 	const labels = spec.labels ?? {};
 	const parts: string[] = [];
 	if (labels.x) {
-		parts.push(`xlabel={${labels.x}}`);
+		parts.push(`xlabel={${formatLatexLabel(labels.x)}}`);
 	}
 	if (labels.y) {
-		parts.push(`ylabel={${labels.y}}`);
+		parts.push(`ylabel={${formatLatexLabel(labels.y)}}`);
 	}
 	if (labels.z) {
-		parts.push(`zlabel={${labels.z}}`);
+		parts.push(`zlabel={${formatLatexLabel(labels.z)}}`);
 	}
 	if (spec.title?.trim()) {
-		parts.push(`title={${spec.title.trim()}}`);
+		parts.push(`title={${formatLatexLabel(spec.title)}}`);
 	}
 	return joinOptions(parts);
 }

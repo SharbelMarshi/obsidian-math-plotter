@@ -15,8 +15,16 @@ import { shouldUseJsSampling } from '../sampler/samplingRouter';
 import { OctaveEngineError } from '../octave/octaveRunner';
 import type { RenderMode } from '../render/renderMode';
 import { surfaceZRangeClipWarning } from './graphRangeValidation';
-import { clampDisplayScale, ensureGraphSize } from './graphSize';
-import { defaultGraphSpec, hydrateGraphSpec, type GraphSpec } from './graphSpec';
+import { clampDisplayScale, ensureGraphSize, isGraph3dView } from './graphSize';
+import {
+	clampElevationDeg,
+	defaultGraphSpec,
+	hydrateGraphSpec,
+	normalizeAzimuthDeg,
+	resolveGraphRotation,
+	serializeGraphSpec,
+	type GraphSpec,
+} from './graphSpec';
 import {
 	getCachedGraphRender,
 	setCachedGraphRender,
@@ -24,11 +32,19 @@ import {
 	renderCacheKey,
 	applyDisplayScaleToRoot,
 } from './graphRenderCache';
-import { appendGraphError, applyRenderedGraphDisplayScale, renderGraphView } from './graphView';
+import {
+	appendGraphError,
+	applyRenderedGraphDisplayScale,
+	inferGraphErrorLocation,
+	renderGraphView,
+} from './graphView';
 import { GraphBuilderModal } from './graphBuilderModal';
 import { captureScrollPosition, restoreScrollPosition } from './scrollPreserve';
 import { decorateMathGraphRoot } from './uiStyle';
-import { isObsidianDarkTheme } from './graphThemeColors';
+import { isObsidianDarkTheme, resolveGraphThemeColors } from './graphThemeColors';
+import { renderFastSvg } from '../render/FastSvgRenderer';
+import { svgDataUrl } from '../render/svgPostProcess';
+import { attachComputedCoordinates } from './graphPointResolution';
 import { registerGraphRerenderHandler } from './graphThemeWatcher';
 import { isHTMLElement } from './domUtils';
 
@@ -65,13 +81,14 @@ export function registerGraphProcessor(plugin: MathGraphStudioPlugin): void {
 	plugin.registerMarkdownCodeBlockProcessor('graph', (source, el, ctx) => {
 		const classification = classifyGraphBlockSource(source, plugin.settings);
 
+		const hasRenderedGraph = el.querySelector('.mathgraph-rendered-container') !== null;
+
 		if (classification.state === 'valid' && classification.spec) {
 			const hydrated = hydrateGraphSpec(structuredClone(classification.spec), plugin.settings);
 			const fingerprint = specRenderFingerprint(hydrated);
 			const prevFingerprint = el.dataset.mathgraphFingerprint;
 			const themeKey = isObsidianDarkTheme() ? 'dark' : 'light';
 			const prevTheme = el.dataset.mathgraphTheme;
-			const hasRenderedGraph = el.querySelector('.mathgraph-rendered-container') !== null;
 
 			if (hasRenderedGraph && prevFingerprint === fingerprint && prevTheme === themeKey) {
 				el.dataset.mathgraphFingerprint = fingerprint;
@@ -81,7 +98,10 @@ export function registerGraphProcessor(plugin: MathGraphStudioPlugin): void {
 			}
 		}
 
-		el.empty();
+		// Keep the current graph visible while a changed spec re-renders — no blank flash.
+		if (!(classification.state === 'valid' && hasRenderedGraph)) {
+			el.empty();
+		}
 		el.addClass('mathgraph-processor-root');
 
 		if (classification.state === 'empty') {
@@ -145,12 +165,20 @@ function renderValidBlock(
 			existing.setText(text);
 			return existing;
 		}
+		// A rendered graph is still on screen (spec changed) — keep showing it instead of a spinner.
+		if (el.querySelector('.mathgraph-rendered-container')) {
+			return el;
+		}
 		return el.createDiv({ cls: 'mathgraph-loading', text });
 	};
 
-	ensureLoading();
 	const currentSpec = hydrateGraphSpec(structuredClone(spec), plugin.settings);
 	const fingerprint = specRenderFingerprint(currentSpec);
+	// With a pre-cached fast render (e.g. right after a rotation save) skip the spinner —
+	// the cached graph appears immediately.
+	if (!getCachedGraphRender(fingerprint, 'svgFast', isObsidianDarkTheme())?.result.ok) {
+		ensureLoading();
+	}
 	el.dataset.mathgraphFingerprint = fingerprint;
 	el.dataset.mathgraphTheme = isObsidianDarkTheme() ? 'dark' : 'light';
 
@@ -274,6 +302,12 @@ function renderValidBlock(
 				return;
 			}
 			el.querySelector('.mathgraph-loading')?.remove();
+			// A stale graph may still be on screen from the no-flash path — clear it for the error.
+			if (el.querySelector('.mathgraph-rendered-container')) {
+				el.empty();
+				el.addClass('mathgraph-processor-root');
+				decorateMathGraphRoot(el);
+			}
 			const detailParts: string[] = [];
 			if (err instanceof OctaveEngineError && err.rawLog) {
 				detailParts.push(err.rawLog);
@@ -286,6 +320,22 @@ function renderValidBlock(
 			}
 			appendGraphError(el, err instanceof Error ? err.message : 'Could not render graph.', {
 				details: detailParts.length > 0 ? detailParts.join('\n\n') : (err instanceof Error ? err.stack : undefined),
+				codeFrame: plugin.settings.debugMode && bundle?.tikz
+					? {
+						source: bundle.tikz,
+						location: inferGraphErrorLocation(
+							bundle.tikz,
+							[
+								err instanceof Error ? err.message : undefined,
+								...detailParts,
+							],
+							err instanceof Error && typeof (err as unknown as { line?: unknown }).line === 'number'
+								? (err as unknown as { line: number }).line
+								: undefined,
+						),
+						label: 'Generated source',
+					}
+					: undefined,
 				onRetry: () => {
 					el.empty();
 					el.addClass('mathgraph-processor-root');
@@ -331,7 +381,7 @@ function renderValidBlock(
 	scheduleRender('svgFast', Boolean(getCachedGraphRender(fingerprint, 'svgFast', isObsidianDarkTheme())?.result.ok));
 }
 
-async function setupGraphView(
+function setupGraphView(
 	el: HTMLElement,
 	plugin: MathGraphStudioPlugin,
 	ctx: MarkdownPostProcessorContext,
@@ -340,10 +390,83 @@ async function setupGraphView(
 	result: Parameters<typeof renderGraphView>[2],
 	tikz: string,
 	rerender: () => void,
-): Promise<void> {
-	const location = await resolveGraphBlockLocation(plugin.app, ctx, source, el);
+): void {
+	// Resolved lazily: rendering must not wait on a disk read, and resolution can fail
+	// at render time anyway (the editor buffer may not be on disk yet).
+	let location: GraphBlockLocation | null = null;
+
+	const ensureLocation = async (): Promise<GraphBlockLocation | null> => {
+		if (location) {
+			return location;
+		}
+		location = await resolveGraphBlockLocation(plugin.app, ctx, source, el);
+		return location;
+	};
+
+	/**
+	 * Saving rewrites the block, so Obsidian discards this element and re-runs the
+	 * processor on a fresh one. Pre-cache the final fast render under the fingerprint
+	 * that re-run will compute, so the new element shows the graph instantly instead
+	 * of flashing "Drawing graph…".
+	 */
+	const cacheFinalFastRender = () => {
+		if (!plugin.renderer.canRenderFast(spec)) {
+			return;
+		}
+		try {
+			// Round-trip through serialization so the fingerprint matches the re-parsed block.
+			const roundTripped = hydrateGraphSpec(
+				JSON.parse(serializeGraphSpec(spec)) as GraphSpec,
+				plugin.settings,
+			);
+			const svgText = renderFastSvg(roundTripped, resolveGraphThemeColors());
+			const fingerprint = specRenderFingerprint(roundTripped);
+			const themeIsDark = isObsidianDarkTheme();
+			setCachedGraphRender({
+				cacheKey: renderCacheKey(fingerprint, 'svgFast', themeIsDark),
+				renderMode: 'svgFast',
+				result: { ok: true, svgText, dataUrl: svgDataUrl(svgText) },
+				tikz: '',
+			});
+		} catch {
+			// Cache priming is best-effort — the normal render path still works without it.
+		}
+	};
+
+	const commitSpecSave = (what: string) => {
+		cacheFinalFastRender();
+		void ensureLocation().then(resolved => {
+			if (!resolved) {
+				new Notice(`Could not locate graph block to save ${what}.`);
+				return;
+			}
+			// Saving the block re-runs the processor, which re-renders with the new state.
+			scheduleDisplayScaleSave(plugin, resolved, spec);
+		});
+	};
+
+	// Export should reflect live rotation/point previews, not the initial render.
+	let liveSvgText = result.ok && result.svgText ? result.svgText : '';
+
+	/** Live-render the fast SVG in place (used while dragging rotation or points). */
+	const refreshFastPreview = () => {
+		if (!plugin.renderer.canRenderFast(spec)) {
+			return;
+		}
+		try {
+			const svgText = renderFastSvg(spec, resolveGraphThemeColors());
+			const img = el.querySelector('.mathgraph-image');
+			if (img instanceof HTMLImageElement) {
+				img.src = svgDataUrl(svgText);
+			}
+			liveSvgText = svgText;
+		} catch {
+			// Keep the last frame if a preview render fails mid-drag.
+		}
+	};
 
 	renderGraphView(el, spec, result, tikz, {
+		getExportSvgText: () => liveSvgText || (result.svgText ?? ''),
 		debugSource: plugin.settings.debugMode ? tikz : undefined,
 		onEdit: () => void openEditModal(plugin, spec, source, ctx, el),
 		onRefresh: () => {
@@ -354,11 +477,6 @@ async function setupGraphView(
 			rerender();
 		},
 		onDisplayScaleChange: newScale => {
-			if (!location) {
-				new Notice('Could not locate graph block to save size.');
-				return;
-			}
-
 			const size = ensureGraphSize(spec);
 			size.displayScale = clampDisplayScale(newScale);
 			spec.size = size;
@@ -368,8 +486,62 @@ async function setupGraphView(
 				applyRenderedGraphDisplayScale(container, spec, result.svgText);
 			}
 
-			scheduleDisplayScaleSave(plugin, location, spec);
+			commitSpecSave('size');
 		},
+		onRotateView: isGraph3dView(spec)
+			? (() => {
+				// Float accumulators keep sub-degree drag deltas from being lost to rounding.
+				const start = resolveGraphRotation(spec);
+				let liveAzimuth = start.azimuth;
+				let liveElevation = start.elevation;
+
+				return (azimuthDelta: number, elevationDelta: number, phase: 'preview' | 'commit') => {
+					liveAzimuth += azimuthDelta;
+					if (liveAzimuth > 180) {
+						liveAzimuth -= 360;
+					} else if (liveAzimuth < -180) {
+						liveAzimuth += 360;
+					}
+					liveElevation = Math.min(90, Math.max(0, liveElevation + elevationDelta));
+					spec.rotation = {
+						azimuth: normalizeAzimuthDeg(liveAzimuth),
+						elevation: clampElevationDeg(liveElevation),
+					};
+
+					if (phase === 'preview') {
+						refreshFastPreview();
+						return;
+					}
+					commitSpecSave('rotation');
+				};
+			})()
+			: undefined,
+		onMovePoint: (spec.points?.length ?? 0) > 0
+			? (pointIndex, x, y, phase) => {
+				const points = spec.points ?? [];
+				const point = points[pointIndex];
+				if (!point) {
+					return;
+				}
+
+				const format = (value: number) => String(Number.parseFloat(value.toFixed(3)));
+				point.x = format(x);
+				if (isGraph3dView(spec)) {
+					// 3D points move in the x/y plane; auto-z recomputes below.
+					point.y = format(y);
+				} else if (point.y?.trim()) {
+					// Blank y means "snap to the curve" — keep it blank so it recomputes.
+					point.y = format(y);
+				}
+				spec.points = attachComputedCoordinates(spec, points);
+
+				if (phase === 'preview') {
+					refreshFastPreview();
+					return;
+				}
+				commitSpecSave('the point');
+			}
+			: undefined,
 	});
 }
 
@@ -380,11 +552,13 @@ function renderInvalidBlock(
 	source: string,
 	message: string,
 ): void {
-	const sourceEl = el.createEl('pre', { cls: 'mathgraph-invalid-source mathgraph-invalid-source-hidden' });
-	sourceEl.setText(source.trim());
-
 	appendGraphError(el, message, {
 		details: source.trim(),
+		codeFrame: {
+			source: source.trim(),
+			location: inferGraphErrorLocation(source.trim(), [message]),
+			label: 'Graph block source',
+		},
 		actions: [
 			{
 				label: 'Edit Graph',
@@ -396,10 +570,14 @@ function renderInvalidBlock(
 				onClick: () => void resetBlock(plugin, source, ctx, el),
 			},
 			{
-				label: 'Show Source',
-				onClick: () => {
-					const hidden = sourceEl.hasClass('mathgraph-invalid-source-hidden');
-					sourceEl.toggleClass('mathgraph-invalid-source-hidden', !hidden);
+				label: 'Copy Source',
+				onClick: async () => {
+					try {
+						await navigator.clipboard.writeText(source.trim());
+						new Notice('Graph source copied.');
+					} catch {
+						new Notice('Could not copy graph source.');
+					}
 				},
 			},
 		],

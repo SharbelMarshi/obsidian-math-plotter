@@ -164,7 +164,25 @@ function findNextGraphCommand(text: string, start: number): GraphCommandMatch | 
 }
 
 function parseCoordinatePair(content: string): { x: string; y: string } | null {
-	const trimmed = content.trim().replace(/^\(\s*|\s*\)$/g, '').trim();
+	const matrixMatch = content.trim().match(
+		/^\\begin\{([pbBvV]?matrix)\}([\s\S]*?)\\end\{\1\}$/,
+	);
+	if (matrixMatch) {
+		const rows = matrixMatch[2]
+			.split(/\\\\/)
+			.map(part => part.trim())
+			.filter(Boolean);
+		if (rows.length === 2 && rows.every(row => !row.includes('&'))) {
+			return { x: rows[0], y: rows[1] };
+		}
+	}
+
+	const trimmed = content
+		.trim()
+		.replace(/^\\langle\s*/, '')
+		.replace(/\s*\\rangle$/, '')
+		.replace(/^\(\s*|\s*\)$/g, '')
+		.trim();
 	if (!trimmed) {
 		return null;
 	}
@@ -1228,7 +1246,7 @@ function convertFunctionToPlot(
 				['samples', '200'],
 			], ['parametric']);
 		const cartesianEstimate = tRange
-			? estimateParametricCartesianRange(xExpr, yExpr, tRange, trigDegrees)
+			? estimateParametricCartesianRange(xExpr, yExpr, tRange, trigDegrees, 64, graphParametersToRecord(parameters))
 			: { x: { min: -1.2, max: 1.2 }, y: { min: -1.2, max: 1.2 } };
 
 		return {
@@ -1268,7 +1286,7 @@ function convertFunctionToPlot(
 				['samples', '200'],
 			], ['data cs=polar']);
 		const cartesianEstimate = tRange
-			? estimatePolarCartesianRange(radiusExpr, angleExpr, tRange, trigDegrees)
+			? estimatePolarCartesianRange(radiusExpr, angleExpr, tRange, trigDegrees, 64, graphParametersToRecord(parameters))
 			: { x: { min: -1.2, max: 1.2 }, y: { min: -1.2, max: 1.2 } };
 		const angleIsParameter = /^x$/i.test(anglePlot);
 		const plotCoords = angleIsParameter
@@ -1298,7 +1316,8 @@ function convertFunctionToPlot(
 	const limits = plotLimitsFromUserOptions(opts, finalAddplotOpts);
 
 	if (limits.x && !limits.y) {
-		const yEstimate = estimateExplicitYRange(expr, limits.x, trigDegrees);
+		// Estimate from the raw user expression — the numeric sampler compiles it itself.
+		const yEstimate = estimateExplicitYRange(rawExpr, limits.x, trigDegrees, 48, graphParametersToRecord(parameters));
 		if (yEstimate) {
 			limits.y = yEstimate;
 		}

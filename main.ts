@@ -21,7 +21,7 @@ import {
 	type GraphRerenderOptions,
 } from './src/graphThemeWatcher';
 import { mergeLoadedSettings } from './src/settingsGuards';
-// TODO(v2): register inlineGraphEditorExtension() for source-mode empty ```graph``` widgets.
+import { inlineGraphEditorExtension } from './src/inlineGraphEditor';
 
 export default class MathGraphStudioPlugin extends Plugin {
 	settings: MathGraphSettings = DEFAULT_SETTINGS;
@@ -67,6 +67,7 @@ export default class MathGraphStudioPlugin extends Plugin {
 		});
 
 		this.addSettingTab(new MathGraphSettingTab(this.app, this));
+		this.registerEditorExtension(inlineGraphEditorExtension());
 		registerGraphProcessor(this);
 	}
 

@@ -1,18 +1,29 @@
 import { resolveLatexGraphDimensions } from './graphSize';
-import type { GraphSpec } from './graphSpec';
+import { formatLatexLabel } from './mathLabelText';
+import { latexLabelFontCommand, resolveAxisLineWidth, resolveLabelFontSize } from './renderStyleConfig';
+import { resolveGraphRotation, type GraphSpec } from './graphSpec';
 import { pgfplotsTextSafeTickOptions } from './pgfplotsTickStyle';
 
 function joinOptions(options: string[]): string {
 	return options.filter(Boolean).join(', ');
 }
 
+/** Emit an axis limit only when the user actually provided a value — `xmin=` breaks pgfplots. */
+function limitOption(name: string, value: string | undefined): string {
+	const trimmed = value?.trim() ?? '';
+	return trimmed ? `${name}=${trimmed}` : '';
+}
+
 /** Theme-aware PGFPlots axis styling — requires mathgraphAxis/mathgraphGrid definitions. */
-export function pgfplotsThemeAxisStyleOptions(): string {
+export function pgfplotsThemeAxisStyleOptions(spec?: GraphSpec): string {
+	const axisWidth = Number.parseFloat(resolveAxisLineWidth(spec).toFixed(2));
+	const labelFont = latexLabelFontCommand(resolveLabelFontSize(spec));
 	return joinOptions([
-		'axis line style={mathgraphAxis}',
+		`axis line style={mathgraphAxis, line width=${axisWidth}pt}`,
 		'tick style={mathgraphAxis}',
 		'tick label style={color=mathgraphAxis, font=\\small}',
-		'label style={color=mathgraphAxis, font=\\small}',
+		`label style={color=mathgraphAxis, font=${labelFont}}`,
+		`title style={font=${labelFont}}`,
 		'grid style={mathgraphGrid}',
 	]);
 }
@@ -23,29 +34,30 @@ export function pgfplots3dAxisOptions(spec: GraphSpec): string {
 	const { width, height } = resolveLatexGraphDimensions(spec);
 	const xRange = spec.ranges?.x;
 	const yRange = spec.ranges?.y;
+	const rotation = resolveGraphRotation(spec);
 
 	return joinOptions([
-		'view={45}{28}',
+		`view={${rotation.azimuth}}{${rotation.elevation}}`,
 		'axis lines=box',
-		labels.x ? `xlabel={${labels.x}}` : 'xlabel={$x$}',
-		labels.y ? `ylabel={${labels.y}}` : 'ylabel={$y$}',
-		labels.z ? `zlabel={${labels.z}}` : 'zlabel={$z$}',
+		labels.x ? `xlabel={${formatLatexLabel(labels.x)}}` : 'xlabel={$x$}',
+		labels.y ? `ylabel={${formatLatexLabel(labels.y)}}` : 'ylabel={$y$}',
+		labels.z ? `zlabel={${formatLatexLabel(labels.z)}}` : 'zlabel={$z$}',
 		'xlabel style={at={(axis description cs:1.05,0.05)},anchor=west}',
 		'ylabel style={at={(axis description cs:0.05,1.05)},anchor=south}',
 		'zlabel style={at={(axis description cs:0.5,1.08)},anchor=south}',
 		'tick align=outside',
-		pgfplotsThemeAxisStyleOptions(),
+		pgfplotsThemeAxisStyleOptions(spec),
 		pgfplotsTextSafeTickOptions(),
 		'grid=none',
 		'enlargelimits=false',
 		'axis background/.style={fill=none}',
 		`width=${width}`,
 		`height=${height}`,
-		spec.title?.trim() ? `title={${spec.title.trim()}}` : '',
-		xRange ? `xmin=${xRange[0]}` : '',
-		xRange ? `xmax=${xRange[1]}` : '',
-		yRange ? `ymin=${yRange[0]}` : '',
-		yRange ? `ymax=${yRange[1]}` : '',
+		spec.title?.trim() ? `title={${formatLatexLabel(spec.title)}}` : '',
+		xRange ? limitOption('xmin', xRange[0]) : '',
+		xRange ? limitOption('xmax', xRange[1]) : '',
+		yRange ? limitOption('ymin', yRange[0]) : '',
+		yRange ? limitOption('ymax', yRange[1]) : '',
 	]);
 }
 

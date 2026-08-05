@@ -1,4 +1,5 @@
-import { compileSafeMathExpression } from './src/safeMathEvaluator';
+import { compileExpressionForOctave, normalizeFrontendMath } from './graphSyntax';
+import { compileSafeMathExpression, evaluateSafeMathExpression } from './src/safeMathEvaluator';
 
 export class GraphSyntaxError extends Error {
 	hint?: string;
@@ -74,7 +75,7 @@ export function normalizeFunctionExpression(
 	mode: PlotMode,
 	odeSolution = false,
 ): NormalizedExpression {
-	const body = raw.trim();
+	const body = normalizeFrontendMath(raw, { substituteParameters: false }).trim();
 	if (!body) {
 		throw new GraphSyntaxError('Function body is empty.', 'Enter an expression such as x^2 or y = sin(x).');
 	}
@@ -274,22 +275,7 @@ const PLOT_RESERVED_NAMES = new Set([
 ]);
 
 export function normalizePgfMath(expr: string): string {
-	let result = expr;
-	let prev = '';
-	while (result !== prev) {
-		prev = result;
-		result = result.replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, '(($1)/($2))');
-	}
-
-	return result
-		.replace(/\\sin\b/g, 'sin')
-		.replace(/\\cos\b/g, 'cos')
-		.replace(/\\tan\b/g, 'tan')
-		.replace(/\\exp\b/g, 'exp')
-		.replace(/\\log\b/g, 'log')
-		.replace(/\\sqrt\b/g, 'sqrt')
-		.replace(/\\abs\b/g, 'abs')
-		.replace(/\\pi\b/g, 'pi');
+	return normalizeFrontendMath(expr, { substituteParameters: false });
 }
 
 export function substituteParameters(expr: string, parameters: GraphParameter[]): string {
@@ -367,6 +353,58 @@ export function evaluatePlotExpr(expr: string, variable: string, value: number, 
 	}
 }
 
+function octaveToSafeSyntax(compiled: string): string {
+	return compiled
+		.replace(/\.\^/g, '^')
+		.replace(/\.\*/g, '*')
+		.replace(/\.\//g, '/');
+}
+
+/**
+ * Compile raw user math into a fast numeric sampler for range estimation.
+ * Uses the Octave (radians) compile target so every supported function/symbol works.
+ * Returns null when the expression cannot be evaluated numerically.
+ */
+export function compileNumericPlotEvaluator(
+	rawExpr: string,
+	variable: string,
+	parameters: Record<string, string> = {},
+	trigDegrees = false,
+): ((value: number) => number | null) | null {
+	try {
+		const compiled = compileExpressionForOctave(rawExpr, {
+			variables: ['x', 'y', 'z', 't', 'r'],
+			parameters,
+		});
+		const safeExpr = octaveToSafeSyntax(compiled);
+		const paramNames = Object.keys(parameters);
+		const evaluate = compileSafeMathExpression(
+			safeExpr,
+			['x', 'y', 'z', 't', 'r', ...paramNames],
+			{ trigDegrees },
+		);
+
+		const paramScope: Record<string, number> = {};
+		for (const [name, value] of Object.entries(parameters)) {
+			try {
+				const numeric = evaluateSafeMathExpression(normalizeFrontendMath(value), {}, []);
+				if (Number.isFinite(numeric)) {
+					paramScope[name] = numeric;
+				}
+			} catch {
+				// Non-numeric parameter values simply stay out of scope.
+			}
+		}
+
+		return (value: number) => {
+			const result = evaluate({ ...paramScope, [variable]: value });
+			return Number.isFinite(result) ? result : null;
+		};
+	} catch {
+		return null;
+	}
+}
+
 function isNearInteger(value: number, tolerance = 0.01): boolean {
 	return Math.abs(value - Math.round(value)) <= tolerance;
 }
@@ -433,7 +471,14 @@ export function estimateParametricCartesianRange(
 	tRange: NumericRange,
 	trigDegrees = false,
 	samples = 64,
+	parameters: Record<string, string> = {},
 ): { x: NumericRange; y: NumericRange } | null {
+	const evaluateX = compileNumericPlotEvaluator(xExpr, 'x', parameters, trigDegrees);
+	const evaluateY = compileNumericPlotEvaluator(yExpr, 'x', parameters, trigDegrees);
+	if (!evaluateX || !evaluateY) {
+		return null;
+	}
+
 	let xmin = Number.POSITIVE_INFINITY;
 	let xmax = Number.NEGATIVE_INFINITY;
 	let ymin = Number.POSITIVE_INFINITY;
@@ -441,8 +486,8 @@ export function estimateParametricCartesianRange(
 	let valid = 0;
 
 	for (const t of sampleRange(tRange, samples)) {
-		const x = evaluatePlotExpr(xExpr, 'x', t, trigDegrees);
-		const y = evaluatePlotExpr(yExpr, 'x', t, trigDegrees);
+		const x = evaluateX(t);
+		const y = evaluateY(t);
 		if (x === null || y === null) {
 			continue;
 		}
@@ -469,7 +514,14 @@ export function estimatePolarCartesianRange(
 	tRange: NumericRange,
 	trigDegrees = false,
 	samples = 64,
+	parameters: Record<string, string> = {},
 ): { x: NumericRange; y: NumericRange } | null {
+	const evaluateRadius = compileNumericPlotEvaluator(radiusExpr, 'x', parameters, trigDegrees);
+	const evaluateAngle = compileNumericPlotEvaluator(angleExpr, 'x', parameters, trigDegrees);
+	if (!evaluateRadius || !evaluateAngle) {
+		return null;
+	}
+
 	let xmin = Number.POSITIVE_INFINITY;
 	let xmax = Number.NEGATIVE_INFINITY;
 	let ymin = Number.POSITIVE_INFINITY;
@@ -477,8 +529,8 @@ export function estimatePolarCartesianRange(
 	let valid = 0;
 
 	for (const t of sampleRange(tRange, samples)) {
-		const radius = evaluatePlotExpr(radiusExpr, 'x', t, trigDegrees);
-		const angle = evaluatePlotExpr(angleExpr, 'x', t, trigDegrees);
+		const radius = evaluateRadius(t);
+		const angle = evaluateAngle(t);
 		if (radius === null || angle === null) {
 			continue;
 		}
@@ -504,11 +556,17 @@ export function estimatePolarCartesianRange(
 }
 
 export function estimateExplicitYRange(
-	pgfExpr: string,
+	rawExpr: string,
 	xRange: NumericRange,
 	trigDegrees = false,
 	samples = 48,
+	parameters: Record<string, string> = {},
 ): NumericRange | null {
+	const evaluate = compileNumericPlotEvaluator(rawExpr, 'x', parameters, trigDegrees);
+	if (!evaluate) {
+		return null;
+	}
+
 	let ymin = Number.POSITIVE_INFINITY;
 	let ymax = Number.NEGATIVE_INFINITY;
 	let valid = 0;
@@ -516,7 +574,7 @@ export function estimateExplicitYRange(
 	for (let i = 0; i <= samples; i++) {
 		const t = i / samples;
 		const x = xRange.min + t * (xRange.max - xRange.min);
-		const y = evaluatePlotExpr(pgfExpr, 'x', x, trigDegrees);
+		const y = evaluate(x);
 		if (y === null) {
 			continue;
 		}
@@ -545,7 +603,11 @@ export interface ParsedInequality {
 }
 
 export function parseInequality(body: string): ParsedInequality | null {
-	const trimmed = body.trim();
+	const trimmed = body.trim()
+		.replace(/\\leq?\b/g, '<=')
+		.replace(/\\geq?\b/g, '>=')
+		.replace(/≤/g, '<=')
+		.replace(/≥/g, '>=');
 	const match = trimmed.match(/^(.+?)\s*(<=|>=|<|>)\s*(.+)$/);
 	if (!match) {
 		return null;

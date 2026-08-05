@@ -36,7 +36,6 @@ export function pickValidSettings(data: Record<string, unknown>): Partial<MathGr
 	if (typeof data.debugMode === 'boolean') {
 		picked.debugMode = data.debugMode;
 	}
-
 	return picked;
 }
 

@@ -1,5 +1,6 @@
 import {
 	describeTikzJaxSearchPaths,
+	inspectTikzJaxAssets,
 	resolveTikzJaxModulePath,
 } from '../src/tikzJaxPaths';
 import {
@@ -39,10 +40,18 @@ function runExclusive<T>(task: () => Promise<T>): Promise<T> {
 }
 
 function missingAssetsMessage(pluginBaseDir: string): string {
+	const status = inspectTikzJaxAssets(pluginBaseDir);
+	const missing = status.missingFiles.length > 0
+		? status.missingFiles.map(file => `- ${file}`).join('\n')
+		: 'No packaged TikZJax manifest was found.';
+
 	return [
 		'TikZJax assets not found.',
 		'Run `npm install && npm run build` in the plugin folder, then reload Obsidian.',
-		'The plugin folder must include `assets/tikzjax/node/` or `node_modules/node-tikzjax/`.',
+		'The plugin folder must include a complete packaged `assets/tikzjax/` bundle.',
+		'',
+		'Missing files:',
+		missing,
 		'',
 		'Checked paths:',
 		describeTikzJaxSearchPaths(pluginBaseDir),

@@ -1,4 +1,5 @@
 import { resolveLatexGraphDimensions } from '../src/graphSize';
+import { formatLatexLabel } from '../src/mathLabelText';
 import type { GraphSpec } from '../src/graphSpec';
 import { gridAxisOption } from '../src/graphGridStyle';
 import { pgfplots3dAxisOptions, pgfplotsThemeAxisStyleOptions } from '../src/pgfplots3dAxisStyle';
@@ -20,12 +21,18 @@ function joinOptions(options: string[]): string {
 	return options.filter(Boolean).join(', ');
 }
 
+/** Emit an axis limit only when the user actually provided a value — `zmin=` breaks pgfplots. */
+function limitOption(name: string, value: string | undefined): string {
+	const trimmed = value?.trim() ?? '';
+	return trimmed ? `${name}=${trimmed}` : '';
+}
+
 function axisOptions(spec: GraphSpec, view3d: boolean): string {
 	if (view3d) {
 		const opts = pgfplots3dAxisOptions(spec);
 		const zRange = spec.ranges?.z;
 		if (zRange) {
-			return joinOptions([opts, `zmin=${zRange[0]}`, `zmax=${zRange[1]}`]);
+			return joinOptions([opts, limitOption('zmin', zRange[0]), limitOption('zmax', zRange[1])]);
 		}
 		return opts;
 	}
@@ -39,20 +46,20 @@ function axisOptions(spec: GraphSpec, view3d: boolean): string {
 		gridAxisOption(spec),
 		'axis lines=middle',
 		'axis background/.style={fill=none}',
-		pgfplotsThemeAxisStyleOptions(),
+		pgfplotsThemeAxisStyleOptions(spec),
 		pgfplotsTextSafeTickOptions(),
 		`width=${width}`,
 		`height=${height}`,
-		labels.x ? `xlabel={${labels.x}}` : '',
-		labels.y ? `ylabel={${labels.y}}` : '',
-		spec.title?.trim() ? `title={${spec.title.trim()}}` : '',
+		labels.x ? `xlabel={${formatLatexLabel(labels.x)}}` : '',
+		labels.y ? `ylabel={${formatLatexLabel(labels.y)}}` : '',
+		spec.title?.trim() ? `title={${formatLatexLabel(spec.title)}}` : '',
 	];
 
 	if (xRange) {
-		parts.push(`xmin=${xRange[0]}`, `xmax=${xRange[1]}`);
+		parts.push(limitOption('xmin', xRange[0]), limitOption('xmax', xRange[1]));
 	}
 	if (yRange) {
-		parts.push(`ymin=${yRange[0]}`, `ymax=${yRange[1]}`);
+		parts.push(limitOption('ymin', yRange[0]), limitOption('ymax', yRange[1]));
 	}
 
 	return joinOptions(parts);

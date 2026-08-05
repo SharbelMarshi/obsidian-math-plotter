@@ -6,14 +6,16 @@ import { fileURLToPath } from 'url';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const stagingDir = path.join(root, '.release-staging');
 const zipPath = path.join(root, 'math-plotter-full.zip');
+const tikzManifestPath = path.join(root, 'assets/tikzjax/manifest.json');
 
 const requiredFiles = ['main.js', 'manifest.json', 'styles.css'];
-const requiredAssetFiles = [
-	'assets/tikzjax/node/dist/index.js',
-	'assets/tikzjax/node/tex/tex.wasm.gz',
-	'assets/tikzjax/node/tex/core.dump.gz',
-	'assets/tikzjax/fonts.css',
-];
+if (!fs.existsSync(tikzManifestPath)) {
+	console.error('Cannot package release. Missing assets/tikzjax/manifest.json. Run npm run build first.');
+	process.exit(1);
+}
+
+const tikzManifest = JSON.parse(fs.readFileSync(tikzManifestPath, 'utf8'));
+const requiredAssetFiles = Array.isArray(tikzManifest.files) ? tikzManifest.files : [];
 
 for (const file of requiredFiles) {
 	const filePath = path.join(root, file);
