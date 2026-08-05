@@ -207,7 +207,7 @@
 	max-width: 100%;
 }
 
-.mathgraph-fn-group .mathgraph-fn-input {
+.mathgraph-fn-group .mathgraph-input.mathgraph-fn-input {
 	flex: 1 1 auto;
 	min-width: 0;
 	border-top-right-radius: 0;
@@ -220,14 +220,17 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
+	height: auto;
+	min-height: 0;
+	margin: 0;
 	padding: 0 10px;
 	font-size: 0.8em;
 	font-weight: 500;
 	color: var(--text-muted);
 	background: var(--background-secondary);
 	border: 1px solid var(--background-modifier-border);
-	border-top-right-radius: var(--radius-s, 6px);
-	border-bottom-right-radius: var(--radius-s, 6px);
+	border-top-right-radius: 10px;
+	border-bottom-right-radius: 10px;
 	border-top-left-radius: 0;
 	border-bottom-left-radius: 0;
 	cursor: pointer;
@@ -235,9 +238,20 @@
 	box-shadow: none;
 }
 
+.mathgraph-ui-native .mathgraph-fn-group .mathgraph-type-chip {
+	border-top-right-radius: var(--radius-s, 6px);
+	border-bottom-right-radius: var(--radius-s, 6px);
+}
+
 .mathgraph-type-chip:hover {
 	color: var(--text-normal);
 	background: var(--background-modifier-hover);
+}
+
+.mathgraph-type-chip:focus-visible {
+	outline: none;
+	border-color: var(--interactive-accent);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 28%, transparent);
 }
 
 .mathgraph-type-chip-caret {
@@ -467,46 +481,86 @@
 	gap: 2px;
 }
 
-/* Compact +/− percentage stepper */
+/* Compact +/− stepper — one segmented control: [−][value][+].
+   Child selectors are intentionally ≥3 classes so they outrank the generic
+   `.mathgraph-modal input[type='text']` / `.mathgraph-inline-builder input`
+   field styling that would otherwise re-add borders and radius inside. */
 
 .mathgraph-stepper {
 	display: inline-flex;
 	align-items: stretch;
 	width: auto;
 	max-width: max-content;
+	height: 38px;
 	border: 1px solid var(--background-modifier-border);
-	border-radius: var(--radius-m, 8px);
+	border-radius: 10px;
 	overflow: hidden;
 	background: var(--background-primary);
+	transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.mathgraph-stepper-btn {
-	width: 30px;
-	padding: 4px 0;
+.mathgraph-stepper:focus-within {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 28%, transparent);
+}
+
+.mathgraph-ui-native .mathgraph-stepper {
+	border-radius: var(--radius-s, 6px);
+}
+
+.mathgraph-stepper button.mathgraph-stepper-btn {
+	appearance: none;
+	-webkit-appearance: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: auto;
+	min-height: 0;
+	margin: 0;
+	padding: 0;
 	border: none;
 	border-radius: 0;
 	box-shadow: none;
 	background: var(--background-secondary);
 	color: var(--text-muted);
+	font-size: 0.9em;
 	font-weight: 600;
+	line-height: 1;
 	cursor: pointer;
 	flex-shrink: 0;
+	transition: background 120ms ease, color 120ms ease;
 }
 
-.mathgraph-stepper-btn:hover {
+.mathgraph-stepper button.mathgraph-stepper-btn:hover {
 	background: var(--background-modifier-hover);
 	color: var(--text-normal);
 }
 
-.mathgraph-modal-body-scroll .mathgraph-stepper-value {
+.mathgraph-stepper button.mathgraph-stepper-btn:focus,
+.mathgraph-stepper button.mathgraph-stepper-btn:focus-visible {
+	outline: none;
+	box-shadow: none;
+}
+
+.mathgraph-stepper .mathgraph-input.mathgraph-stepper-value {
 	width: 4.5em;
 	min-width: 4.5em;
+	height: auto;
+	margin: 0;
+	padding: 0 6px;
 	text-align: center;
 	border: none;
 	border-left: 1px solid var(--background-modifier-border);
 	border-right: 1px solid var(--background-modifier-border);
 	border-radius: 0;
 	background: transparent;
+	box-shadow: none;
+}
+
+.mathgraph-stepper .mathgraph-input.mathgraph-stepper-value:focus {
+	outline: none;
+	border-color: var(--background-modifier-border);
 	box-shadow: none;
 }
 
@@ -542,20 +596,6 @@
 		grid-template-columns: 1fr;
 	}
 
-	.mathgraph-fn-group {
-		flex-wrap: wrap;
-		gap: 6px;
-	}
-
-	.mathgraph-fn-group .mathgraph-fn-input {
-		border-radius: var(--radius-s, 6px);
-		border-right: 1px solid var(--background-modifier-border);
-	}
-
-	.mathgraph-type-chip {
-		border-radius: var(--radius-s, 6px);
-		padding: 4px 10px;
-	}
 }
 
 /* legacy modal aliases */
@@ -1142,6 +1182,42 @@
 	width: 28px;
 	min-width: 28px;
 	padding: 0;
+}
+
+/* [−][100%][+] display-scale trio rendered as one segmented pill */
+
+.mathgraph-toolbar .mathgraph-scale-group {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: stretch;
+	height: 28px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 999px;
+	background: var(--background-primary);
+	overflow: hidden;
+}
+
+.mathgraph-root .mathgraph-toolbar .mathgraph-scale-group button {
+	height: 100%;
+	border: none;
+	border-radius: 0;
+	background: transparent;
+}
+
+.mathgraph-root .mathgraph-toolbar .mathgraph-scale-group button:hover {
+	background: var(--background-modifier-hover);
+	border-color: transparent;
+}
+
+.mathgraph-root .mathgraph-toolbar .mathgraph-scale-group button:focus,
+.mathgraph-root .mathgraph-toolbar .mathgraph-scale-group button:focus-visible {
+	outline: none;
+	box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+}
+
+.mathgraph-root .mathgraph-toolbar .mathgraph-scale-group .mathgraph-scale-label {
+	border-left: 1px solid var(--background-modifier-border);
+	border-right: 1px solid var(--background-modifier-border);
 }
 
 .mathgraph-button-caret {

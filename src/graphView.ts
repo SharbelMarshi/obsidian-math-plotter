@@ -330,14 +330,15 @@ export function renderGraphView(
 	}
 
 	if (actions.onDisplayScaleChange) {
-		const minusBtn = toolbar.createEl('button', {
+		const scaleGroup = toolbar.createDiv({ cls: 'mathgraph-scale-group' });
+		const minusBtn = scaleGroup.createEl('button', {
 			text: '−',
 			type: 'button',
 			cls: 'mathgraph-button mathgraph-button-secondary mathgraph-scale-btn',
 		});
 		minusBtn.setAttr('tabindex', '-1');
 		minusBtn.setAttr('aria-label', 'Decrease display scale');
-		const scaleLabel = toolbar.createEl('button', {
+		const scaleLabel = scaleGroup.createEl('button', {
 			text: formatDisplayScaleLabel(size.displayScale ?? 1),
 			type: 'button',
 			cls: 'mathgraph-button mathgraph-button-secondary mathgraph-scale-label',
@@ -345,7 +346,7 @@ export function renderGraphView(
 		scaleLabel.setAttr('tabindex', '-1');
 		scaleLabel.setAttr('aria-label', 'Reset display scale to 100%');
 		scaleLabel.setAttr('title', 'Display scale — visual zoom in Obsidian (no LaTeX recompile)');
-		const plusBtn = toolbar.createEl('button', {
+		const plusBtn = scaleGroup.createEl('button', {
 			text: '+',
 			type: 'button',
 			cls: 'mathgraph-button mathgraph-button-secondary mathgraph-scale-btn',
